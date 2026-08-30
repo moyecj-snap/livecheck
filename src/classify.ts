@@ -221,16 +221,15 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
     signals.push("ambiguous_html");
   }
 
-  const verdict: VerifyVerdict = {
+  return {
     url: page.requestedUrl,
     canonical_url: page.canonicalUrl,
     status,
     http_status: page.httpStatus,
     checked_at: checkedAt.toISOString().replace(/\.\d{3}Z$/, "Z"),
+    ...(page.title ? { title: page.title } : {}),
     signals,
     confidence,
     price_usd: PRICE_USD,
   };
-  if (page.title) verdict.title = page.title;
-  return verdict;
 }

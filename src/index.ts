@@ -9,15 +9,16 @@ const listenPort = port();
 const app = createApp();
 
 if (!isLiveSettlement()) {
+  const missing = missingLiveKeyNames().join(", ") || "none";
   console.warn(
     [
       "",
-      "╔════════════════════════════════════════════════════════════╗",
-      "║  LIVECHECK — settlement is DISABLED (mock / dev mode)     ║",
-      "║  Unpaid POST /v1/verify still returns a realistic 402.    ║",
-      `║  Missing: ${(missingLiveKeyNames().join(", ") || "none").slice(0, 46).padEnd(46)} ║`,
-      "║  Bypass for fixtures: X-Livecheck-Mock: 1                 ║",
-      "╚════════════════════════════════════════════════════════════╝",
+      "==============================================================",
+      " LIVECHECK — settlement is DISABLED (mock / dev mode)",
+      " Unpaid POST /v1/verify still returns a realistic 402.",
+      ` Missing: ${missing}`,
+      " Bypass for fixtures: X-Livecheck-Mock: 1",
+      "==============================================================",
       "",
     ].join("\n"),
   );
