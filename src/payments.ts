@@ -1,8 +1,10 @@
 import { createFacilitatorConfig } from "@coinbase/x402";
 import { HTTPFacilitatorClient } from "@x402/core/server";
+import type { FacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { bazaarResourceServerExtension } from "@x402/extensions/bazaar";
 import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
+import type { RoutesConfig } from "@x402/core/server";
 import type { MiddlewareHandler } from "hono";
 import { verifyBazaarExtensions } from "./bazaar.js";
 import {
@@ -14,12 +16,70 @@ import {
   missingLiveKeyNames,
   readLiveKeys,
 } from "./config.js";
-import { configuredPublicOrigin, publicVerifyUrl } from "./public-url.js";
-import { encodePaymentRequired, paymentRequiredBody } from "./x402-payload.js";
+import { publicVerifyUrl } from "./public-url.js";
+import {
+  advertisePaymentRequired,
+  decodePaymentRequired,
+  encodePaymentRequired,
+  paymentRequiredBody,
+} from "./x402-payload.js";
 import { createStripeClient, recordSettledPayment } from "./stripe-record.js";
 
 export function settlementMode(): "live" | "mock" {
   return isLiveSettlement() ? "live" : "mock";
+}
+
+/** Route config the live @x402/hono middleware actually reads for the 402. */
+export function verifyPaymentRoutes(payTo: string): RoutesConfig {
+  return {
+    "POST /v1/verify": {
+      accepts: [
+        {
+          scheme: "exact" as const,
+          price: PRICE_LABEL,
+          network: NETWORK as `${string}:${string}`,
+          payTo,
+        },
+      ],
+      description: VERIFY_DESCRIPTION,
+      mimeType: "application/json",
+      // Pin at boot: LIVECHECK_PUBLIC_URL or FLY_APP_NAME → https://<app>.fly.dev.
+      // Local mock/live without those stays localhost. withAdvertised402 still
+      // upgrades a leftover http://*.fly.dev request URL after the library 402.
+      resource: publicVerifyUrl(),
+      extensions: verifyBazaarExtensions(),
+    },
+  };
+}
+
+/**
+ * Rewrite the library 402 so resource.url / description / bazaar are what
+ * we advertise, not Fly's internal http:// request URL.
+ */
+export function withAdvertised402(inner: MiddlewareHandler): MiddlewareHandler {
+  return async (c, next) => {
+    const result = await inner(c, next);
+    const current = c.res ?? (result instanceof Response ? result : undefined);
+    if (!current || current.status !== 402) {
+      return result;
+    }
+    const raw = current.headers.get("payment-required") ?? current.headers.get("PAYMENT-REQUIRED");
+    if (!raw) return result;
+    let decoded: Record<string, unknown>;
+    try {
+      decoded = decodePaymentRequired(raw);
+    } catch {
+      return result;
+    }
+    const advertised = advertisePaymentRequired(decoded, c.req.url, c.req.header("host"));
+    const encoded = encodePaymentRequired(advertised);
+    // Re-emit via Hono so payment-required is not stuck on an immutable Fetch header map.
+    return c.body(await current.text(), 402, {
+      "content-type": current.headers.get("content-type") ?? "application/json",
+      "cache-control": current.headers.get("cache-control") ?? "no-store",
+      "payment-required": encoded,
+    });
+  };
 }
 
 export function applyPaymentGate(): MiddlewareHandler {
@@ -27,6 +87,27 @@ export function applyPaymentGate(): MiddlewareHandler {
     return livePaymentMiddleware();
   }
   return mockPaymentMiddleware();
+}
+
+/**
+ * Live @x402/hono gate. Used in production and in tests with a stub facilitator.
+ * Unpaid 402 still goes through paymentMiddleware so the test decodes the
+ * library header, then we overwrite resource/extensions for Fly https.
+ */
+export function livePaymentMiddlewareFromServer(
+  resourceServer: x402ResourceServer,
+  payTo: string,
+  syncFacilitatorOnStart = true,
+): MiddlewareHandler {
+  return withAdvertised402(
+    paymentMiddleware(verifyPaymentRoutes(payTo), resourceServer, undefined, undefined, syncFacilitatorOnStart),
+  );
+}
+
+export function resourceServerFromFacilitator(facilitatorClient: FacilitatorClient): x402ResourceServer {
+  return new x402ResourceServer(facilitatorClient)
+    .register(NETWORK, new ExactEvmScheme())
+    .registerExtension(bazaarResourceServerExtension);
 }
 
 function livePaymentMiddleware(): MiddlewareHandler {
@@ -38,37 +119,13 @@ function livePaymentMiddleware(): MiddlewareHandler {
   const facilitatorClient = new HTTPFacilitatorClient(
     createFacilitatorConfig(keys.cdpApiKeyId, keys.cdpApiKeySecret),
   );
-
-  const resourceServer = new x402ResourceServer(facilitatorClient)
-    .register(NETWORK, new ExactEvmScheme())
-    .registerExtension(bazaarResourceServerExtension);
-
+  const resourceServer = resourceServerFromFacilitator(facilitatorClient);
   const stripe = createStripeClient(keys.stripeSecretKey);
   resourceServer.onAfterSettle(async ({ result, requirements }) => {
     await recordSettledPayment(stripe, result, requirements);
   });
 
-  const publicResource = configuredPublicOrigin() ? publicVerifyUrl() : undefined;
-
-  return paymentMiddleware(
-    {
-      "POST /v1/verify": {
-        accepts: [
-          {
-            scheme: "exact",
-            price: PRICE_LABEL,
-            network: NETWORK,
-            payTo: keys.depositAddress,
-          },
-        ],
-        description: VERIFY_DESCRIPTION,
-        mimeType: "application/json",
-        ...(publicResource ? { resource: publicResource } : {}),
-        extensions: verifyBazaarExtensions(),
-      },
-    },
-    resourceServer,
-  );
+  return livePaymentMiddlewareFromServer(resourceServer, keys.depositAddress);
 }
 
 function mockPaymentMiddleware(): MiddlewareHandler {

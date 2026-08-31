@@ -1,15 +1,16 @@
 import { Hono } from "hono";
-import { NETWORK, PRICE_USD, USER_AGENT, isLiveSettlement, missingLiveKeyNames } from "./config.js";
+import type { MiddlewareHandler } from "hono";
+import { NETWORK, PRICE_USD, USER_AGENT, VERIFY_DESCRIPTION, isLiveSettlement, missingLiveKeyNames } from "./config.js";
 import { demoHtml } from "./demo-page.js";
 import { FIXTURES } from "./fixtures.js";
 import { applyPaymentGate, settlementMode } from "./payments.js";
 import { publicVerifyUrl } from "./public-url.js";
 import { VerifyError, parseTargetUrl, verifyUrl } from "./verify.js";
 
-export function createApp(): Hono {
+export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): Hono {
   const app = new Hono();
 
-  app.use(applyPaymentGate());
+  app.use(paymentGate);
 
   app.get("/health", (c) => {
     return c.json({
@@ -20,6 +21,8 @@ export function createApp(): Hono {
       network: NETWORK,
       price_usd: PRICE_USD,
       public_verify_url: publicVerifyUrl(c.req.url),
+      bazaar: true,
+      description: VERIFY_DESCRIPTION,
       user_agent: USER_AGENT,
     });
   });

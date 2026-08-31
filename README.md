@@ -45,6 +45,21 @@ Unpaid `POST /v1/verify` includes x402 v2 Bazaar discovery metadata (`extensions
 
 The 402 `resource.url` is `https://livecheck.fly.dev/v1/verify` in production. Locally it stays the request origin (`http://127.0.0.1:43127` by default). Set `LIVECHECK_PUBLIC_URL` (public, not a secret) when the process sits behind HTTP and must advertise HTTPS.
 
+`@x402/core` / `@x402/hono` **2.24.0 does put `extensions` on the 402** (`createPaymentRequiredResponse` copies `routeConfig.extensions` into the `payment-required` header; v2 body is `{}`). It also uses `routeConfig.resource` when set, otherwise `c.req.url`. Fly’s proxy speaks HTTP to the app, so the library 402 is `http://livecheck.fly.dev/v1/verify` unless we pin `resource` or rewrite the header. Live settlement uses that Hono middleware, not the mock helper. After the middleware returns 402 we overwrite `resource.url`, `resource.description`, and `extensions.bazaar` from `LIVECHECK_PUBLIC_URL` / `FLY_APP_NAME` / `Host` / the request URL (https for `*.fly.dev`).
+
+A production decode on 2026-08-31 (health 200, `settlement: stripe-x402`) still had the old description `"Primary-source live check"`, `resource.url` `http://…`, and **no** `extensions` key. That health payload also lacked `public_verify_url` / `bazaar` — the running image was the pre-Bazaar commit. Redeploy this tree. Confirm with:
+
+```bash
+curl -sS https://livecheck.fly.dev/health
+# expect public_verify_url + bazaar: true + the long description
+
+curl -sS -D - -o /dev/null https://livecheck.fly.dev/v1/verify \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com"}'
+# decode payment-required: resource.url must be https://livecheck.fly.dev/v1/verify
+# and extensions.bazaar must be present
+```
+
 ## Run locally
 
 ```bash
@@ -249,7 +264,7 @@ fly ssh console -C "curl -6 ifconfig.me"
 
 Default Fly egress IPs can change across hosts and deploys. If the allowlist keeps breaking, allocate a static egress pair for the app’s region (`fly ips allocate-egress -r sjc`, then `fly ips list`) and allowlist those addresses instead. Re-check with `fly ssh console` + `curl ifconfig.me` after you allocate.
 
-Public check (no payment): `curl -sS https://livecheck.fly.dev/health` should be `200` with `settlement: "stripe-x402"` once secrets are set. Unpaid `POST /v1/verify` must still be HTTP 402 with a `payment-required` header whose `resource.url` is `https://livecheck.fly.dev/v1/verify` (https, not http) and whose `extensions.bazaar` describes the JSON `{ url }` body.
+Public check (no payment): `curl -sS https://livecheck.fly.dev/health` should be `200` with `settlement: "stripe-x402"`, `bazaar: true`, and `public_verify_url: "https://livecheck.fly.dev/v1/verify"` once this commit is what is running. If health has no `public_verify_url`, Fly is still on an older image. Unpaid `POST /v1/verify` must still be HTTP 402 with a `payment-required` header whose `resource.url` is `https://livecheck.fly.dev/v1/verify` (https, not http) and whose `extensions.bazaar` describes the JSON `{ url }` body.
 
 After this ships: `fly deploy` from Origin, then one more **$0.05 paid** `POST /v1/verify` (Stripe `purl` or a paying wallet) so the CDP facilitator can catalog the Bazaar-enabled route. Listing the catalog is free; cataloging requires that paid settle.
 

@@ -7,6 +7,7 @@ import {
   VERIFY_DESCRIPTION,
   payToAddress,
 } from "./config.js";
+import { publicVerifyUrl } from "./public-url.js";
 
 export type PaymentRequiredBody = {
   x402Version: 2;
@@ -52,6 +53,48 @@ export function paymentRequiredBody(resourceUrl: string): PaymentRequiredBody {
   };
 }
 
-export function encodePaymentRequired(body: PaymentRequiredBody): string {
+export function encodePaymentRequired(body: PaymentRequiredBody | Record<string, unknown>): string {
   return Buffer.from(JSON.stringify(body), "utf8").toString("base64");
+}
+
+export function decodePaymentRequired(header: string): Record<string, unknown> {
+  return JSON.parse(Buffer.from(header, "base64").toString("utf8")) as Record<string, unknown>;
+}
+
+/**
+ * Force the fields CDP/wallets actually read off a 402.
+ * @x402/hono builds resource.url from routeConfig.resource or c.req.url.
+ * Fly's proxy presents http://livecheck.fly.dev to the app, so the library
+ * 402 is http unless we overwrite it after the middleware runs.
+ */
+export function advertisePaymentRequired(
+  payload: Record<string, unknown>,
+  requestUrl: string,
+  host?: string,
+): Record<string, unknown> {
+  const existingResource =
+    payload.resource && typeof payload.resource === "object"
+      ? (payload.resource as Record<string, unknown>)
+      : {};
+  const libraryExtensions =
+    payload.extensions && typeof payload.extensions === "object"
+      ? (payload.extensions as Record<string, unknown>)
+      : {};
+  const extensions: Record<string, unknown> = {
+    ...verifyBazaarExtensions(),
+    ...libraryExtensions,
+  };
+  if (!extensions.bazaar) {
+    Object.assign(extensions, verifyBazaarExtensions());
+  }
+  return {
+    ...payload,
+    resource: {
+      ...existingResource,
+      url: publicVerifyUrl(requestUrl, host),
+      description: VERIFY_DESCRIPTION,
+      mimeType: "application/json",
+    },
+    extensions,
+  };
 }

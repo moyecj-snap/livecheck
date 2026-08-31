@@ -37,14 +37,27 @@ export function configuredPublicOrigin(): string | undefined {
   return undefined;
 }
 
-/** Public origin for 402 resource URLs. Not a secret. */
-export function publicOrigin(requestUrl?: string): string {
-  const configured = configuredPublicOrigin();
-  if (configured) return configured;
-  if (!requestUrl) return `http://127.0.0.1:${DEFAULT_PORT}`;
-  return httpsIfFly(new URL(requestUrl).origin);
+function flyHost(host?: string): string | undefined {
+  const name = host?.trim().split(":")[0];
+  if (!name) return undefined;
+  if (name === "livecheck.fly.dev" || name.endsWith(".fly.dev")) return name;
+  return undefined;
 }
 
-export function publicVerifyUrl(requestUrl?: string): string {
-  return `${publicOrigin(requestUrl)}/v1/verify`;
+/** Public origin for 402 resource URLs. Not a secret. */
+export function publicOrigin(requestUrl?: string, host?: string): string {
+  const configured = configuredPublicOrigin();
+  if (configured) return configured;
+  const fromHost = flyHost(host);
+  if (fromHost) return `https://${fromHost}`;
+  if (!requestUrl) return `http://127.0.0.1:${DEFAULT_PORT}`;
+  try {
+    return httpsIfFly(new URL(requestUrl).origin);
+  } catch {
+    return `http://127.0.0.1:${DEFAULT_PORT}`;
+  }
+}
+
+export function publicVerifyUrl(requestUrl?: string, host?: string): string {
+  return `${publicOrigin(requestUrl, host)}/v1/verify`;
 }

@@ -65,6 +65,15 @@ describe("public verify URL", () => {
     }
   });
 
+  it("uses the Host header for *.fly.dev when env is unset", () => {
+    withoutPublicUrl(() => {
+      assert.equal(
+        publicVerifyUrl("http://127.0.0.1:43127/v1/verify", "livecheck.fly.dev"),
+        "https://livecheck.fly.dev/v1/verify",
+      );
+    });
+  });
+
   it("uses FLY_APP_NAME when LIVECHECK_PUBLIC_URL is unset", () => {
     const previous = process.env.LIVECHECK_PUBLIC_URL;
     const previousFly = process.env.FLY_APP_NAME;

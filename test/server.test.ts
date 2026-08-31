@@ -24,10 +24,18 @@ describe("HTTP surface", () => {
   it("GET /health is free and reports mock settlement", async () => {
     const res = await fetch(`${origin}/health`);
     assert.equal(res.status, 200);
-    const body = (await res.json()) as { ok: boolean; settlement: string; price_usd: number };
+    const body = (await res.json()) as {
+      ok: boolean;
+      settlement: string;
+      price_usd: number;
+      bazaar?: boolean;
+      public_verify_url?: string;
+    };
     assert.equal(body.ok, true);
     assert.equal(body.settlement, "disabled");
     assert.equal(body.price_usd, 0.05);
+    assert.equal(body.bazaar, true);
+    assert.ok(body.public_verify_url?.endsWith("/v1/verify"));
   });
 
   it("GET / is a human demo page", async () => {
