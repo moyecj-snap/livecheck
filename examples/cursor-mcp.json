@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "livecheck": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["tsx", "${workspaceFolder}/src/mcp.ts"],
+      "env": {
+        "LIVECHECK_URL": "http://127.0.0.1:43127/v1/verify"
+      }
+    }
+  }
+}

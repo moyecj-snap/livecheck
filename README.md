@@ -64,7 +64,7 @@ curl -s http://127.0.0.1:43127/v1/verify \
   -d '{"url":"http://127.0.0.1:43127/fixtures/closed-to-new-applications"}'
 ```
 
-`npm test` runs fixture-based classifier and HTTP tests (closed Greenhouse redirect, two “closed to new applications” pages, 200 + Apply Now, 404).
+`npm test` runs fixture-based classifier, HTTP, and MCP client tests (closed Greenhouse redirect, two “closed to new applications” pages, 200 + Apply Now, 404).
 
 ## Stripe + Coinbase setup (live settlement)
 
@@ -107,6 +107,64 @@ purl http://127.0.0.1:43127/v1/verify \
 ```
 
 `purl` moves real funds because the deposit address is a live-mode Base address.
+
+## Cursor MCP (local agent)
+
+A stdio MCP in this repo exposes one tool, `verify_listing(url)`. It POSTs `{ "url": "..." }` to `LIVECHECK_URL` (default `http://127.0.0.1:43127/v1/verify`). There is no wallet, no private key, and no x402 spender in the MCP. It does not send `X-Livecheck-Mock` (that header is ignored in live settlement mode anyway).
+
+- Unpaid API → tool result is structured: `paid: false`, `http: 402`, plus the decoded `payment-required` fields (x402 v2). Not a vague throw.
+- HTTP 200 → the verify JSON is returned as-is.
+
+Keep the HTTP server running (`npm start`), then point Cursor at the MCP.
+
+1. Copy the example into the project file Cursor reads, or into your user config:
+
+```bash
+# this project
+mkdir -p .cursor
+cp examples/cursor-mcp.json .cursor/mcp.json
+
+# or all Cursor projects
+cp examples/cursor-mcp.json ~/.cursor/mcp.json
+```
+
+2. If you paste by hand, use this shape (`command` / `args` / `env`):
+
+```json
+{
+  "mcpServers": {
+    "livecheck": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["tsx", "${workspaceFolder}/src/mcp.ts"],
+      "env": {
+        "LIVECHECK_URL": "http://127.0.0.1:43127/v1/verify"
+      }
+    }
+  }
+}
+```
+
+`${workspaceFolder}` is the repo root (the folder that contains `.cursor/mcp.json`). You can also pass an absolute path to `src/mcp.ts`. After `npm install`, this is equivalent:
+
+```json
+{
+  "mcpServers": {
+    "livecheck": {
+      "type": "stdio",
+      "command": "${workspaceFolder}/node_modules/.bin/tsx",
+      "args": ["${workspaceFolder}/src/mcp.ts"],
+      "env": {
+        "LIVECHECK_URL": "http://127.0.0.1:43127/v1/verify"
+      }
+    }
+  }
+}
+```
+
+3. Reload Cursor (or toggle the server under Customize → MCP). Ask the agent to `verify_listing` a job URL. An unpaid call should come back as HTTP 402 with `paid: false` and the Base USDC requirements. A request that the HTTP server has already settled returns the live/closed/unknown verdict.
+
+Do not put Stripe or CDP secrets in `mcp.json`. Those stay in the HTTP server’s local `.env`. The MCP only needs `LIVECHECK_URL`.
 
 ## Honest limits
 
