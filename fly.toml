@@ -6,6 +6,10 @@ primary_region = "sjc"
 
 [build]
 
+# Public origin for 402 resource.url (https). Not a secret.
+[env]
+  LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev"
+
 [http_service]
   internal_port = 43127
   force_https = true

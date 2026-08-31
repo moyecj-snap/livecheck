@@ -52,7 +52,8 @@ describe("HTTP surface", () => {
     assert.equal(decoded.accepts[0].scheme, "exact");
     assert.equal(decoded.accepts[0].network, "eip155:8453");
     assert.equal(decoded.accepts[0].amount, PRICE_ATOMIC_USDC);
-    assert.equal(decoded.resource.description, "Primary-source live check");
+    assert.match(decoded.resource.description, /specific product or job URL/);
+    assert.ok(decoded.extensions?.bazaar);
   });
 
   it("mock-paid closed fixture returns status closed", async () => {

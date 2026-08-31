@@ -1,8 +1,10 @@
 import { createFacilitatorConfig } from "@coinbase/x402";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { bazaarResourceServerExtension } from "@x402/extensions/bazaar";
 import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import type { MiddlewareHandler } from "hono";
+import { verifyBazaarExtensions } from "./bazaar.js";
 import {
   MOCK_PAYMENT_HEADER,
   NETWORK,
@@ -12,6 +14,7 @@ import {
   missingLiveKeyNames,
   readLiveKeys,
 } from "./config.js";
+import { configuredPublicOrigin, publicVerifyUrl } from "./public-url.js";
 import { encodePaymentRequired, paymentRequiredBody } from "./x402-payload.js";
 import { createStripeClient, recordSettledPayment } from "./stripe-record.js";
 
@@ -36,15 +39,16 @@ function livePaymentMiddleware(): MiddlewareHandler {
     createFacilitatorConfig(keys.cdpApiKeyId, keys.cdpApiKeySecret),
   );
 
-  const resourceServer = new x402ResourceServer(facilitatorClient).register(
-    NETWORK,
-    new ExactEvmScheme(),
-  );
+  const resourceServer = new x402ResourceServer(facilitatorClient)
+    .register(NETWORK, new ExactEvmScheme())
+    .registerExtension(bazaarResourceServerExtension);
 
   const stripe = createStripeClient(keys.stripeSecretKey);
   resourceServer.onAfterSettle(async ({ result, requirements }) => {
     await recordSettledPayment(stripe, result, requirements);
   });
+
+  const publicResource = configuredPublicOrigin() ? publicVerifyUrl() : undefined;
 
   return paymentMiddleware(
     {
@@ -59,6 +63,8 @@ function livePaymentMiddleware(): MiddlewareHandler {
         ],
         description: VERIFY_DESCRIPTION,
         mimeType: "application/json",
+        ...(publicResource ? { resource: publicResource } : {}),
+        extensions: verifyBazaarExtensions(),
       },
     },
     resourceServer,
@@ -81,8 +87,7 @@ function mockPaymentMiddleware(): MiddlewareHandler {
       return next();
     }
 
-    const origin = new URL(c.req.url).origin;
-    const body = paymentRequiredBody(`${origin}/v1/verify`);
+    const body = paymentRequiredBody(publicVerifyUrl(c.req.url));
     const encoded = encodePaymentRequired(body);
     c.header("payment-required", encoded);
     c.header("cache-control", "no-store");

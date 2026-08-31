@@ -11,7 +11,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "mcp": "tsx src/mcp.ts",
-    "test": "tsx --test test/classify.test.ts test/verify.test.ts test/server.test.ts test/mcp-client.test.ts test/mcp-stdio.test.ts test/config.test.ts",
+    "test": "tsx --test test/classify.test.ts test/verify.test.ts test/server.test.ts test/mcp-client.test.ts test/mcp-stdio.test.ts test/config.test.ts test/public-url.test.ts test/bazaar.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -20,6 +20,7 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@x402/core": "^2.24.0",
     "@x402/evm": "^2.24.0",
+    "@x402/extensions": "^2.24.0",
     "@x402/hono": "^2.24.0",
     "hono": "^4.13.5",
     "stripe": "^22.6.0",

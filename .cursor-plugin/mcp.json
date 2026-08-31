@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "livecheck": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["tsx", "${PLUGIN_ROOT}/src/mcp.ts"],
+      "env": {
+        "LIVECHECK_URL": "https://livecheck.fly.dev/v1/verify"
+      }
+    }
+  }
+}

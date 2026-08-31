@@ -3,6 +3,7 @@ import { NETWORK, PRICE_USD, USER_AGENT, isLiveSettlement, missingLiveKeyNames }
 import { demoHtml } from "./demo-page.js";
 import { FIXTURES } from "./fixtures.js";
 import { applyPaymentGate, settlementMode } from "./payments.js";
+import { publicVerifyUrl } from "./public-url.js";
 import { VerifyError, parseTargetUrl, verifyUrl } from "./verify.js";
 
 export function createApp(): Hono {
@@ -18,6 +19,7 @@ export function createApp(): Hono {
       missing_keys: isLiveSettlement() ? [] : missingLiveKeyNames(),
       network: NETWORK,
       price_usd: PRICE_USD,
+      public_verify_url: publicVerifyUrl(c.req.url),
       user_agent: USER_AGENT,
     });
   });

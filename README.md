@@ -41,6 +41,10 @@ v1 reads HTML + status only. It does not execute page JavaScript. Redirects are 
 
 Free routes: `GET /` (human demo) and `GET /health`. Paid: only `POST /v1/verify`.
 
+Unpaid `POST /v1/verify` includes x402 v2 Bazaar discovery metadata (`extensions.bazaar` via `bazaarResourceServerExtension` + `declareDiscoveryExtension`). Listing in [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) is free to browse; CDP catalogs this route after a successful paid request that carries the extension. The description is agent-readable: this is a primary-source live/closed/unknown check for a specific product or job URL (in-stock, price, apply/buy) — not a search engine.
+
+The 402 `resource.url` is `https://livecheck.fly.dev/v1/verify` in production. Locally it stays the request origin (`http://127.0.0.1:43127` by default). Set `LIVECHECK_PUBLIC_URL` (public, not a secret) when the process sits behind HTTP and must advertise HTTPS.
+
 ## Run locally
 
 ```bash
@@ -110,7 +114,7 @@ purl http://127.0.0.1:43127/v1/verify \
 
 ## Cursor MCP (local agent)
 
-A stdio MCP in this repo exposes one tool, `verify_listing(url)`. It POSTs `{ "url": "..." }` to `LIVECHECK_URL` (default `http://127.0.0.1:43127/v1/verify`). There is no wallet, no private key, and no x402 spender in the MCP. It does not send `X-Livecheck-Mock` (that header is ignored in live settlement mode anyway).
+A stdio MCP in this repo exposes one tool, `verify_listing(url)`. It POSTs `{ "url": "..." }` to `LIVECHECK_URL` (default `http://127.0.0.1:43127/v1/verify`). There is no wallet, no private key, and no x402 spender in the MCP. Cursor MCP stdio still does not pay. `verify_listing` reports HTTP 402 and the decoded `payment-required` fields. Paying is x402 — Stripe `purl` or an agent wallet that can settle USDC on Base. The MCP does not send `X-Livecheck-Mock` (that header is ignored in live settlement mode anyway).
 
 - Unpaid API → tool result is structured: `paid: false`, `http: 402`, plus the decoded `payment-required` fields (x402 v2). Not a vague throw.
 - HTTP 200 → the verify JSON is returned as-is.
@@ -166,11 +170,38 @@ cp examples/cursor-mcp.json ~/.cursor/mcp.json
 
 Do not put Stripe or CDP secrets in `mcp.json`. Those stay in the HTTP server’s local `.env`. The MCP only needs `LIVECHECK_URL`.
 
+### Cursor plugin (Marketplace later)
+
+Packaging for a later Cursor Marketplace submit lives in this repo:
+
+- `.cursor-plugin/plugin.json` — plugin name, author, honest description
+- `mcp.json` (repo root; also copied under `.cursor-plugin/`) — stdio MCP pointed at `LIVECHECK_URL=https://livecheck.fly.dev/v1/verify`
+
+No secrets in those files. The plugin does not pay. `verify_listing` against production still reports 402 until a wallet or `purl` settles.
+
+Cursor Marketplace is human distribution. It requires a **public GitHub repository** at submit time. Origin remains the source of truth. Do not create a GitHub repo from this session. When you want Marketplace, publish a public GitHub copy yourself and submit it.
+
+Local agent work stays `examples/cursor-mcp.json` (localhost). The plugin `mcp.json` is the production URL for Marketplace.
+
 ## Fly.io (public HTTPS)
 
 Livecheck is a long-running Node process, not a serverless web app. Fly.io is the intended public deploy: HTTPS in front of `npm start`, so other agents can hit `POST /v1/verify` and pay. Vercel is the wrong shape.
 
-This repo already has `Dockerfile` and `fly.toml` (`app = "livecheck"`, internal port `43127`, HTTPS, `GET /health`, machine kept up). Origin is the source of truth — deploy from this tree. Do not clone the app to GitHub for Fly.
+This repo already has `Dockerfile` and `fly.toml` (`app = "livecheck"`, internal port `43127`, HTTPS, `GET /health`, machine kept up). `fly.toml` `[env]` sets the public (not secret) origin:
+
+```toml
+[env]
+  LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev"
+```
+
+That value is public and belongs in `fly.toml`, not in git as a secret. If you ever set it outside the file, it is still not a secret:
+
+```bash
+# public origin — do not treat this as a Stripe/CDP secret
+fly secrets set LIVECHECK_PUBLIC_URL=https://livecheck.fly.dev
+```
+
+Prefer the `fly.toml` `[env]` entry already in the repo. Origin is the source of truth — deploy from this tree. Do not clone the app to GitHub for Fly.
 
 On a Mac, with [flyctl](https://fly.io/docs/flyctl/install/) installed:
 
@@ -218,7 +249,14 @@ fly ssh console -C "curl -6 ifconfig.me"
 
 Default Fly egress IPs can change across hosts and deploys. If the allowlist keeps breaking, allocate a static egress pair for the app’s region (`fly ips allocate-egress -r sjc`, then `fly ips list`) and allowlist those addresses instead. Re-check with `fly ssh console` + `curl ifconfig.me` after you allocate.
 
-Public check (no payment): `curl -sS https://<your-app>.fly.dev/health` should be `200` with `settlement: "stripe-x402"` once secrets are set. Unpaid `POST /v1/verify` must still be HTTP 402 with a `payment-required` header.
+Public check (no payment): `curl -sS https://livecheck.fly.dev/health` should be `200` with `settlement: "stripe-x402"` once secrets are set. Unpaid `POST /v1/verify` must still be HTTP 402 with a `payment-required` header whose `resource.url` is `https://livecheck.fly.dev/v1/verify` (https, not http) and whose `extensions.bazaar` describes the JSON `{ url }` body.
+
+After this ships: `fly deploy` from Origin, then one more **$0.05 paid** `POST /v1/verify` (Stripe `purl` or a paying wallet) so the CDP facilitator can catalog the Bazaar-enabled route. Listing the catalog is free; cataloging requires that paid settle.
+
+## How agents find this
+
+- **Wallet-agents:** [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) / Agentic.market. They search a free catalog of paid APIs, then pay $0.05 USDC on Base to `POST /v1/verify`.
+- **Humans in Cursor:** Cursor Marketplace (later). Needs a public GitHub repository for submit. Do not create one here. Until then, point Cursor at the stdio MCP in this repo. The MCP reports 402; paying is x402.
 
 ## Honest limits
 

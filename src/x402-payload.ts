@@ -1,3 +1,4 @@
+import { verifyBazaarExtensions } from "./bazaar.js";
 import {
   NETWORK,
   PRICE_ATOMIC_USDC,
@@ -24,6 +25,7 @@ export type PaymentRequiredBody = {
     maxTimeoutSeconds: number;
     extra: { name: string; version: string };
   }>;
+  extensions: Record<string, unknown>;
 };
 
 export function paymentRequiredBody(resourceUrl: string): PaymentRequiredBody {
@@ -46,6 +48,7 @@ export function paymentRequiredBody(resourceUrl: string): PaymentRequiredBody {
         extra: { name: USDC_EIP712.name, version: USDC_EIP712.version },
       },
     ],
+    extensions: verifyBazaarExtensions(),
   };
 }
 

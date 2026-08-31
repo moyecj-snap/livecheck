@@ -5,7 +5,8 @@ export const PRICE_ATOMIC_USDC = "50000";
 export const NETWORK = "eip155:8453";
 export const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 export const USDC_EIP712 = { name: "USD Coin", version: "2" } as const;
-export const VERIFY_DESCRIPTION = "Primary-source live check";
+export const VERIFY_DESCRIPTION =
+  "Primary-source live/closed/unknown check for a specific product or job URL (in-stock, price, apply/buy). Not a search engine: you already have the URL.";
 export const USER_AGENT =
   "Livecheck/0.1 (+https://livecheck.local; primary-source verification)";
 export const FETCH_TIMEOUT_MS = 8_000;

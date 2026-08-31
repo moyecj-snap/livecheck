@@ -9,6 +9,8 @@ agent-tools
 test
 examples
 .cursor
+.cursor-plugin
+mcp.json
 README.md
 fly.toml
 .dockerignore
