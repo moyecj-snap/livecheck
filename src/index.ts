@@ -28,5 +28,5 @@ if (!isLiveSettlement()) {
 
 serve({ fetch: app.fetch, port: listenPort, hostname: "0.0.0.0" }, (info) => {
   const shown = info.port || listenPort || DEFAULT_PORT;
-  console.log(`Livecheck listening on http://127.0.0.1:${shown}`);
+  console.log(`Livecheck listening on 0.0.0.0:${shown} (local: http://127.0.0.1:${shown})`);
 });
