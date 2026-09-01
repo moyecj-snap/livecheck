@@ -12,5 +12,6 @@
     "verification",
     "jobs",
     "bazaar"
-  ]
+  ],
+  "logo": ".cursor-plugin/logo.svg"
 }
