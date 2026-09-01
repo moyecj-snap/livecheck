@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { serve } from "@hono/node-server";
 import { createApp } from "../src/app.js";
-import { PRICE_ATOMIC_USDC } from "../src/config.js";
+import { PRICE_ATOMIC_USDC, PRICE_USD } from "../src/config.js";
 import { encodePaymentRequired, paymentRequiredBody } from "../src/x402-payload.js";
 import {
   DEFAULT_LIVECHECK_URL,
@@ -62,7 +62,7 @@ describe("mcp client mapping", () => {
       checked_at: "2026-08-30T21:00:00Z",
       signals: ["apply form present"],
       confidence: 0.8,
-      price_usd: 0.05,
+      price_usd: PRICE_USD,
     };
     let captured: Headers | undefined;
     const result = await verifyListing(verdict.url, {

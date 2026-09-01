@@ -2,7 +2,9 @@
 
 A prototype primary-source verification API. You already have a URL. Livecheck fetches that page — not a search index, not an aggregator copy — and returns whether it is still a live, open source.
 
-Agents pay **$0.05 USDC** per `POST /v1/verify` on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md). First vertical: job postings / ATS. The endpoint accepts any `http(s)` URL.
+Agents pay **$0.01 USDC** per `POST /v1/verify` on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md). First vertical: job postings / ATS. The endpoint accepts any `http(s)` URL.
+
+Before you scrape a job or product page, POST the URL. Livecheck fetches the source and returns live, closed, or unknown plus title and signals (apply form, sold-out, 404). Not a search engine.
 
 This is a per-check agent API, not a platform.
 
@@ -27,7 +29,7 @@ After payment verifies and settles:
   "title": "Staff Backend Engineer — Northwind Labs",
   "signals": ["apply form present", "no closure banner"],
   "confidence": 0.82,
-  "price_usd": 0.05
+  "price_usd": 0.01
 }
 ```
 
@@ -41,7 +43,7 @@ v1 reads HTML + status only. It does not execute page JavaScript. Redirects are 
 
 Free routes: `GET /` (human demo) and `GET /health`. Paid: only `POST /v1/verify`.
 
-Unpaid `POST /v1/verify` includes x402 v2 Bazaar discovery metadata (`extensions.bazaar` via `bazaarResourceServerExtension` + `declareDiscoveryExtension`). Listing in [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) is free to browse; CDP catalogs this route after a successful paid request that carries the extension. The description is agent-readable: this is a primary-source live/closed/unknown check for a specific product or job URL (in-stock, price, apply/buy) — not a search engine.
+Unpaid `POST /v1/verify` includes x402 v2 Bazaar discovery metadata (`extensions.bazaar` via `bazaarResourceServerExtension` + `declareDiscoveryExtension`). Listing in [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) is free to browse; CDP catalogs this route after a successful paid request that carries the extension. The 402 `resource.description` (and health `description`) is: Before you scrape a job or product page, POST the URL. Livecheck fetches the source and returns live, closed, or unknown plus title and signals (apply form, sold-out, 404). Not a search engine.
 
 The 402 `resource.url` is `https://livecheck.fly.dev/v1/verify` in production. Locally it stays the request origin (`http://127.0.0.1:43127` by default). Set `LIVECHECK_PUBLIC_URL` (public, not a secret) when the process sits behind HTTP and must advertise HTTPS.
 
@@ -270,11 +272,11 @@ Default Fly egress IPs can change across hosts and deploys. If the allowlist kee
 
 Public check (no payment): `curl -sS https://livecheck.fly.dev/health` should be `200` with `settlement: "stripe-x402"`, `bazaar: true`, and `public_verify_url: "https://livecheck.fly.dev/v1/verify"` once this commit is what is running. If health has no `public_verify_url`, Fly is still on an older image. Unpaid `POST /v1/verify` must still be HTTP 402 with a `payment-required` header whose `resource.url` is `https://livecheck.fly.dev/v1/verify` (https, not http) and whose `extensions.bazaar` describes the JSON `{ url }` body.
 
-After this ships: `fly deploy` from Origin, then one more **$0.05 paid** `POST /v1/verify` (Stripe `purl` or a paying wallet) so the CDP facilitator can catalog the Bazaar-enabled route. Listing the catalog is free; cataloging requires that paid settle.
+After this ships: `fly deploy` from Origin. Listing the catalog is free; CDP catalogs the route after a successful paid settle (exact, $0.01 USDC on Base). This repo does not trigger that payment.
 
 ## How agents find this
 
-- **Wallet-agents:** [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) / Agentic.market. They search a free catalog of paid APIs, then pay $0.05 USDC on Base to `POST /v1/verify`.
+- **Wallet-agents:** [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) / Agentic.market. They search a free catalog of paid APIs, then pay $0.01 USDC on Base to `POST /v1/verify`.
 - **Humans in Cursor:** Cursor Marketplace (later). Needs a public GitHub repository for submit. Do not create one here. Until then, point Cursor at the stdio MCP in this repo. The MCP reports 402; paying is x402.
 
 ## Honest limits

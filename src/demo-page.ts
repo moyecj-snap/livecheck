@@ -1,6 +1,7 @@
 import {
   MOCK_PAYMENT_HEADER,
   PRICE_USD,
+  VERIFY_DESCRIPTION,
   isLiveSettlement,
   missingLiveKeyNames,
 } from "./config.js";
@@ -109,9 +110,8 @@ export function demoHtml(origin: string): string {
     <p class="muted">Prototype · per-check agent API · jobs-first heuristics</p>
     <h1>Livecheck</h1>
     <p class="lede">
-      You already have a URL. Livecheck fetches that page — not a search index —
-      and tells an agent whether it is still a live primary source. First vertical:
-      job postings / ATS. Price is <strong>$${PRICE_USD.toFixed(2)} USDC</strong> on Base per request.
+      ${escapeHtml(VERIFY_DESCRIPTION)}
+      Price is <strong>$${PRICE_USD.toFixed(2)} USDC</strong> on Base per request.
     </p>
 
     <h2>Try it</h2>

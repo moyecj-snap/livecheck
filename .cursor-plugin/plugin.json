@@ -1,7 +1,7 @@
 {
   "name": "livecheck",
   "version": "0.1.0",
-  "description": "Primary-source live/closed/unknown check for a specific product or job URL. MCP verify_listing reports 402; paying is x402 (purl or an agent wallet).",
+  "description": "Before you scrape a job or product page, POST the URL. Livecheck fetches the source and returns live, closed, or unknown plus title and signals (apply form, sold-out, 404). Not a search engine.",
   "author": {
     "name": "Craig Moye"
   },

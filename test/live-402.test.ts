@@ -84,6 +84,9 @@ describe("live @x402/hono 402 (decoded payment-required)", () => {
     assert.equal(extensions.bazaar?.info?.input?.method, "POST");
     assert.equal(typeof extensions.bazaar?.info?.input?.body?.url, "string");
     assert.equal(decoded.x402Version, 2);
+    const accepts = decoded.accepts as Array<{ amount?: string; scheme?: string }>;
+    assert.equal(accepts[0]?.scheme, "exact");
+    assert.equal(accepts[0]?.amount, "10000");
     assertInfoInputMatchesSchema(extensions.bazaar, "live @x402/hono 402");
   });
 });

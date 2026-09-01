@@ -127,7 +127,7 @@ describe("wrapFacilitatorForCatalog", () => {
           scheme: "exact",
           network: NETWORK,
           asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-          amount: "50000",
+          amount: "10000",
           payTo: "0x2222222222222222222222222222222222222222",
           maxTimeoutSeconds: 60,
           extra: {},

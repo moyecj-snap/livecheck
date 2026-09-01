@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { classify } from "../src/classify.js";
 import { FIXTURES } from "../src/fixtures.js";
+import { PRICE_USD } from "../src/config.js";
 import type { FetchedPage } from "../src/types.js";
 
 function page(partial: Partial<FetchedPage> & Pick<FetchedPage, "requestedUrl" | "html" | "httpStatus">): FetchedPage {
@@ -29,7 +30,7 @@ describe("classify fixtures", () => {
     assert.equal(verdict.status, "live");
     assert.ok(verdict.signals.includes("apply form present"));
     assert.ok(verdict.signals.includes("no closure banner"));
-    assert.equal(verdict.price_usd, 0.05);
+    assert.equal(verdict.price_usd, PRICE_USD);
   });
 
   it("marks Greenhouse 'closed to new applications' as closed", () => {

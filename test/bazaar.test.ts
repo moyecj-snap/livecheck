@@ -62,6 +62,7 @@ describe("bazaar discovery metadata", () => {
     ]) {
       assert.ok(key in (example.output?.example ?? {}), `expected output example.${key}`);
     }
+    assert.equal(example.output?.example?.price_usd, 0.01);
   });
 
   it("info.input validates against schema.properties.input (CDP settle check)", () => {
@@ -94,7 +95,7 @@ describe("bazaar discovery metadata", () => {
     );
   });
 
-  it("live Fly 402 extensions.bazaar (2026-09-01) info.input matches schema.properties.input", () => {
+  it("live Fly 402 extensions.bazaar (2026-09-01 snapshot) info.input matches schema.properties.input", () => {
     const bazaar = live402.extensions?.bazaar;
     assert.ok(bazaar, "expected fixture extensions.bazaar");
     assert.equal(bazaar.info?.input?.method, "POST");
@@ -167,6 +168,8 @@ describe("402 bazaar + public URL", () => {
     assert.equal(decoded.extensions.bazaar.info.input.bodyType, "json");
     assert.equal(decoded.extensions.bazaar.info.input.method, "POST");
     assert.ok(decoded.extensions.bazaar.info.input.body.url);
+    assert.equal(decoded.extensions.bazaar.info.output.example.price_usd, 0.01);
+    assert.equal(decoded.accepts[0].amount, "10000");
     assert.equal(decoded.x402Version, 2);
     assertInfoInputMatchesSchema(decoded.extensions.bazaar, "live 402 payment-required");
   });

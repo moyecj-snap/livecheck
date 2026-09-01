@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { serve } from "@hono/node-server";
 import { createApp } from "../src/app.js";
-import { PRICE_ATOMIC_USDC } from "../src/config.js";
+import { PRICE_ATOMIC_USDC, PRICE_USD, VERIFY_DESCRIPTION } from "../src/config.js";
 
 describe("HTTP surface", () => {
   const app = createApp();
@@ -30,10 +30,12 @@ describe("HTTP surface", () => {
       price_usd: number;
       bazaar?: boolean;
       public_verify_url?: string;
+      description?: string;
     };
     assert.equal(body.ok, true);
     assert.equal(body.settlement, "disabled");
-    assert.equal(body.price_usd, 0.05);
+    assert.equal(body.price_usd, PRICE_USD);
+    assert.equal(body.description, VERIFY_DESCRIPTION);
     assert.equal(body.bazaar, true);
     assert.ok(body.public_verify_url?.endsWith("/v1/verify"));
   });
@@ -44,6 +46,8 @@ describe("HTTP surface", () => {
     const html = await res.text();
     assert.match(html, /Livecheck/);
     assert.match(html, /payment-required/);
+    assert.match(html, /Before you scrape a job or product page/);
+    assert.match(html, /\$0\.01 USDC/);
   });
 
   it("POST /v1/verify without payment returns HTTP 402 and payment-required", async () => {
@@ -60,8 +64,10 @@ describe("HTTP surface", () => {
     assert.equal(decoded.accepts[0].scheme, "exact");
     assert.equal(decoded.accepts[0].network, "eip155:8453");
     assert.equal(decoded.accepts[0].amount, PRICE_ATOMIC_USDC);
-    assert.match(decoded.resource.description, /specific product or job URL/);
+    assert.equal(decoded.accepts[0].amount, "10000");
+    assert.equal(decoded.resource.description, VERIFY_DESCRIPTION);
     assert.ok(decoded.extensions?.bazaar);
+    assert.equal(decoded.extensions.bazaar.info.output.example.price_usd, PRICE_USD);
   });
 
   it("mock-paid closed fixture returns status closed", async () => {
@@ -90,6 +96,6 @@ describe("HTTP surface", () => {
     assert.equal(res.status, 200);
     const body = (await res.json()) as { status: string; price_usd: number };
     assert.equal(body.status, "live");
-    assert.equal(body.price_usd, 0.05);
+    assert.equal(body.price_usd, PRICE_USD);
   });
 });

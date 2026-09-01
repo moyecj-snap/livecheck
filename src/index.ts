@@ -23,7 +23,7 @@ if (!isLiveSettlement()) {
     ].join("\n"),
   );
 } else {
-  console.log("Livecheck settlement: Stripe x402 on Base (USDC), $0.05 per verify.");
+  console.log("Livecheck settlement: Stripe x402 on Base (USDC), $0.01 per verify.");
 }
 
 serve({ fetch: app.fetch, port: listenPort, hostname: "0.0.0.0" }, (info) => {
