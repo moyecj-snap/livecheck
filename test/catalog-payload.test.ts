@@ -11,6 +11,7 @@ import {
 } from "../src/catalog-payload.js";
 import { wrapFacilitatorForCatalog } from "../src/facilitator-catalog.js";
 import { NETWORK } from "../src/config.js";
+import { assertInfoInputMatchesSchema, type BazaarExt } from "./bazaar-schema.js";
 
 const advertised = "https://livecheck.fly.dev/v1/verify";
 
@@ -26,6 +27,7 @@ describe("fillCatalogPaymentPayload", () => {
       assert.equal(paymentPayloadResourceUrl(payload), advertised);
       assert.equal((payload.resource as { description?: string }).description, VERIFY_DESCRIPTION);
       assert.ok(paymentPayloadHasBazaar(payload));
+      assertInfoInputMatchesSchema(payload.extensions?.bazaar as BazaarExt, "settle-filled bazaar");
       const summary = summarizeCatalogPayload(inbound);
       assert.equal(summary.resource_present, false);
       assert.equal(summary.bazaar_echo, false);

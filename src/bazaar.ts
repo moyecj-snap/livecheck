@@ -38,8 +38,8 @@ export const VERIFY_OUTPUT_SCHEMA = {
   ],
 } as const;
 
+/** Body JSON Schema only — goodsong.dev/verify/url omits a wrapper `type`. */
 export const VERIFY_INPUT_SCHEMA = {
-  type: "object",
   properties: {
     url: {
       type: "string",
@@ -50,13 +50,72 @@ export const VERIFY_INPUT_SCHEMA = {
   required: ["url"],
 } as const;
 
+type BazaarDeclaration = {
+  info?: {
+    input?: Record<string, unknown>;
+    output?: Record<string, unknown>;
+  };
+  schema?: {
+    properties?: {
+      input?: {
+        properties?: Record<string, unknown>;
+        required?: string[];
+        additionalProperties?: boolean;
+        type?: string;
+      };
+    };
+  };
+};
+
+/**
+ * declareDiscoveryExtension({ bodyType: "json" }) writes info.input as
+ * { type, bodyType, body } and omits method. schema.properties.input.required
+ * is ["type","method","bodyType","body"]. AJV: "/input: must have required
+ * property 'method'". bazaarResourceServerExtension.enrichDeclaration adds
+ * method from the HTTP request on the 402 only. Settle backfill injects this
+ * object without that enricher — CDP then rejects "invalid discovery
+ * configuration". goodsong.dev/verify/url (indexed) has method: "POST".
+ */
+function withPostJsonMethod(declared: Record<string, unknown>): Record<string, unknown> {
+  const bazaar = (declared.bazaar ?? declared) as BazaarDeclaration;
+  const input = { ...(bazaar.info?.input ?? {}) };
+  input.type = "http";
+  input.method = "POST";
+  input.bodyType = "json";
+  const inputSchema = bazaar.schema?.properties?.input ?? {};
+  const inputProps = { ...(inputSchema.properties ?? {}) };
+  inputProps.method = { type: "string", enum: ["POST"] };
+  const required = ["type", "method", "bodyType", "body"];
+  const nextBazaar: BazaarDeclaration = {
+    ...bazaar,
+    info: {
+      ...bazaar.info,
+      input,
+    },
+    schema: {
+      ...bazaar.schema,
+      properties: {
+        ...bazaar.schema?.properties,
+        input: {
+          type: "object",
+          additionalProperties: false,
+          ...inputSchema,
+          properties: inputProps,
+          required,
+        },
+      },
+    },
+  };
+  return { bazaar: nextBazaar };
+}
+
 /**
  * x402 v2 Bazaar declaration (Coinbase seller docs).
  * `discoverable: true` is a v1 field and is rejected on v2 — listing is this extension.
  */
 export function verifyBazaarExtensions(): Record<string, unknown> {
-  return {
-    ...declareDiscoveryExtension({
+  return withPostJsonMethod(
+    declareDiscoveryExtension({
       bodyType: "json",
       input: { url: VERIFY_EXAMPLE.url },
       inputSchema: VERIFY_INPUT_SCHEMA,
@@ -65,7 +124,7 @@ export function verifyBazaarExtensions(): Record<string, unknown> {
         schema: VERIFY_OUTPUT_SCHEMA,
       },
     }),
-  };
+  );
 }
 
 export const VERIFY_ROUTE_DESCRIPTION = VERIFY_DESCRIPTION;

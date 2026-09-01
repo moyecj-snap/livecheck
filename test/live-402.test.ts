@@ -6,6 +6,7 @@ import { createApp } from "../src/app.js";
 import { MOCK_PAY_TO, NETWORK, VERIFY_DESCRIPTION } from "../src/config.js";
 import { livePaymentMiddlewareFromServer, resourceServerFromFacilitator } from "../src/payments.js";
 import { advertisePaymentRequired, decodePaymentRequired } from "../src/x402-payload.js";
+import { assertInfoInputMatchesSchema } from "./bazaar-schema.js";
 
 function stubFacilitator(): FacilitatorClient {
   return {
@@ -80,8 +81,10 @@ describe("live @x402/hono 402 (decoded payment-required)", () => {
     };
     assert.ok(extensions?.bazaar, "expected extensions.bazaar in decoded payment-required");
     assert.equal(extensions.bazaar?.info?.input?.bodyType, "json");
+    assert.equal(extensions.bazaar?.info?.input?.method, "POST");
     assert.equal(typeof extensions.bazaar?.info?.input?.body?.url, "string");
     assert.equal(decoded.x402Version, 2);
+    assertInfoInputMatchesSchema(extensions.bazaar, "live @x402/hono 402");
   });
 });
 
