@@ -1,0 +1,17 @@
+node_modules
+.env
+.env.*
+.git
+.gitignore
+*.log
+.DS_Store
+agent-tools
+test
+examples
+.cursor
+.cursor-plugin
+mcp.json
+README.md
+fly.toml
+.dockerignore
+Dockerfile

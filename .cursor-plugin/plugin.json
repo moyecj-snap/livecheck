@@ -1,0 +1,10 @@
+{
+  "name": "livecheck",
+  "version": "0.1.0",
+  "description": "Before you scrape a job or product page, POST the URL. Livecheck fetches the source and returns live, closed, or unknown plus title and signals (apply form, sold-out, 404). Not a search engine.",
+  "author": {
+    "name": "Craig Moye"
+  },
+  "homepage": "https://livecheck.fly.dev",
+  "keywords": ["x402", "livecheck", "verification", "jobs", "bazaar"]
+}

@@ -1,0 +1,166 @@
+{
+  "x402Version": 2,
+  "error": "Payment required",
+  "resource": {
+    "url": "https://livecheck.fly.dev/v1/verify",
+    "description": "Primary-source live/closed/unknown check for a specific product or job URL (in-stock, price, apply/buy). Not a search engine: you already have the URL.",
+    "mimeType": "application/json"
+  },
+  "accepts": [
+    {
+      "scheme": "exact",
+      "network": "eip155:8453",
+      "amount": "50000",
+      "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "payTo": "0x33693228b706cb30f4b4dbf35f79129a763f91c5",
+      "maxTimeoutSeconds": 300,
+      "extra": {
+        "name": "USD Coin",
+        "version": "2"
+      }
+    }
+  ],
+  "extensions": {
+    "bazaar": {
+      "info": {
+        "input": {
+          "type": "http",
+          "bodyType": "json",
+          "body": {
+            "url": "https://boards.greenhouse.io/example/jobs/1842"
+          },
+          "method": "POST"
+        },
+        "output": {
+          "type": "json",
+          "example": {
+            "url": "https://boards.greenhouse.io/example/jobs/1842",
+            "canonical_url": "https://boards.greenhouse.io/example/jobs/1842",
+            "status": "live",
+            "http_status": 200,
+            "checked_at": "2026-08-30T21:00:00Z",
+            "title": "Staff Backend Engineer \u2014 Northwind Labs",
+            "signals": [
+              "apply form present",
+              "no closure banner"
+            ],
+            "confidence": 0.82,
+            "price_usd": 0.05
+          }
+        }
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "http"
+              },
+              "method": {
+                "type": "string",
+                "enum": [
+                  "POST"
+                ]
+              },
+              "bodyType": {
+                "type": "string",
+                "enum": [
+                  "json",
+                  "form-data",
+                  "text"
+                ]
+              },
+              "body": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "description": "Absolute http(s) URL of the specific product or job page to check. Not a search-results URL."
+                  }
+                },
+                "required": [
+                  "url"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "method",
+              "bodyType",
+              "body"
+            ],
+            "additionalProperties": false
+          },
+          "output": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "example": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "canonical_url": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "live",
+                      "closed",
+                      "unknown"
+                    ]
+                  },
+                  "http_status": {
+                    "type": "number"
+                  },
+                  "checked_at": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "signals": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "confidence": {
+                    "type": "number"
+                  },
+                  "price_usd": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "url",
+                  "canonical_url",
+                  "status",
+                  "http_status",
+                  "checked_at",
+                  "signals",
+                  "confidence",
+                  "price_usd"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        },
+        "required": [
+          "input"
+        ]
+      }
+    }
+  }
+}
