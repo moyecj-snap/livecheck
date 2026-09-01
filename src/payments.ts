@@ -23,6 +23,7 @@ import {
   encodePaymentRequired,
   paymentRequiredBody,
 } from "./x402-payload.js";
+import { wrapFacilitatorForCatalog } from "./facilitator-catalog.js";
 import { createStripeClient, recordSettledPayment } from "./stripe-record.js";
 
 export function settlementMode(): "live" | "mock" {
@@ -116,8 +117,8 @@ function livePaymentMiddleware(): MiddlewareHandler {
     throw new Error(`Live settlement requested but missing: ${missingLiveKeyNames().join(", ")}`);
   }
 
-  const facilitatorClient = new HTTPFacilitatorClient(
-    createFacilitatorConfig(keys.cdpApiKeyId, keys.cdpApiKeySecret),
+  const facilitatorClient = wrapFacilitatorForCatalog(
+    new HTTPFacilitatorClient(createFacilitatorConfig(keys.cdpApiKeyId, keys.cdpApiKeySecret)),
   );
   const resourceServer = resourceServerFromFacilitator(facilitatorClient);
   const stripe = createStripeClient(keys.stripeSecretKey);
