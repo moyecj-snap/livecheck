@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Agents waste tokens and context fetching job and product pages that are already closed, sold out, or 404, then hand the user a dead link. Livecheck checks the primary source first and returns live, closed, or unknown plus signals. Not a search engine. Payment is x402: $0.01 USDC on Base via Stripe. The Cursor MCP surfaces the HTTP 402; a wallet agent completes payment.",
   "author": {
-    "name": "Craig Moye"
+    "name": "SnapPrice"
   },
   "homepage": "https://livecheck.fly.dev",
   "keywords": [
