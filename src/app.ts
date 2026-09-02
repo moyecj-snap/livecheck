@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { MiddlewareHandler } from "hono";
 import { NETWORK, PRICE_USD, USER_AGENT, VERIFY_DESCRIPTION, isLiveSettlement, missingLiveKeyNames } from "./config.js";
 import { demoHtml } from "./demo-page.js";
+import { discoveryHeaders, openApiDocument, wellKnownX402 } from "./discovery.js";
 import { FIXTURES } from "./fixtures.js";
 import { applyPaymentGate, settlementMode } from "./payments.js";
 import { publicVerifyUrl } from "./public-url.js";
@@ -11,6 +12,14 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
   const app = new Hono();
 
   app.use(paymentGate);
+
+  app.get("/openapi.json", (c) => {
+    return c.json(openApiDocument(c.req.url, c.req.header("host")), 200, discoveryHeaders());
+  });
+
+  app.get("/.well-known/x402", (c) => {
+    return c.json(wellKnownX402(c.req.url, c.req.header("host")), 200, discoveryHeaders());
+  });
 
   app.get("/health", (c) => {
     return c.json({

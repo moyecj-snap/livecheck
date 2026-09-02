@@ -41,7 +41,9 @@ After payment verifies and settles:
 
 v1 reads HTML + status only. It does not execute page JavaScript. Redirects are followed; `canonical_url` is the final URL. User-Agent identifies Livecheck.
 
-Free routes: `GET /` (human demo) and `GET /health`. Paid: only `POST /v1/verify`.
+Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, and `GET /.well-known/x402`. Paid: only `POST /v1/verify`.
+
+Agent crawlers (x402scan, AgentCash, Circle OpenAPI discovery) read the free JSON docs. `GET /openapi.json` is the canonical contract: `POST /v1/verify` with JSON `{ "url": "https://..." }`, `x-payment-info` fixed **$0.01** USD (decimal; runtime 402 `accepts[].amount` stays `"10000"` atomic USDC), and a 200 schema of `live | closed | unknown`. `GET /.well-known/x402` is the compatibility fan-out (`version` + `resources` listing `https://livecheck.fly.dev/v1/verify`). Neither route returns 402.
 
 Unpaid `POST /v1/verify` includes x402 v2 Bazaar discovery metadata (`extensions.bazaar` via `bazaarResourceServerExtension` + `declareDiscoveryExtension`). Listing in [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) is free to browse; CDP catalogs this route after a successful paid request that carries the extension. The 402 `resource.description` (and health `description`) is: Before you scrape a job or product page, POST the URL. Livecheck fetches the source and returns live, closed, or unknown plus title and signals (apply form, sold-out, 404). Not a search engine.
 
@@ -57,7 +59,11 @@ A production decode on 2026-08-31 (health 200, `settlement: stripe-x402`) still 
 
 ```bash
 curl -sS https://livecheck.fly.dev/health
-# expect public_verify_url + bazaar: true + the long description
+# expect public_verify_url + bazaar: true + the listing description
+
+curl -sI https://livecheck.fly.dev/openapi.json
+curl -sI https://livecheck.fly.dev/.well-known/x402
+# both must be HTTP 200 application/json, not 402
 
 curl -sS -D - -o /dev/null https://livecheck.fly.dev/v1/verify \
   -H 'Content-Type: application/json' \
@@ -77,6 +83,10 @@ npm start
 The process binds `0.0.0.0` and uses `process.env.PORT || 43127`. On a Mac that is still `http://127.0.0.1:43127` unless you set `PORT`. Without live keys it prints a banner: settlement is disabled. Unpaid verify still returns a realistic x402 `402` with a `payment-required` header. The verifier still runs against local fixtures.
 
 ```bash
+# Free discovery docs (no 402)
+curl -sI http://127.0.0.1:43127/openapi.json
+curl -sI http://127.0.0.1:43127/.well-known/x402
+
 # 402 without payment
 curl -iv http://127.0.0.1:43127/v1/verify \
   -H 'content-type: application/json' \
