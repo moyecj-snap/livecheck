@@ -22,7 +22,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
       version: OPENAPI_VERSION,
       description: VERIFY_DESCRIPTION,
       "x-guidance":
-        "Before you scrape a job or product page, POST /v1/verify with JSON {\"url\":\"https://...\"}. Unpaid requests return HTTP 402 (x402 v2, exact, $0.01 USDC on Base). After payment the response is live, closed, or unknown plus title and signals. Not a search engine.",
+        "Before you scrape a job or product page, POST /v1/verify with JSON {\"url\":\"https://...\"}. Unpaid requests return HTTP 402 (x402 v2, exact, $0.01 USDC on Base). After payment the response is live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404). Not a search engine.",
     },
     servers: [{ url: origin }],
     paths: {

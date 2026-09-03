@@ -96,6 +96,105 @@ const NOT_FOUND = `<!doctype html>
 </html>
 `;
 
+const LIVE_APPLY_RECAPTCHA = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Staff Backend Engineer — Northwind Labs</title>
+  <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+</head>
+<body>
+  <h1>Staff Backend Engineer</h1>
+  <p>Greenhouse apply form. Spam protection uses recaptcha / hcaptcha widgets.</p>
+  <form action="/jobs/1842/apply" method="post">
+    <div class="g-recaptcha" data-sitekey="test-site-key"></div>
+    <button type="submit">Apply Now</button>
+  </form>
+</body>
+</html>
+`;
+
+const CLOUDFLARE_CHALLENGE = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Just a moment...</title>
+</head>
+<body>
+  <div id="cf-challenge" class="cf-challenge">
+    <h1>Attention Required! | Cloudflare</h1>
+    <p>Checking your browser before accessing boards.greenhouse.io.</p>
+    <p>Verify you are human. Enable JavaScript and cookies to continue.</p>
+    <div class="challenge-platform" data-ray="test"></div>
+  </div>
+</body>
+</html>
+`;
+
+const SHOPIFY_IN_STOCK = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Ridge Wallet – Ridge</title>
+  <script src="https://www.google.com/recaptcha/api.js"></script>
+</head>
+<body>
+  <h1>Ridge Wallet</h1>
+  <p>Aluminum wallet. recaptcha is loaded for checkout spam checks.</p>
+  <div class="g-recaptcha" data-sitekey="test-site-key"></div>
+  <form action="/cart/add" method="post">
+    <button type="submit" name="add">Add to cart</button>
+  </form>
+</body>
+</html>
+`;
+
+const SHOPIFY_SOLD_OUT = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Groove Ring – Groove Life</title>
+</head>
+<body>
+  <h1>Groove Ring</h1>
+  <p>This item is currently unavailable.</p>
+  <p class="price__badge">Sold out</p>
+  <button type="button" disabled>Sold out</button>
+</body>
+</html>
+`;
+
+const SHOPIFY_COLLECTION = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Rings – Groove Life</title>
+</head>
+<body>
+  <h1>Rings</h1>
+  <p>Collection template includes a quick-add control.</p>
+  <ul>
+    <li class="product-card"><a href="/products/ring-a">Ring A</a><button>Add to cart</button></li>
+    <li class="product-card"><a href="/products/ring-b">Ring B</a><button>Add to cart</button></li>
+    <li class="product-card"><a href="/products/ring-c">Ring C</a><button>Add to cart</button></li>
+  </ul>
+</body>
+</html>
+`;
+
+const PRODUCT_404 = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>404 Not Found</title>
+</head>
+<body>
+  <h1>Not Found</h1>
+  <p>The product does not exist.</p>
+</body>
+</html>
+`;
+
 export const FIXTURES: Record<FixtureId, FixtureSpec> = {
   "live-apply-now": {
     id: "live-apply-now",
@@ -144,6 +243,42 @@ export const FIXTURES: Record<FixtureId, FixtureSpec> = {
     status: 404,
     body: NOT_FOUND,
     label: "HTTP 404 job URL",
+  },
+  "live-apply-recaptcha": {
+    id: "live-apply-recaptcha",
+    status: 200,
+    body: LIVE_APPLY_RECAPTCHA,
+    label: "Open job apply form that includes a recaptcha widget",
+  },
+  "cloudflare-challenge": {
+    id: "cloudflare-challenge",
+    status: 200,
+    body: CLOUDFLARE_CHALLENGE,
+    label: "Cloudflare interstitial challenge page",
+  },
+  "products/ridge-wallet": {
+    id: "products/ridge-wallet",
+    status: 200,
+    body: SHOPIFY_IN_STOCK,
+    label: "Shopify product page with Add to cart (recaptcha present)",
+  },
+  "products/groove-ring": {
+    id: "products/groove-ring",
+    status: 200,
+    body: SHOPIFY_SOLD_OUT,
+    label: "Shopify product page that is sold out",
+  },
+  "collections/rings": {
+    id: "collections/rings",
+    status: 200,
+    body: SHOPIFY_COLLECTION,
+    label: "Shopify collection page with template add-to-cart",
+  },
+  "products/missing": {
+    id: "products/missing",
+    status: 404,
+    body: PRODUCT_404,
+    label: "HTTP 404 product URL",
   },
 };
 

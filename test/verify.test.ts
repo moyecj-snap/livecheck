@@ -49,4 +49,29 @@ describe("verifyUrl against local fixtures", () => {
     assert.equal(verdict.status, "closed");
     assert.equal(verdict.http_status, 404);
   });
+
+  it("classifies a recaptcha-tagged open job as live", async () => {
+    const verdict = await verifyUrl(`${origin}/fixtures/live-apply-recaptcha`);
+    assert.equal(verdict.status, "live");
+    assert.equal(verdict.signals.includes("challenge_page"), false);
+  });
+
+  it("classifies a Cloudflare challenge fixture as unknown", async () => {
+    const verdict = await verifyUrl(`${origin}/fixtures/cloudflare-challenge`);
+    assert.equal(verdict.status, "unknown");
+    assert.ok(verdict.signals.includes("challenge_page"));
+  });
+
+  it("classifies Shopify in-stock as live and sold-out as closed", async () => {
+    const live = await verifyUrl(`${origin}/fixtures/products/ridge-wallet`);
+    const sold = await verifyUrl(`${origin}/fixtures/products/groove-ring`);
+    const collection = await verifyUrl(`${origin}/fixtures/collections/rings`);
+    const missing = await verifyUrl(`${origin}/fixtures/products/missing`);
+    assert.equal(live.status, "live");
+    assert.ok(live.signals.includes("in-stock"));
+    assert.equal(sold.status, "closed");
+    assert.ok(sold.signals.includes("sold-out"));
+    assert.equal(collection.status, "unknown");
+    assert.equal(missing.status, "closed");
+  });
 });

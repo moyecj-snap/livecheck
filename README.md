@@ -35,9 +35,9 @@ After payment verifies and settles:
 
 `status` is `live`, `closed`, or `unknown`.
 
-- **closed** — HTTP 404/410, strong close language (“no longer accepting applications”, “this job is closed to new applications”, “this job is no longer available”, “the job you are trying to apply for has been filled”), or a Greenhouse/Lever/Ashby job URL that redirects to a board with no job.
-- **live** — HTTP 200, a specific posting (not a search-results page), an apply/submit affordance, and no close language.
-- **unknown** — loginwalled, challenge page, or ambiguous. Search-result URLs and generic careers homepages are flagged `not_a_specific_posting` rather than called live.
+- **closed** — HTTP 404/410; job close language (“no longer accepting applications”, “this job is closed to new applications”, …); a Greenhouse/Lever/Ashby job URL that redirects to a board with no job; or a specific product page with sold-out / out of stock / currently unavailable language.
+- **live** — HTTP 200 on a specific job posting with an apply/submit affordance and no close language, or a specific product page with add to cart / add to bag / buy now and no sold-out phrase. A recaptcha/hcaptcha widget on that page is not a bot wall.
+- **unknown** — loginwalled, a real challenge interstitial (Cloudflare `cf-challenge`, “verify you are human”, “checking your browser”), or ambiguous. Search-result URLs, generic careers homepages, and collection/category pages stay `unknown` even if a template includes add-to-cart.
 
 v1 reads HTML + status only. It does not execute page JavaScript. Redirects are followed; `canonical_url` is the final URL. User-Agent identifies Livecheck.
 
@@ -291,6 +291,6 @@ After this ships: `fly deploy` from Origin. Listing the catalog is free; CDP cat
 
 ## Honest limits
 
-- Prototype. Jobs-first heuristics on HTML. Loginwalls, SPAs, and challenge pages often come back `unknown`.
+- Prototype. HTML + status only. Job apply-form and product in-stock/sold-out phrases are heuristics, not Amazon-quality inventory. Loginwalls, SPAs, and real challenge interstitials often come back `unknown`. Workday boards that render apply UI only in JavaScript stay unknown.
 - No GitHub mirror. This Origin repository is the source of truth. Deploy Fly from this tree.
 - New York businesses cannot accept x402 stablecoin payments.

@@ -96,4 +96,94 @@ describe("classify fixtures", () => {
     assert.notEqual(verdict.status, "live");
     assert.ok(verdict.signals.includes("not_a_specific_posting"));
   });
+
+  it("marks a Greenhouse apply page with recaptcha as live, not challenge_page", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://boards.greenhouse.io/northwind/jobs/1842",
+        httpStatus: 200,
+        html: FIXTURES["live-apply-recaptcha"].body!,
+      }),
+    );
+    assert.equal(verdict.status, "live");
+    assert.ok(verdict.signals.includes("apply form present"));
+    assert.equal(verdict.signals.includes("challenge_page"), false);
+  });
+
+  it("marks a Lever-like apply page containing recaptcha as live", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://jobs.lever.co/northwind/staff-backend-engineer",
+        httpStatus: 200,
+        html: FIXTURES["live-apply-recaptcha"].body!,
+      }),
+    );
+    assert.equal(verdict.status, "live");
+    assert.ok(verdict.signals.includes("apply form present"));
+    assert.equal(verdict.signals.includes("challenge_page"), false);
+  });
+
+  it("marks a Cloudflare interstitial as unknown challenge_page", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://boards.greenhouse.io/northwind/jobs/1842",
+        httpStatus: 200,
+        html: FIXTURES["cloudflare-challenge"].body!,
+      }),
+    );
+    assert.equal(verdict.status, "unknown");
+    assert.ok(verdict.signals.includes("challenge_page"));
+    assert.equal(verdict.signals.includes("apply form present"), false);
+  });
+
+  it("marks a Shopify product with recaptcha and Add to cart as live + in-stock", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://ridge.com/products/ridge-wallet",
+        httpStatus: 200,
+        html: FIXTURES["products/ridge-wallet"].body!,
+      }),
+    );
+    assert.equal(verdict.status, "live");
+    assert.ok(verdict.signals.includes("in-stock"));
+    assert.equal(verdict.signals.includes("challenge_page"), false);
+  });
+
+  it("marks a Shopify sold-out product as closed + sold-out", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://groovelife.com/products/groove-ring",
+        httpStatus: 200,
+        html: FIXTURES["products/groove-ring"].body!,
+      }),
+    );
+    assert.equal(verdict.status, "closed");
+    assert.ok(verdict.signals.includes("sold-out"));
+    assert.equal(verdict.status, "closed");
+  });
+
+  it("does not mark a collection page live even when the template has Add to cart", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://groovelife.com/collections/rings",
+        httpStatus: 200,
+        html: FIXTURES["collections/rings"].body!,
+      }),
+    );
+    assert.equal(verdict.status, "unknown");
+    assert.ok(verdict.signals.includes("collection_or_category"));
+    assert.equal(verdict.signals.includes("in-stock"), false);
+  });
+
+  it("marks a 404 product URL as closed", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://ridge.com/products/missing",
+        httpStatus: 404,
+        html: FIXTURES["products/missing"].body!,
+      }),
+    );
+    assert.equal(verdict.status, "closed");
+    assert.ok(verdict.signals.includes("http_404"));
+  });
 });
