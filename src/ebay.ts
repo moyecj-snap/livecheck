@@ -244,6 +244,27 @@ async function readJson(response: Response): Promise<BrowseItem | null> {
   }
 }
 
+/** Browse restful ids: v1|{legacy}|0 plus var= from the item URL when present. */
+export function restfulItemIds(legacyId: string, href?: string): string[] {
+  const suffixes = new Set<string>(["0"]);
+  if (href) {
+    try {
+      const search = new URL(href).searchParams;
+      for (const key of ["var", "varid", "vti"]) {
+        const value = search.get(key)?.trim();
+        if (value && /^\d{1,19}$/.test(value)) suffixes.add(value);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return [...suffixes].map((suffix) => `v1|${legacyId}|${suffix}`);
+}
+
+function getItemUrl(restfulId: string): string {
+  return `${EBAY_BROWSE_BASE}/item/${encodeURIComponent(restfulId)}`;
+}
+
 export async function verifyEbayItem(
   ref: EbayItemRef,
   fetcher: typeof fetch = fetch,
@@ -265,26 +286,33 @@ export async function verifyEbayItem(
     };
     const legacyUrl = `${EBAY_BROWSE_BASE}/item/get_item_by_legacy_id?legacy_item_id=${encodeURIComponent(ref.itemId)}`;
     const legacy = await fetcher(legacyUrl, { method: "GET", headers });
-    if (legacy.status === 404) {
-      return closedMissingVerdict(ref, now);
-    }
     if (legacy.ok) {
       const item = await readJson(legacy);
       if (!item) return unknownEbayVerdict(ref, "ebay_api_error", legacy.status, now);
       return verdictFromBrowseItem(ref, item, legacy.status, now);
     }
-    if (legacy.status === 400) {
-      const restfulId = encodeURIComponent(`v1|${ref.itemId}|0`);
-      const direct = await fetcher(`${EBAY_BROWSE_BASE}/item/${restfulId}`, { method: "GET", headers });
-      if (direct.status === 404) return closedMissingVerdict(ref, now);
+    if (legacy.status !== 400 && legacy.status !== 404) {
+      return unknownEbayVerdict(ref, "ebay_api_error", legacy.status, now);
+    }
+
+    let sawServerError = false;
+    let lastStatus = legacy.status;
+    for (const restfulId of restfulItemIds(ref.itemId, ref.href)) {
+      const direct = await fetcher(getItemUrl(restfulId), { method: "GET", headers });
+      lastStatus = direct.status;
       if (direct.ok) {
         const item = await readJson(direct);
         if (!item) return unknownEbayVerdict(ref, "ebay_api_error", direct.status, now);
         return verdictFromBrowseItem(ref, item, direct.status, now);
       }
-      return unknownEbayVerdict(ref, "ebay_api_error", direct.status, now);
+      if (direct.status !== 400 && direct.status !== 404) {
+        sawServerError = true;
+      }
     }
-    return unknownEbayVerdict(ref, "ebay_api_error", legacy.status, now);
+    if (sawServerError) {
+      return unknownEbayVerdict(ref, "ebay_api_error", lastStatus, now);
+    }
+    return closedMissingVerdict(ref, now);
   } catch {
     return unknownEbayVerdict(ref, "ebay_api_error", 200, now);
   }

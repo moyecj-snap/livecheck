@@ -142,7 +142,7 @@ EBAY_CLIENT_SECRET=
 
 Optional: `EBAY_DEV_ID` (unused by Browse; kept for the same keyset SnapPrice uses), `EBAY_MARKETPLACE_ID` (default inferred from the host, else `EBAY_US`).
 
-The server mints an application OAuth token (`grant_type=client_credentials`, scope `https://api.ebay.com/oauth/api_scope`) and calls Browse `getItemByLegacyId`. `IN_STOCK` / `LIMITED_STOCK` and a listing that has not ended → `live` (`ebay-in-stock`). `OUT_OF_STOCK` or an ended listing → `closed`. Missing item → `closed`. API errors → `unknown` (never HTTP 500). If the two required env vars are missing, the process still boots; eBay URLs fall back to the HTML classifier and health reports `ebay: false`.
+The server mints an application OAuth token (`grant_type=client_credentials`, scope `https://api.ebay.com/oauth/api_scope`) and calls Browse `getItemByLegacyId`. A 400/404 from that call is not treated as missing: it then tries `GET /buy/browse/v1/item/{v1|{legacy}|0}` and any `var=` / `varid` / `vti` suffixes from the item URL. `IN_STOCK` / `LIMITED_STOCK` and a listing that has not ended → `live` (`ebay-in-stock`). `OUT_OF_STOCK` or an ended listing → `closed`. Only a true missing item after those fallbacks → `closed`. API errors → `unknown` (never HTTP 500). If the two required env vars are missing, the process still boots; eBay URLs fall back to the HTML classifier and health reports `ebay: false`.
 
 ## Pay for a real request
 

@@ -7,6 +7,7 @@ import {
   parseEbayItemUrl,
   resetEbayDisabledLog,
   resetEbayTokenCache,
+  restfulItemIds,
   verdictFromBrowseItem,
 } from "../src/ebay.js";
 import { verifyUrl } from "../src/verify.js";
@@ -83,6 +84,11 @@ describe("parseEbayItemUrl", () => {
     assert.equal(au?.marketplaceId, "EBAY_AU");
     assert.equal(parseEbayItemUrl("https://www.ebay.com/sch/i.html?_nkw=watch"), null);
     assert.equal(parseEbayItemUrl("https://amazon.com/itm/123456789012"), null);
+    assert.deepEqual(restfulItemIds("287092450439"), ["v1|287092450439|0"]);
+    assert.deepEqual(restfulItemIds("287092450439", "https://www.ebay.com/itm/287092450439?var=589132013901"), [
+      "v1|287092450439|0",
+      "v1|287092450439|589132013901",
+    ]);
   });
 });
 
@@ -185,14 +191,69 @@ describe("verifyUrl eBay adapter", () => {
     assert.ok(verdict.signals.includes("ebay-ended"));
   });
 
-  it("returns closed for Browse 404", async () => {
+  it("returns live when legacy 404s but getItem v1|{id}|0 is IN_STOCK", async () => {
     enableEbay();
-    const { fetchImpl } = mockEbayFetch({
+    const restful = `${EBAY_BROWSE_BASE}/item/${encodeURIComponent("v1|123456789012|0")}`;
+    const { fetchImpl, urls } = mockEbayFetch({
+      item: (url) => {
+        if (url.includes("get_item_by_legacy_id")) {
+          return jsonResponse(404, { errors: [{ errorId: 11001 }] });
+        }
+        if (url === restful) {
+          return jsonResponse(200, {
+            itemId: "v1|123456789012|0",
+            title: "Variation listing",
+            estimatedAvailabilities: [{ estimatedAvailabilityStatus: "IN_STOCK" }],
+          });
+        }
+        return jsonResponse(404, { errors: [{ errorId: 11001 }] });
+      },
+    });
+    const verdict = await verifyUrl(ITEM_URL, fetchImpl);
+    assert.equal(verdict.status, "live");
+    assert.ok(verdict.signals.includes("ebay-in-stock"));
+    assert.equal(verdict.signals.includes("ebay-ended"), false);
+    assert.equal(verdict.signals.includes("http_404"), false);
+    assert.ok(urls.some((u) => u.includes("get_item_by_legacy_id")));
+    assert.ok(urls.includes(restful));
+  });
+
+  it("uses a var= suffix after |0 404s on a variation listing", async () => {
+    enableEbay();
+    const variationUrl = "https://www.ebay.com/itm/287092450439?var=589132013901";
+    const parent = `${EBAY_BROWSE_BASE}/item/${encodeURIComponent("v1|287092450439|0")}`;
+    const variation = `${EBAY_BROWSE_BASE}/item/${encodeURIComponent("v1|287092450439|589132013901")}`;
+    const { fetchImpl, urls } = mockEbayFetch({
+      item: (url) => {
+        if (url.includes("get_item_by_legacy_id") || url === parent) {
+          return jsonResponse(404, { errors: [{ errorId: 11001 }] });
+        }
+        if (url === variation) {
+          return jsonResponse(200, {
+            itemId: "v1|287092450439|589132013901",
+            estimatedAvailabilities: [{ estimatedAvailabilityStatus: "LIMITED_STOCK" }],
+          });
+        }
+        return jsonResponse(404, {});
+      },
+    });
+    const verdict = await verifyUrl(variationUrl, fetchImpl);
+    assert.equal(verdict.status, "live");
+    assert.ok(verdict.signals.includes("ebay-in-stock"));
+    assert.ok(urls.includes(parent));
+    assert.ok(urls.includes(variation));
+  });
+
+  it("returns closed only after legacy and getItem fallbacks all 404", async () => {
+    enableEbay();
+    const { fetchImpl, urls } = mockEbayFetch({
       item: () => jsonResponse(404, { errors: [{ errorId: 11001 }] }),
     });
     const verdict = await verifyUrl(ITEM_URL, fetchImpl);
     assert.equal(verdict.status, "closed");
     assert.equal(verdict.http_status, 404);
+    assert.ok(urls.some((u) => u.includes("get_item_by_legacy_id")));
+    assert.ok(urls.some((u) => u.includes(`/item/${encodeURIComponent("v1|123456789012|0")}`)));
   });
 
   it("returns unknown on Browse API errors and does not throw", async () => {
