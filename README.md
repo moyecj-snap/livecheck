@@ -1,12 +1,8 @@
 # Livecheck
 
-A prototype primary-source verification API. You already have a URL. Livecheck fetches that page — not a search index, not an aggregator copy — and returns whether it is still a live, open source.
+Before you scrape a listing, check if it is still there. POST a specific job posting, Shopify or HTML product URL, or eBay item URL. Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404). Product pages are HTML-only (Shopify-class add-to-cart / sold-out); eBay item URLs use Browse availability, not sold comps. Not a search engine. $0.01 USDC per check on Base via x402.
 
-Agents pay **$0.01 USDC** per `POST /v1/verify` on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md). First vertical: job postings / ATS. The endpoint accepts any `http(s)` URL.
-
-Before you scrape a job or product page, POST the URL. Livecheck fetches the source and returns live, closed, or unknown plus title and signals (apply form, sold-out, 404). Not a search engine.
-
-This is a per-check agent API, not a platform.
+This is a per-check agent API, not a platform. Agents pay **$0.01 USDC** per `POST /v1/verify` on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md). The endpoint accepts any `http(s)` URL.
 
 ## What you get
 
@@ -35,15 +31,17 @@ After payment verifies and settles:
 
 `status` is `live`, `closed`, or `unknown`.
 
-- **closed** — HTTP 404/410, strong close language (“no longer accepting applications”, “this job is closed to new applications”, “this job is no longer available”, “the job you are trying to apply for has been filled”), or a Greenhouse/Lever/Ashby job URL that redirects to a board with no job.
-- **live** — HTTP 200, a specific posting (not a search-results page), an apply/submit affordance, and no close language.
-- **unknown** — loginwalled, challenge page, or ambiguous. Search-result URLs and generic careers homepages are flagged `not_a_specific_posting` rather than called live.
+- **closed** — HTTP 404/410; job close language (“no longer accepting applications”, “this job is closed to new applications”, …); a Greenhouse/Lever/Ashby job URL that redirects to a board with no job; or a specific product page with sold-out / out of stock / currently unavailable language.
+- **live** — HTTP 200 on a specific job posting with an apply/submit affordance and no close language, or a specific product page with add to cart / add to bag / buy now and no sold-out phrase. A recaptcha/hcaptcha widget on that page is not a bot wall.
+- **unknown** — loginwalled, a real challenge interstitial (Cloudflare `cf-challenge`, “verify you are human”, “checking your browser”), or ambiguous. Search-result URLs, generic careers homepages, and collection/category pages stay `unknown` even if a template includes add-to-cart.
 
 v1 reads HTML + status only. It does not execute page JavaScript. Redirects are followed; `canonical_url` is the final URL. User-Agent identifies Livecheck.
 
-Free routes: `GET /` (human demo) and `GET /health`. Paid: only `POST /v1/verify`.
+Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, and `GET /.well-known/x402`. Paid: only `POST /v1/verify`.
 
-Unpaid `POST /v1/verify` includes x402 v2 Bazaar discovery metadata (`extensions.bazaar` via `bazaarResourceServerExtension` + `declareDiscoveryExtension`). Listing in [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) is free to browse; CDP catalogs this route after a successful paid request that carries the extension. The 402 `resource.description` (and health `description`) is: Before you scrape a job or product page, POST the URL. Livecheck fetches the source and returns live, closed, or unknown plus title and signals (apply form, sold-out, 404). Not a search engine.
+Agent crawlers (x402scan, AgentCash, Circle OpenAPI discovery) read the free JSON docs. `GET /openapi.json` is the canonical contract: `POST /v1/verify` with JSON `{ "url": "https://..." }`, `x-payment-info` fixed **$0.01** USD (decimal; runtime 402 `accepts[].amount` stays `"10000"` atomic USDC), and a 200 schema of `live | closed | unknown`. `GET /.well-known/x402` is the compatibility fan-out (`version` + `resources` listing `https://livecheck.fly.dev/v1/verify`). Neither route returns 402.
+
+Unpaid `POST /v1/verify` includes x402 v2 Bazaar discovery metadata (`extensions.bazaar` via `bazaarResourceServerExtension` + `declareDiscoveryExtension`). Listing in [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) is free to browse; CDP catalogs this route after a successful paid request that carries the extension. The 402 `resource.description` (and health `description`) is: Before you scrape a job posting, Shopify or HTML product page, or eBay item, POST the specific URL you already have and Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404); not a search engine.
 
 The 402 `resource.url` is `https://livecheck.fly.dev/v1/verify` in production. Locally it stays the request origin (`http://127.0.0.1:43127` by default). Set `LIVECHECK_PUBLIC_URL` (public, not a secret) when the process sits behind HTTP and must advertise HTTPS.
 
@@ -57,7 +55,11 @@ A production decode on 2026-08-31 (health 200, `settlement: stripe-x402`) still 
 
 ```bash
 curl -sS https://livecheck.fly.dev/health
-# expect public_verify_url + bazaar: true + the long description
+# expect public_verify_url + bazaar: true + the listing description
+
+curl -sI https://livecheck.fly.dev/openapi.json
+curl -sI https://livecheck.fly.dev/.well-known/x402
+# both must be HTTP 200 application/json, not 402
 
 curl -sS -D - -o /dev/null https://livecheck.fly.dev/v1/verify \
   -H 'Content-Type: application/json' \
@@ -77,6 +79,10 @@ npm start
 The process binds `0.0.0.0` and uses `process.env.PORT || 43127`. On a Mac that is still `http://127.0.0.1:43127` unless you set `PORT`. Without live keys it prints a banner: settlement is disabled. Unpaid verify still returns a realistic x402 `402` with a `payment-required` header. The verifier still runs against local fixtures.
 
 ```bash
+# Free discovery docs (no 402)
+curl -sI http://127.0.0.1:43127/openapi.json
+curl -sI http://127.0.0.1:43127/.well-known/x402
+
 # 402 without payment
 curl -iv http://127.0.0.1:43127/v1/verify \
   -H 'content-type: application/json' \
@@ -89,7 +95,7 @@ curl -s http://127.0.0.1:43127/v1/verify \
   -d '{"url":"http://127.0.0.1:43127/fixtures/closed-to-new-applications"}'
 ```
 
-`npm test` runs fixture-based classifier, HTTP, and MCP client tests (closed Greenhouse redirect, two “closed to new applications” pages, 200 + Apply Now, 404).
+`npm test` runs fixture-based classifier, HTTP, MCP, discovery, and mocked eBay Browse tests. Unit tests never call the live eBay network.
 
 ## Stripe + Coinbase setup (live settlement)
 
@@ -118,6 +124,21 @@ CDP_API_KEY_SECRET=
 ```
 
 When every key is present, Livecheck uses Stripe’s documented stack: Hono `paymentMiddleware`, `@x402/evm` exact scheme on `eip155:8453`, Coinbase facilitator, then a Stripe PaymentIntent in `transaction_verification` mode (idempotency key = tx hash). Atomic USDC (6 decimals) is converted to cents (`$0.01` = 10000 atomic).
+
+## eBay item URLs (Browse availability)
+
+`POST /v1/verify` still costs **$0.01 USDC** and still returns HTTP 402 until paid. After payment, `ebay.com` / `ebay.co.uk` / `ebay.de` / `ebay.ca` / `ebay.com.au` (and similar) **item** URLs (`/itm/{id}` or `/itm/{slug}/{id}`) use eBay **Browse** availability, not sold/completed prices and not eBay HTML.
+
+Set these in `.env` (never commit them):
+
+```
+EBAY_CLIENT_ID=
+EBAY_CLIENT_SECRET=
+```
+
+Optional: `EBAY_DEV_ID` (unused by Browse; kept for the same keyset SnapPrice uses), `EBAY_MARKETPLACE_ID` (default inferred from the host, else `EBAY_US`).
+
+The server mints an application OAuth token (`grant_type=client_credentials`, scope `https://api.ebay.com/oauth/api_scope`) and calls Browse `getItemByLegacyId`. A 400/404 from that call is not treated as missing: it then tries `GET /buy/browse/v1/item/{v1|{legacy}|0}` and any `var=` / `varid` / `vti` suffixes from the item URL. `IN_STOCK` / `LIMITED_STOCK` and a listing that has not ended → `live` (`ebay-in-stock`). `OUT_OF_STOCK` or an ended listing → `closed`. Only a true missing item after those fallbacks → `closed`. API errors → `unknown` (never HTTP 500). If the two required env vars are missing, the process still boots; eBay URLs fall back to the HTML classifier and health reports `ebay: false`.
 
 ## Pay for a real request
 
@@ -281,6 +302,6 @@ After this ships: `fly deploy` from Origin. Listing the catalog is free; CDP cat
 
 ## Honest limits
 
-- Prototype. Jobs-first heuristics on HTML. Loginwalls, SPAs, and challenge pages often come back `unknown`.
+- Product pages on this path are HTML-only. Amazon, TikTok, and Alibaba listings stay `unknown`. Loginwalls, SPAs, and real challenge interstitials often come back `unknown`. Workday boards that render apply UI only in JavaScript stay unknown.
 - No GitHub mirror. This Origin repository is the source of truth. Deploy Fly from this tree.
 - New York businesses cannot accept x402 stablecoin payments.
