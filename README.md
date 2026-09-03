@@ -1,12 +1,8 @@
 # Livecheck
 
-A prototype primary-source verification API. You already have a URL. Livecheck fetches that page — not a search index, not an aggregator copy — and returns whether it is still a live, open source.
+Before you scrape a listing, check if it is still there. POST a specific job, product, or eBay item URL. Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404). Product pages are HTML-only; eBay item URLs use Browse availability, not sold comps. Not a search engine. $0.01 USDC per check on Base via x402.
 
-Agents pay **$0.01 USDC** per `POST /v1/verify` on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md). First vertical: job postings / ATS. The endpoint accepts any `http(s)` URL.
-
-Before you scrape a job or product page, POST the URL. Livecheck fetches the source and returns live, closed, or unknown plus title and signals (apply form, sold-out, 404). Not a search engine.
-
-This is a per-check agent API, not a platform.
+This is a per-check agent API, not a platform. Agents pay **$0.01 USDC** per `POST /v1/verify` on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md). The endpoint accepts any `http(s)` URL.
 
 ## What you get
 
@@ -45,7 +41,7 @@ Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, and `GET 
 
 Agent crawlers (x402scan, AgentCash, Circle OpenAPI discovery) read the free JSON docs. `GET /openapi.json` is the canonical contract: `POST /v1/verify` with JSON `{ "url": "https://..." }`, `x-payment-info` fixed **$0.01** USD (decimal; runtime 402 `accepts[].amount` stays `"10000"` atomic USDC), and a 200 schema of `live | closed | unknown`. `GET /.well-known/x402` is the compatibility fan-out (`version` + `resources` listing `https://livecheck.fly.dev/v1/verify`). Neither route returns 402.
 
-Unpaid `POST /v1/verify` includes x402 v2 Bazaar discovery metadata (`extensions.bazaar` via `bazaarResourceServerExtension` + `declareDiscoveryExtension`). Listing in [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) is free to browse; CDP catalogs this route after a successful paid request that carries the extension. The 402 `resource.description` (and health `description`) is: Before you scrape a job or product page, POST the URL. Livecheck fetches the source and returns live, closed, or unknown plus title and signals (apply form, sold-out, 404). Not a search engine.
+Unpaid `POST /v1/verify` includes x402 v2 Bazaar discovery metadata (`extensions.bazaar` via `bazaarResourceServerExtension` + `declareDiscoveryExtension`). Listing in [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) is free to browse; CDP catalogs this route after a successful paid request that carries the extension. The 402 `resource.description` (and health `description`) is: Before you scrape a job, product, or eBay item page, POST the specific URL you already have and Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404); not a search engine.
 
 The 402 `resource.url` is `https://livecheck.fly.dev/v1/verify` in production. Locally it stays the request origin (`http://127.0.0.1:43127` by default). Set `LIVECHECK_PUBLIC_URL` (public, not a secret) when the process sits behind HTTP and must advertise HTTPS.
 
@@ -306,6 +302,6 @@ After this ships: `fly deploy` from Origin. Listing the catalog is free; CDP cat
 
 ## Honest limits
 
-- Prototype. HTML + status only. Job apply-form and product in-stock/sold-out phrases are heuristics, not Amazon-quality inventory. Loginwalls, SPAs, and real challenge interstitials often come back `unknown`. Workday boards that render apply UI only in JavaScript stay unknown.
+- Product pages on this path are HTML-only. Amazon, TikTok, and Alibaba listings stay `unknown`. Loginwalls, SPAs, and real challenge interstitials often come back `unknown`. Workday boards that render apply UI only in JavaScript stay unknown.
 - No GitHub mirror. This Origin repository is the source of truth. Deploy Fly from this tree.
 - New York businesses cannot accept x402 stablecoin payments.

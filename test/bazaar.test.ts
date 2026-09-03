@@ -162,7 +162,7 @@ describe("402 bazaar + public URL", () => {
     assert.equal(res.status, 402);
     const decoded = JSON.parse(Buffer.from(res.headers.get("payment-required") ?? "", "base64").toString("utf8"));
     assert.equal(decoded.resource.url, "https://livecheck.fly.dev/v1/verify");
-    assert.match(decoded.resource.description, /Not a search engine/);
+    assert.match(decoded.resource.description, /not a search engine/i);
     assert.equal(decoded.resource.description, VERIFY_DESCRIPTION);
     assert.ok(decoded.extensions?.bazaar);
     assert.equal(decoded.extensions.bazaar.info.input.bodyType, "json");

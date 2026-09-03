@@ -48,7 +48,7 @@ describe("HTTP surface", () => {
     const html = await res.text();
     assert.match(html, /Livecheck/);
     assert.match(html, /payment-required/);
-    assert.match(html, /Before you scrape a job or product page/);
+    assert.match(html, /Before you scrape a job, product, or eBay item page/);
     assert.match(html, /\$0\.01 USDC/);
   });
 

@@ -65,11 +65,62 @@ const SOLD_OUT_PHRASES = [
 
 const BUY_PHRASES = ["add to cart", "add to bag", "add to basket", "buy now"];
 
+/** Shopify/i18n catalog entries like `"products.product.sold_out": "sold out"`. */
+const LOCALE_DICT_ENTRY =
+  /["'][^"'\n]{0,160}(?:sold[_-\s]?out|out[_-\s]?of[_-\s]?stock|currently[_-\s]?unavailable|unavailable)[^"'\n]{0,80}["']\s*:\s*["'][^"'\n]{0,120}["']/gi;
+
 function includesPhrase(haystack: string, phrases: string[]): string | null {
   for (const phrase of phrases) {
     if (haystack.includes(phrase)) return phrase;
   }
   return null;
+}
+
+function stripScriptsAndStyles(html: string): string {
+  return html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ");
+}
+
+function stripLocaleDictionary(value: string): string {
+  return value.replace(LOCALE_DICT_ENTRY, " ");
+}
+
+function hasSchemaOutOfStock(html: string): boolean {
+  return (
+    /schema\.org\/OutOfStock/i.test(html) ||
+    /["']availability["']\s*:\s*["'][^"']*OutOfStock/i.test(html) ||
+    /itemprop=["']availability["'][^>]*(OutOfStock|href=["'][^"']*OutOfStock)/i.test(html)
+  );
+}
+
+function hasVisibleSoldOutControl(visibleHtml: string): boolean {
+  if (
+    /<(button|input|span|p|div|strong|em)[^>]*>[^<]{0,80}(sold[-\s]?out|out of stock|currently unavailable)[^<]{0,40}<\/\1>/i.test(
+      visibleHtml,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /<(button|input)[^>]*(value|aria-label|class|name)=["'][^"']*(sold-?out|soldout|out-of-stock)[^"']*/i.test(
+      visibleHtml,
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Visible sold-out only — ignore i18n/locale JSON blobs inside scripts. */
+function hasVisibleSoldOut(html: string, text: string): boolean {
+  if (hasSchemaOutOfStock(html)) return true;
+  const visibleHtml = stripLocaleDictionary(stripScriptsAndStyles(html));
+  if (hasVisibleSoldOutControl(visibleHtml)) return true;
+  const fromText = stripLocaleDictionary(text).toLowerCase();
+  const fromVisibleHtml = stripLocaleDictionary(visibleHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).toLowerCase();
+  return Boolean(includesPhrase(fromText, SOLD_OUT_PHRASES) || includesPhrase(fromVisibleHtml, SOLD_OUT_PHRASES));
 }
 
 function extractHostPath(url: string): { host: string; path: string; search: string } {
@@ -243,7 +294,7 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
   const specificProduct =
     looksLikeSpecificProductUrl(page.canonicalUrl) || looksLikeSpecificProductUrl(page.requestedUrl);
   const buy = hasBuyAffordance(html, text);
-  const soldOutPhrase = includesPhrase(text, SOLD_OUT_PHRASES) || includesPhrase(html, SOLD_OUT_PHRASES);
+  const soldOutPhrase = hasVisibleSoldOut(html, text);
   const manyProductCards = countProductCards(html) >= 3;
   const productPage = specificProduct || (buy && !collectionOrCategory && !manyProductCards && !specificPosting);
 

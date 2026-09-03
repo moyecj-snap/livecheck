@@ -107,7 +107,7 @@ export function demoHtml(origin: string): string {
       : `<div class="banner">Settlement is disabled. Keys missing: ${escapeHtml(missingLiveKeyNames().join(", ") || "none")}. This process still returns a realistic 402 and will run the verifier against fixtures if you send <code>X-Livecheck-Mock: 1</code>.</div>`
   }
   <main>
-    <p class="muted">Prototype · per-check agent API · jobs-first heuristics</p>
+    <p class="muted">Per-check agent API · $0.01 USDC on Base via x402</p>
     <h1>Livecheck</h1>
     <p class="lede">
       ${escapeHtml(VERIFY_DESCRIPTION)}

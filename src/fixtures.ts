@@ -182,6 +182,46 @@ const SHOPIFY_COLLECTION = `<!doctype html>
 </html>
 `;
 
+const SHOPIFY_IN_STOCK_LOCALE = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Ridge Wallet – Ridge</title>
+  <script type="application/json" id="LocaleJson">
+    {
+      "products.product.sold_out": "sold out",
+      "products.product.out_of_stock": "out of stock",
+      "products": { "product": { "sold_out": "sold out", "unavailable": "unavailable" } }
+    }
+  </script>
+</head>
+<body>
+  <h1>Ridge Wallet</h1>
+  <p>In-stock product. Translation catalog is present for theme labels.</p>
+  <form action="/cart/add" method="post">
+    <button type="submit" name="add">Add to cart</button>
+  </form>
+</body>
+</html>
+`;
+
+const CLOUDFLARE_CHALLENGE_PLATFORM_ONLY = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Groove Ring – Groove Life</title>
+  <script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>
+</head>
+<body>
+  <h1>Groove Ring</h1>
+  <p>Cloudflare bot-management script only. No interstitial copy.</p>
+  <form action="/cart/add" method="post">
+    <button type="submit" name="add">Add to cart</button>
+  </form>
+</body>
+</html>
+`;
+
 const PRODUCT_404 = `<!doctype html>
 <html lang="en">
 <head>
@@ -279,6 +319,18 @@ export const FIXTURES: Record<FixtureId, FixtureSpec> = {
     status: 404,
     body: PRODUCT_404,
     label: "HTTP 404 product URL",
+  },
+  "products/ridge-wallet-locale": {
+    id: "products/ridge-wallet-locale",
+    status: 200,
+    body: SHOPIFY_IN_STOCK_LOCALE,
+    label: "Shopify in-stock product whose locale JSON contains sold-out strings",
+  },
+  "products/groove-ring-challenge-platform": {
+    id: "products/groove-ring-challenge-platform",
+    status: 200,
+    body: CLOUDFLARE_CHALLENGE_PLATFORM_ONLY,
+    label: "Product HTML with only a Cloudflare challenge-platform script",
   },
 };
 

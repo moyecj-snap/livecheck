@@ -84,8 +84,8 @@ describe("discovery documents (mock gate)", () => {
     assert.equal(doc.info?.title, "Livecheck");
     assert.ok(doc.info?.version);
     assert.equal(doc.info?.description, VERIFY_DESCRIPTION);
-    assert.match(doc.info?.["x-guidance"] ?? "", /POST \/v1\/verify/);
-    assert.match(doc.info?.["x-guidance"] ?? "", /Not a search engine/);
+    assert.equal(doc.info?.["x-guidance"], VERIFY_DESCRIPTION);
+    assert.match(VERIFY_DESCRIPTION, /not a search engine/i);
     const op = doc.paths?.["/v1/verify"]?.post;
     assert.ok(op, "expected POST /v1/verify");
     assert.equal(op["x-payment-info"]?.price?.mode, "fixed");

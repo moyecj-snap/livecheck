@@ -21,15 +21,14 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
       title: "Livecheck",
       version: OPENAPI_VERSION,
       description: VERIFY_DESCRIPTION,
-      "x-guidance":
-        "Before you scrape a job or product page, POST /v1/verify with JSON {\"url\":\"https://...\"}. Unpaid requests return HTTP 402 (x402 v2, exact, $0.01 USDC on Base). After payment the response is live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404). Not a search engine.",
+      "x-guidance": VERIFY_DESCRIPTION,
     },
     servers: [{ url: origin }],
     paths: {
       "/v1/verify": {
         post: {
           operationId: "verifyListing",
-          summary: "Verify a specific job or product URL",
+          summary: "Verify a specific job, product, or eBay item URL",
           description: VERIFY_DESCRIPTION,
           tags: ["Verify"],
           "x-payment-info": {
@@ -51,7 +50,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
                       type: "string",
                       format: "uri",
                       description:
-                        "Absolute http(s) URL of the specific product or job page to check. Not a search-results URL.",
+                        "Absolute http(s) URL of the specific job, product, or eBay item page to check. Not a search-results URL.",
                     },
                   },
                   required: ["url"],

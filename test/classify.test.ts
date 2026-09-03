@@ -175,6 +175,45 @@ describe("classify fixtures", () => {
     assert.equal(verdict.signals.includes("in-stock"), false);
   });
 
+  it("marks Shopify Add to cart + locale sold_out JSON as live + in-stock", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://ridge.com/products/ridge-wallet",
+        httpStatus: 200,
+        html: FIXTURES["products/ridge-wallet-locale"].body!,
+      }),
+    );
+    assert.equal(verdict.status, "live");
+    assert.ok(verdict.signals.includes("in-stock"));
+    assert.equal(verdict.signals.includes("sold-out"), false);
+  });
+
+  it("marks a visible Sold out button without add-to-cart as closed + sold-out", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://groovelife.com/products/groove-ring",
+        httpStatus: 200,
+        html: FIXTURES["products/groove-ring"].body!,
+      }),
+    );
+    assert.equal(verdict.status, "closed");
+    assert.ok(verdict.signals.includes("sold-out"));
+    assert.equal(verdict.signals.includes("in-stock"), false);
+  });
+
+  it("marks Cloudflare challenge-platform script only as unknown, not live", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://groovelife.com/products/groove-ring",
+        httpStatus: 200,
+        html: FIXTURES["products/groove-ring-challenge-platform"].body!,
+      }),
+    );
+    assert.equal(verdict.status, "unknown");
+    assert.ok(verdict.signals.includes("challenge_page"));
+    assert.equal(verdict.signals.includes("in-stock"), false);
+  });
+
   it("marks a 404 product URL as closed", () => {
     const verdict = classify(
       page({

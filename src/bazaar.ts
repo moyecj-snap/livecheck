@@ -44,7 +44,7 @@ export const VERIFY_INPUT_SCHEMA = {
     url: {
       type: "string",
       description:
-        "Absolute http(s) URL of the specific product or job page to check. Not a search-results URL.",
+        "Absolute http(s) URL of the specific job, product, or eBay item page to check. Not a search-results URL.",
     },
   },
   required: ["url"],
