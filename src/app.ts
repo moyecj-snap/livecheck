@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { MiddlewareHandler } from "hono";
 import { NETWORK, PRICE_USD, USER_AGENT, VERIFY_DESCRIPTION, isLiveSettlement, missingLiveKeyNames } from "./config.js";
+import { isEbayAdapterEnabled } from "./ebay.js";
 import { demoHtml } from "./demo-page.js";
 import { discoveryHeaders, openApiDocument, wellKnownX402 } from "./discovery.js";
 import { FIXTURES } from "./fixtures.js";
@@ -31,6 +32,7 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
       price_usd: PRICE_USD,
       public_verify_url: publicVerifyUrl(c.req.url),
       bazaar: true,
+      ebay: isEbayAdapterEnabled(),
       description: VERIFY_DESCRIPTION,
       user_agent: USER_AGENT,
     });

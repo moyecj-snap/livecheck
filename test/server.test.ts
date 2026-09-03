@@ -29,6 +29,7 @@ describe("HTTP surface", () => {
       settlement: string;
       price_usd: number;
       bazaar?: boolean;
+      ebay?: boolean;
       public_verify_url?: string;
       description?: string;
     };
@@ -37,6 +38,7 @@ describe("HTTP surface", () => {
     assert.equal(body.price_usd, PRICE_USD);
     assert.equal(body.description, VERIFY_DESCRIPTION);
     assert.equal(body.bazaar, true);
+    assert.equal(body.ebay, false);
     assert.ok(body.public_verify_url?.endsWith("/v1/verify"));
   });
 

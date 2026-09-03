@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { DEFAULT_PORT, isLiveSettlement, missingLiveKeyNames, port } from "./config.js";
+import { isEbayAdapterEnabled, logEbayAdapterDisabled } from "./ebay.js";
 import { loadDotEnvIfPresent } from "./env.js";
 
 loadDotEnvIfPresent();
@@ -24,6 +25,12 @@ if (!isLiveSettlement()) {
   );
 } else {
   console.log("Livecheck settlement: Stripe x402 on Base (USDC), $0.01 per verify.");
+}
+
+if (isEbayAdapterEnabled()) {
+  console.log("eBay adapter: Browse availability enabled.");
+} else {
+  logEbayAdapterDisabled();
 }
 
 serve({ fetch: app.fetch, port: listenPort, hostname: "0.0.0.0" }, (info) => {

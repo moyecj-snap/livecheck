@@ -1,5 +1,6 @@
 import { FETCH_TIMEOUT_MS, MAX_BODY_BYTES, USER_AGENT } from "./config.js";
 import { classify } from "./classify.js";
+import { isEbayAdapterEnabled, logEbayAdapterDisabled, parseEbayItemUrl, verifyEbayItem } from "./ebay.js";
 import type { FetchedPage, VerifyVerdict } from "./types.js";
 
 export class VerifyError extends Error {
@@ -103,6 +104,13 @@ export async function verifyUrl(
   fetcher: typeof fetch = fetch,
   now = new Date(),
 ): Promise<VerifyVerdict> {
+  const ebay = parseEbayItemUrl(url);
+  if (ebay) {
+    if (isEbayAdapterEnabled()) {
+      return verifyEbayItem(ebay, fetcher, now);
+    }
+    logEbayAdapterDisabled();
+  }
   const page = await fetchPage(url, fetcher);
   return classify(page, now);
 }

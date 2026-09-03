@@ -99,7 +99,7 @@ curl -s http://127.0.0.1:43127/v1/verify \
   -d '{"url":"http://127.0.0.1:43127/fixtures/closed-to-new-applications"}'
 ```
 
-`npm test` runs fixture-based classifier, HTTP, and MCP client tests (closed Greenhouse redirect, two “closed to new applications” pages, 200 + Apply Now, 404).
+`npm test` runs fixture-based classifier, HTTP, MCP, discovery, and mocked eBay Browse tests. Unit tests never call the live eBay network.
 
 ## Stripe + Coinbase setup (live settlement)
 
@@ -128,6 +128,21 @@ CDP_API_KEY_SECRET=
 ```
 
 When every key is present, Livecheck uses Stripe’s documented stack: Hono `paymentMiddleware`, `@x402/evm` exact scheme on `eip155:8453`, Coinbase facilitator, then a Stripe PaymentIntent in `transaction_verification` mode (idempotency key = tx hash). Atomic USDC (6 decimals) is converted to cents (`$0.01` = 10000 atomic).
+
+## eBay item URLs (Browse availability)
+
+`POST /v1/verify` still costs **$0.01 USDC** and still returns HTTP 402 until paid. After payment, `ebay.com` / `ebay.co.uk` / `ebay.de` / `ebay.ca` / `ebay.com.au` (and similar) **item** URLs (`/itm/{id}` or `/itm/{slug}/{id}`) use eBay **Browse** availability, not sold/completed prices and not eBay HTML.
+
+Set these in `.env` (never commit them):
+
+```
+EBAY_CLIENT_ID=
+EBAY_CLIENT_SECRET=
+```
+
+Optional: `EBAY_DEV_ID` (unused by Browse; kept for the same keyset SnapPrice uses), `EBAY_MARKETPLACE_ID` (default inferred from the host, else `EBAY_US`).
+
+The server mints an application OAuth token (`grant_type=client_credentials`, scope `https://api.ebay.com/oauth/api_scope`) and calls Browse `getItemByLegacyId`. `IN_STOCK` / `LIMITED_STOCK` and a listing that has not ended → `live` (`ebay-in-stock`). `OUT_OF_STOCK` or an ended listing → `closed`. Missing item → `closed`. API errors → `unknown` (never HTTP 500). If the two required env vars are missing, the process still boots; eBay URLs fall back to the HTML classifier and health reports `ebay: false`.
 
 ## Pay for a real request
 
