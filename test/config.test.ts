@@ -33,7 +33,7 @@ describe("listing price and description", () => {
     assert.equal(PRICE_ATOMIC_USDC, "10000");
     assert.equal(
       VERIFY_DESCRIPTION,
-      "Before you scrape a job, product, or eBay item page, POST the specific URL you already have and Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404); not a search engine.",
+      "Before you scrape a job posting, Shopify or HTML product page, or eBay item, POST the specific URL you already have and Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404); not a search engine.",
     );
   });
 });
