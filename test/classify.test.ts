@@ -10,7 +10,12 @@ function page(partial: Partial<FetchedPage> & Pick<FetchedPage, "requestedUrl" |
   const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
   return {
     canonicalUrl: partial.canonicalUrl ?? partial.requestedUrl,
-    text: html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+    text: html
+      .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim(),
     title: titleMatch?.[1]?.trim() ?? null,
     redirected: Boolean(partial.redirected),
     redirectChain: partial.redirectChain ?? [],
@@ -136,6 +141,32 @@ describe("classify fixtures", () => {
     assert.equal(verdict.signals.includes("apply form present"), false);
   });
 
+  it("marks a just-a-moment interstitial on a product URL as challenge_page, not in-stock", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://ridge.com/products/ridge-wallet",
+        httpStatus: 200,
+        html: FIXTURES["cloudflare-challenge"].body!,
+      }),
+    );
+    assert.equal(verdict.status, "unknown");
+    assert.ok(verdict.signals.includes("challenge_page"));
+    assert.equal(verdict.signals.includes("in-stock"), false);
+  });
+
+  it("marks a challenge-platform script with no product signal as challenge_page", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://example.com/",
+        httpStatus: 200,
+        html: `<!doctype html><html><head><script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></head><body><p>Empty shell</p></body></html>`,
+      }),
+    );
+    assert.equal(verdict.status, "unknown");
+    assert.ok(verdict.signals.includes("challenge_page"));
+    assert.equal(verdict.signals.includes("in-stock"), false);
+  });
+
   it("marks a Shopify product with recaptcha and Add to cart as live + in-stock", () => {
     const verdict = classify(
       page({
@@ -201,7 +232,7 @@ describe("classify fixtures", () => {
     assert.equal(verdict.signals.includes("in-stock"), false);
   });
 
-  it("marks Cloudflare challenge-platform script only as unknown, not live", () => {
+  it("marks product HTML with only a Cloudflare bot-mgmt script as live + in-stock", () => {
     const verdict = classify(
       page({
         requestedUrl: "https://groovelife.com/products/groove-ring",
@@ -209,9 +240,50 @@ describe("classify fixtures", () => {
         html: FIXTURES["products/groove-ring-challenge-platform"].body!,
       }),
     );
+    assert.equal(verdict.status, "live");
+    assert.ok(verdict.signals.includes("in-stock"));
+    assert.equal(verdict.signals.includes("challenge_page"), false);
+  });
+
+  it("marks locale sold_out JSON plus sold-out CSS class with Add to cart as live", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://ridge.com/products/ridge-wallet",
+        httpStatus: 200,
+        html: FIXTURES["products/ridge-wallet-locale-class"].body!,
+      }),
+    );
+    assert.equal(verdict.status, "live");
+    assert.ok(verdict.signals.includes("in-stock"));
+    assert.equal(verdict.signals.includes("sold-out"), false);
+    assert.equal(verdict.signals.includes("challenge_page"), false);
+  });
+
+  it("marks schema.org OutOfStock as closed + sold-out", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://ridge.com/products/ridge-wallet",
+        httpStatus: 200,
+        html: FIXTURES["products/ridge-wallet-schema-oos"].body!,
+      }),
+    );
+    assert.equal(verdict.status, "closed");
+    assert.ok(verdict.signals.includes("sold-out"));
+  });
+
+  it("keeps /collections/all unknown when the template includes Apply now", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://ridge.com/collections/all",
+        httpStatus: 200,
+        html: FIXTURES["collections/all-apply"].body!,
+      }),
+    );
     assert.equal(verdict.status, "unknown");
-    assert.ok(verdict.signals.includes("challenge_page"));
-    assert.equal(verdict.signals.includes("in-stock"), false);
+    assert.ok(verdict.signals.includes("collection_or_category"));
+    assert.equal(verdict.status, "unknown");
+    assert.equal(verdict.signals.includes("apply form present"), false);
+    assert.notEqual(verdict.status, "live");
   });
 
   it("marks a 404 product URL as closed", () => {

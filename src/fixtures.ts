@@ -222,6 +222,66 @@ const CLOUDFLARE_CHALLENGE_PLATFORM_ONLY = `<!doctype html>
 </html>
 `;
 
+const SHOPIFY_IN_STOCK_LOCALE_CLASS = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Ridge Wallet – Ridge</title>
+  <script type="application/ld+json">
+    {"@context":"https://schema.org/","@type":"Product","offers":{"availability":"https://schema.org/InStock"}}
+  </script>
+  <script type="application/json" id="LocaleJson">
+    { "products.product.sold_out": "sold out" }
+  </script>
+</head>
+<body>
+  <h1>Ridge Wallet</h1>
+  <div class="product-form sold-out" data-sold-out="false">
+    <form action="/cart/add" method="post">
+      <button type="submit" name="add" class="btn sold-out-style">Add to cart</button>
+    </form>
+  </div>
+</body>
+</html>
+`;
+
+const SHOPIFY_SOLD_OUT_SCHEMA = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Ridge Wallet – Ridge</title>
+  <script type="application/ld+json">
+    {"@context":"https://schema.org/","@type":"Product","offers":{"availability":"https://schema.org/OutOfStock"}}
+  </script>
+</head>
+<body>
+  <h1>Ridge Wallet</h1>
+  <p>The aluminum wallet.</p>
+</body>
+</html>
+`;
+
+const SHOPIFY_COLLECTION_APPLY = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>All – Ridge</title>
+</head>
+<body>
+  <h1>All products</h1>
+  <p>Apply now for the wholesale catalog.</p>
+  <form action="/apply" method="post">
+    <button type="submit">Apply now</button>
+  </form>
+  <ul>
+    <li class="product-card"><a href="/products/wallet-a">Wallet A</a></li>
+    <li class="product-card"><a href="/products/wallet-b">Wallet B</a></li>
+    <li class="product-card"><a href="/products/wallet-c">Wallet C</a></li>
+  </ul>
+</body>
+</html>
+`;
+
 const PRODUCT_404 = `<!doctype html>
 <html lang="en">
 <head>
@@ -330,7 +390,25 @@ export const FIXTURES: Record<FixtureId, FixtureSpec> = {
     id: "products/groove-ring-challenge-platform",
     status: 200,
     body: CLOUDFLARE_CHALLENGE_PLATFORM_ONLY,
-    label: "Product HTML with only a Cloudflare challenge-platform script",
+    label: "In-stock product with only a Cloudflare bot-management script",
+  },
+  "products/ridge-wallet-locale-class": {
+    id: "products/ridge-wallet-locale-class",
+    status: 200,
+    body: SHOPIFY_IN_STOCK_LOCALE_CLASS,
+    label: "In-stock product with locale sold_out JSON, sold-out CSS class, and schema InStock",
+  },
+  "products/ridge-wallet-schema-oos": {
+    id: "products/ridge-wallet-schema-oos",
+    status: 200,
+    body: SHOPIFY_SOLD_OUT_SCHEMA,
+    label: "Product whose only sold-out signal is schema.org OutOfStock",
+  },
+  "collections/all-apply": {
+    id: "collections/all-apply",
+    status: 200,
+    body: SHOPIFY_COLLECTION_APPLY,
+    label: "Collection page that accidentally includes Apply now",
   },
 };
 

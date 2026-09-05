@@ -42,13 +42,11 @@ const CHALLENGE_INTERSTITIAL_PHRASES = [
   "attention required! | cloudflare",
 ];
 
-const CHALLENGE_MARKERS = [
-  "cf-challenge",
-  "challenge-platform",
-  "cf-browser-verification",
-  "/cdn-cgi/challenge",
-  "cf-turnstile-response",
-];
+/** Interstitial / challenge-form markers — not Cloudflare bot-management scripts. */
+const CHALLENGE_WALL_MARKERS = ["cf-challenge", "cf-browser-verification"];
+
+/** Present on real HTML pages via `/cdn-cgi/challenge-platform/scripts/jsd/main.js`. */
+const BOT_MGMT_MARKERS = ["challenge-platform", "/cdn-cgi/challenge"];
 
 const SOLD_OUT_PHRASES = [
   "sold out",
@@ -103,8 +101,9 @@ function hasVisibleSoldOutControl(visibleHtml: string): boolean {
   ) {
     return true;
   }
+  // value / aria-label only — not class, name, or [data-sold-out] presence
   if (
-    /<(button|input)[^>]*(value|aria-label|class|name)=["'][^"']*(sold-?out|soldout|out-of-stock)[^"']*/i.test(
+    /<(button|input)[^>]*(value|aria-label)=["'][^"']*(sold[-\s]?out|soldout|out of stock|out-of-stock|currently unavailable)[^"']*/i.test(
       visibleHtml,
     )
   ) {
@@ -220,14 +219,18 @@ function countProductCards(html: string): number {
   return cards?.length ?? 0;
 }
 
-function isChallengeInterstitial(html: string, text: string): boolean {
+function isChallengeInterstitial(html: string, text: string, realProductPage: boolean): boolean {
   if (includesPhrase(text, CHALLENGE_INTERSTITIAL_PHRASES) || includesPhrase(html, CHALLENGE_INTERSTITIAL_PHRASES)) {
     return true;
   }
-  for (const marker of CHALLENGE_MARKERS) {
+  if (text.includes("attention required") && html.includes("cloudflare")) return true;
+  for (const marker of CHALLENGE_WALL_MARKERS) {
     if (html.includes(marker)) return true;
   }
-  if (text.includes("attention required") && html.includes("cloudflare")) return true;
+  const botMgmt = BOT_MGMT_MARKERS.some((marker) => html.includes(marker));
+  const turnstileForm = html.includes("cf-turnstile-response");
+  // Bot-mgmt / turnstile widgets on a real product page are not an interstitial.
+  if ((botMgmt || turnstileForm) && !realProductPage) return true;
   return false;
 }
 
@@ -268,8 +271,20 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
     }
   }
 
-  const challenge = isChallengeInterstitial(html, text);
   const loginwall = includesPhrase(text, LOGINWALL_PHRASES);
+  const specificPosting = looksLikeSpecificJobUrl(page.canonicalUrl) || looksLikeSpecificJobUrl(page.requestedUrl);
+  const boardOrSearch = looksLikeBoardOrSearchUrl(page.canonicalUrl);
+  const apply = hasApplyAffordance(page.html, text);
+  const manyCards = countJobCards(page.html, page.text) >= 3;
+  const collectionOrCategory =
+    looksLikeCollectionOrCategoryUrl(page.canonicalUrl) || looksLikeCollectionOrCategoryUrl(page.requestedUrl);
+  const specificProduct =
+    looksLikeSpecificProductUrl(page.canonicalUrl) || looksLikeSpecificProductUrl(page.requestedUrl);
+  const buy = hasBuyAffordance(html, text);
+  const soldOutPhrase = hasVisibleSoldOut(html, text);
+  const manyProductCards = countProductCards(html) >= 3;
+  const productPage = specificProduct || (buy && !collectionOrCategory && !manyProductCards && !specificPosting);
+  const challenge = isChallengeInterstitial(html, text, specificProduct || buy);
   if (challenge) {
     signals.push("challenge_page");
     if (status !== "closed") {
@@ -284,19 +299,6 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
       confidence = 0.6;
     }
   }
-
-  const specificPosting = looksLikeSpecificJobUrl(page.canonicalUrl) || looksLikeSpecificJobUrl(page.requestedUrl);
-  const boardOrSearch = looksLikeBoardOrSearchUrl(page.canonicalUrl);
-  const apply = hasApplyAffordance(page.html, text);
-  const manyCards = countJobCards(page.html, page.text) >= 3;
-  const collectionOrCategory =
-    looksLikeCollectionOrCategoryUrl(page.canonicalUrl) || looksLikeCollectionOrCategoryUrl(page.requestedUrl);
-  const specificProduct =
-    looksLikeSpecificProductUrl(page.canonicalUrl) || looksLikeSpecificProductUrl(page.requestedUrl);
-  const buy = hasBuyAffordance(html, text);
-  const soldOutPhrase = hasVisibleSoldOut(html, text);
-  const manyProductCards = countProductCards(html) >= 3;
-  const productPage = specificProduct || (buy && !collectionOrCategory && !manyProductCards && !specificPosting);
 
   if (boardOrSearch && !specificPosting) {
     signals.push("not_a_specific_posting");
@@ -325,6 +327,7 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
     status !== "closed" &&
     !challenge &&
     !loginwall &&
+    !collectionOrCategory &&
     page.httpStatus >= 200 &&
     page.httpStatus < 300 &&
     (specificPosting || singlePostingPage) &&
@@ -336,7 +339,15 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
     signals.push("no closure banner");
     status = "live";
     confidence = specificPosting ? 0.82 : 0.78;
-  } else if (status !== "closed" && apply && page.httpStatus === 200 && !boardOrSearch && !challenge && !loginwall) {
+  } else if (
+    status !== "closed" &&
+    apply &&
+    page.httpStatus === 200 &&
+    !boardOrSearch &&
+    !challenge &&
+    !loginwall &&
+    !collectionOrCategory
+  ) {
     signals.push("apply form present");
     if (!closedPhrase) signals.push("no closure banner");
     if (!specificPosting) {
