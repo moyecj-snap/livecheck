@@ -29,6 +29,7 @@ import {
   paymentRequiredBody,
 } from "./x402-payload.js";
 import { wrapFacilitatorForCatalog } from "./facilitator-catalog.js";
+import { emitPaidCallAfterSettle, extractPayer } from "./paid-call.js";
 import { createStripeClient, recordSettledPayment } from "./stripe-record.js";
 
 export function settlementMode(): "live" | "mock" {
@@ -143,8 +144,13 @@ function livePaymentMiddleware(): MiddlewareHandler {
   );
   const resourceServer = resourceServerFromFacilitator(facilitatorClient);
   const stripe = createStripeClient(keys.stripeSecretKey);
-  resourceServer.onAfterSettle(async ({ result, requirements }) => {
-    await recordSettledPayment(stripe, result, requirements);
+  resourceServer.onAfterSettle(async ({ result, requirements, paymentPayload }) => {
+    const paymentIntent = await recordSettledPayment(stripe, result, requirements);
+    emitPaidCallAfterSettle({
+      payer: extractPayer(result, paymentPayload),
+      tx: result.transaction,
+      payment_intent: paymentIntent,
+    });
   });
 
   return livePaymentMiddlewareFromServer(resourceServer, keys.depositAddress);

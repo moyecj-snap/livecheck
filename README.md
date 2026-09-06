@@ -317,6 +317,22 @@ Public check (no payment): `curl -sS https://livecheck.fly.dev/health` should be
 
 After this ships: `fly deploy` from Origin. Listing the catalog is free; CDP catalogs the route after a successful paid settle (exact, $0.01 USDC on Base). This repo does not trigger that payment.
 
+### Paid-call analytics (`livecheck.paid_call`)
+
+Each successful paid `POST /v1/verify` and `POST /v1/confirm` writes **one** structured JSON line to stdout. Stripe PaymentIntent recording is unchanged.
+
+```json
+{"event":"livecheck.paid_call","route":"verify","status":"live","host":"boards.greenhouse.io","url_hash":"…","payer":"0x…","tx":"0x…","payment_intent":"pi_…","ts":"2026-09-06T20:34:00Z"}
+```
+
+Confirm lines add `intent` (`lead_submit`) and `verdict` instead of `status`. Privacy rule: **never** log raw query strings, emails, or full URLs — hostname + SHA-256 of the full URL only. `payer` / `tx` / `payment_intent` are omitted when missing (mock/dev).
+
+On Fly, grep machine logs for the event name:
+
+```bash
+fly logs -a livecheck | grep livecheck.paid_call
+```
+
 ## How agents find this
 
 - **Wallet-agents:** [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) / Agentic.market. They search a free catalog of paid APIs, then pay $0.01 USDC on Base to `POST /v1/verify`.

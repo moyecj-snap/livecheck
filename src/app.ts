@@ -15,6 +15,7 @@ import { isEbayAdapterEnabled } from "./ebay.js";
 import { demoHtml } from "./demo-page.js";
 import { discoveryHeaders, openApiDocument, wellKnownX402 } from "./discovery.js";
 import { FIXTURES } from "./fixtures.js";
+import { recordSuccessfulPaidCheck, withPaidCallContext } from "./paid-call.js";
 import { applyPaymentGate, settlementMode } from "./payments.js";
 import { publicConfirmUrl, publicVerifyUrl } from "./public-url.js";
 import { VerifyError, parseTargetUrl, verifyUrl } from "./verify.js";
@@ -22,6 +23,7 @@ import { VerifyError, parseTargetUrl, verifyUrl } from "./verify.js";
 export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): Hono {
   const app = new Hono();
 
+  app.use(withPaidCallContext());
   app.use(paymentGate);
 
   app.get("/openapi.json", (c) => {
@@ -78,6 +80,7 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
     try {
       const target = parseTargetUrl(url);
       const verdict = await verifyUrl(target);
+      recordSuccessfulPaidCheck({ route: "verify", url: target, status: verdict.status });
       return c.json(verdict);
     } catch (error) {
       if (error instanceof VerifyError) {
@@ -95,8 +98,14 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
       return c.json({ error: "Request body must be JSON." }, 400);
     }
     try {
-      const { url } = parseConfirmRequest(body);
+      const { url, intent } = parseConfirmRequest(body);
       const result = await confirmUrl(url);
+      recordSuccessfulPaidCheck({
+        route: "confirm",
+        url,
+        intent,
+        verdict: result.verdict,
+      });
       return c.json(result);
     } catch (error) {
       if (error instanceof VerifyError) {
