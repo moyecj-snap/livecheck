@@ -2,11 +2,21 @@ export const PRICE_USD = 0.01;
 export const PRICE_LABEL = "$0.01";
 /** $0.01 USDC at 6 decimals = 10000 atomic. */
 export const PRICE_ATOMIC_USDC = "10000";
+export const CONFIRM_PRICE_USD = 0.1;
+export const CONFIRM_PRICE_LABEL = "$0.10";
+/** $0.10 USDC at 6 decimals = 100000 atomic. */
+export const CONFIRM_PRICE_ATOMIC_USDC = "100000";
 export const NETWORK = "eip155:8453";
 export const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 export const USDC_EIP712 = { name: "USD Coin", version: "2" } as const;
 export const VERIFY_DESCRIPTION =
   "Before you scrape a job or product page, POST the URL. Livecheck fetches the source and returns live, closed, or unknown plus title and signals (apply form, sold-out, 404). Not a search engine.";
+/** Single source of truth for OpenAPI, x-guidance, 402 resource.description, and Bazaar. */
+export const CONFIRM_DESCRIPTION =
+  "Livecheck Confirm — use after your agent submits a lead/contact form (intent=lead_submit): POST {url, intent} where url is the thank-you or result page. Returns confirmed|failed|unknown with Level-2+ evidence (confirmation/ref/ticket id required for confirmed). Independent cookieless verifier — actor ≠ verifier — so you do not grade your own homework before the next paid or irreversible step. Not URL/stock liveness (use /v1/verify), not payment/tx settlement, not a thank-you-page classifier.";
+export const CONFIRM_SUMMARY =
+  "Confirm lead_submit side effects independently before your next step";
+export const CONFIRM_TAGS = ["Confirm", "lead_submit", "side-effect"] as const;
 export const USER_AGENT =
   "Livecheck/0.1 (+https://livecheck.local; primary-source verification)";
 export const FETCH_TIMEOUT_MS = 8_000;

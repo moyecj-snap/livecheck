@@ -6,8 +6,15 @@ import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { declareDiscoveryExtension, validateDiscoveryExtension } from "@x402/extensions/bazaar";
 import { createApp } from "../src/app.js";
-import { VERIFY_DESCRIPTION } from "../src/config.js";
-import { VERIFY_EXAMPLE, VERIFY_INPUT_SCHEMA, verifyBazaarExtensions } from "../src/bazaar.js";
+import { CONFIRM_DESCRIPTION, VERIFY_DESCRIPTION } from "../src/config.js";
+import {
+  CONFIRM_EXAMPLE,
+  CONFIRM_INPUT_SCHEMA,
+  confirmBazaarExtensions,
+  VERIFY_EXAMPLE,
+  VERIFY_INPUT_SCHEMA,
+  verifyBazaarExtensions,
+} from "../src/bazaar.js";
 import { fillCatalogPaymentPayload } from "../src/catalog-payload.js";
 import {
   assertInfoInputMatchesSchema,
@@ -172,5 +179,34 @@ describe("402 bazaar + public URL", () => {
     assert.equal(decoded.accepts[0].amount, "10000");
     assert.equal(decoded.x402Version, 2);
     assertInfoInputMatchesSchema(decoded.extensions.bazaar, "live 402 payment-required");
+  });
+
+  it("advertises Confirm Bazaar description with Livecheck on unpaid 402", async () => {
+    const res = await fetch(`${origin}/v1/confirm`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: "https://example.com/thanks", intent: "lead_submit" }),
+    });
+    assert.equal(res.status, 402);
+    const decoded = JSON.parse(Buffer.from(res.headers.get("payment-required") ?? "", "base64").toString("utf8"));
+    assert.equal(decoded.resource.url, "https://livecheck.fly.dev/v1/confirm");
+    assert.equal(decoded.resource.description, CONFIRM_DESCRIPTION);
+    assert.match(decoded.resource.description, /Livecheck/);
+    assert.equal(decoded.accepts[0].amount, "100000");
+    assert.equal(decoded.extensions.bazaar.info.output.example.price_usd, 0.1);
+    assertInfoInputMatchesSchema(decoded.extensions.bazaar, "confirm 402 payment-required");
+  });
+});
+
+describe("confirm bazaar discovery metadata", () => {
+  it("declares POST JSON body { url, intent } and confirm output schema", () => {
+    const extensions = confirmBazaarExtensions() as { bazaar?: BazaarExt };
+    assert.ok(extensions.bazaar);
+    assert.equal(extensions.bazaar?.info?.input?.method, "POST");
+    assert.equal((extensions.bazaar?.info?.input?.body as { intent?: string })?.intent, "lead_submit");
+    const spec = validateDiscoveryExtension(extensions.bazaar as never);
+    assert.equal(spec.valid, true, spec.errors?.join("; ") ?? "invalid confirm discovery extension");
+    assert.equal(CONFIRM_EXAMPLE.price_usd, 0.1);
+    assert.deepEqual(CONFIRM_INPUT_SCHEMA.required, ["url", "intent"]);
   });
 });

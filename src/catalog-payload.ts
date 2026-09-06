@@ -1,6 +1,6 @@
-import { verifyBazaarExtensions } from "./bazaar.js";
-import { VERIFY_DESCRIPTION } from "./config.js";
-import { publicVerifyUrl } from "./public-url.js";
+import { confirmBazaarExtensions, verifyBazaarExtensions } from "./bazaar.js";
+import { CONFIRM_DESCRIPTION, VERIFY_DESCRIPTION } from "./config.js";
+import { publicConfirmUrl, publicVerifyUrl } from "./public-url.js";
 
 export type CatalogResourceInfo = {
   url: string;
@@ -21,6 +21,14 @@ export function advertisedResourceInfo(): CatalogResourceInfo {
   return {
     url: publicVerifyUrl(),
     description: VERIFY_DESCRIPTION,
+    mimeType: "application/json",
+  };
+}
+
+export function advertisedConfirmResourceInfo(): CatalogResourceInfo {
+  return {
+    url: publicConfirmUrl(),
+    description: CONFIRM_DESCRIPTION,
     mimeType: "application/json",
   };
 }
@@ -59,10 +67,12 @@ export function fillCatalogPaymentPayload(payload: PaymentEnvelope): {
   resourceFilled: boolean;
   bazaarFilled: boolean;
 } {
-  const advertised = advertisedResourceInfo();
   const inboundUrl = paymentPayloadResourceUrl(payload);
+  const confirm = inboundUrl?.includes("/v1/confirm") ?? false;
+  const advertised = confirm ? advertisedConfirmResourceInfo() : advertisedResourceInfo();
   const resourceFilled = needsAdvertisedResource(inboundUrl, advertised.url);
   const bazaarFilled = !paymentPayloadHasBazaar(payload);
+  const routeBazaar = confirm ? confirmBazaarExtensions() : verifyBazaarExtensions();
 
   const next: PaymentEnvelope = { ...payload };
   if (resourceFilled) {
@@ -73,7 +83,7 @@ export function fillCatalogPaymentPayload(payload: PaymentEnvelope): {
 
   if (bazaarFilled) {
     next.extensions = {
-      ...verifyBazaarExtensions(),
+      ...routeBazaar,
       ...(payload.extensions && typeof payload.extensions === "object" ? payload.extensions : {}),
     };
   }

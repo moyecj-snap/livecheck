@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { FacilitatorClient } from "@x402/core/server";
-import { VERIFY_DESCRIPTION } from "../src/config.js";
+import { CONFIRM_DESCRIPTION, VERIFY_DESCRIPTION } from "../src/config.js";
 import {
   decodeExtensionResponsesHeader,
   fillCatalogPaymentPayload,
@@ -48,6 +48,24 @@ describe("fillCatalogPaymentPayload", () => {
       assert.equal(resourceFilled, true);
       assert.equal(paymentPayloadResourceUrl(payload), advertised);
       assert.equal((payload.resource as { description?: string }).description, VERIFY_DESCRIPTION);
+    } finally {
+      if (previous === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
+      else process.env.LIVECHECK_PUBLIC_URL = previous;
+    }
+  });
+
+  it("backfills Confirm resource + bazaar when inbound URL is /v1/confirm", () => {
+    const previous = process.env.LIVECHECK_PUBLIC_URL;
+    process.env.LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev";
+    try {
+      const { payload, resourceFilled, bazaarFilled } = fillCatalogPaymentPayload({
+        resource: { url: "http://livecheck.fly.dev/v1/confirm", description: "old" },
+      });
+      assert.equal(resourceFilled, true);
+      assert.equal(bazaarFilled, true);
+      assert.equal(paymentPayloadResourceUrl(payload), "https://livecheck.fly.dev/v1/confirm");
+      assert.equal((payload.resource as { description?: string }).description, CONFIRM_DESCRIPTION);
+      assertInfoInputMatchesSchema(payload.extensions?.bazaar as BazaarExt, "confirm settle-filled bazaar");
     } finally {
       if (previous === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
       else process.env.LIVECHECK_PUBLIC_URL = previous;

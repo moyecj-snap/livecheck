@@ -1,5 +1,5 @@
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
-import { PRICE_USD, VERIFY_DESCRIPTION } from "./config.js";
+import { CONFIRM_DESCRIPTION, CONFIRM_PRICE_USD, PRICE_USD, VERIFY_DESCRIPTION } from "./config.js";
 
 export const VERIFY_EXAMPLE = {
   url: "https://boards.greenhouse.io/example/jobs/1842",
@@ -128,3 +128,77 @@ export function verifyBazaarExtensions(): Record<string, unknown> {
 }
 
 export const VERIFY_ROUTE_DESCRIPTION = VERIFY_DESCRIPTION;
+
+export const CONFIRM_EXAMPLE = {
+  url: "https://example.com/contact/thanks",
+  canonical_url: "https://example.com/contact/thanks",
+  status: "confirmed",
+  intent: "lead_submit",
+  http_status: 200,
+  checked_at: "2026-09-06T21:00:00Z",
+  title: "Thank you — Northwind Labs",
+  signals: ["level2_confirmation_id:CNF-1842"],
+  confidence: 0.9,
+  price_usd: CONFIRM_PRICE_USD,
+  evidence: { level: 2, confirmation_id: "CNF-1842", kind: "confirmation_id" },
+} as const;
+
+export const CONFIRM_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    url: { type: "string" },
+    canonical_url: { type: "string" },
+    status: { type: "string", enum: ["confirmed", "failed", "unknown"] },
+    intent: { type: "string", enum: ["lead_submit"] },
+    http_status: { type: "number" },
+    checked_at: { type: "string" },
+    title: { type: "string" },
+    signals: { type: "array", items: { type: "string" } },
+    confidence: { type: "number" },
+    price_usd: { type: "number" },
+    evidence: { type: "object" },
+  },
+  required: [
+    "url",
+    "canonical_url",
+    "status",
+    "intent",
+    "http_status",
+    "checked_at",
+    "signals",
+    "confidence",
+    "price_usd",
+    "evidence",
+  ],
+} as const;
+
+export const CONFIRM_INPUT_SCHEMA = {
+  properties: {
+    url: {
+      type: "string",
+      description: "Absolute http(s) URL of the thank-you or result page after lead_submit.",
+    },
+    intent: {
+      type: "string",
+      enum: ["lead_submit"],
+      description: "Day-1 Confirm intent. Only lead_submit is accepted.",
+    },
+  },
+  required: ["url", "intent"],
+} as const;
+
+export function confirmBazaarExtensions(): Record<string, unknown> {
+  return withPostJsonMethod(
+    declareDiscoveryExtension({
+      bodyType: "json",
+      input: { url: CONFIRM_EXAMPLE.url, intent: "lead_submit" },
+      inputSchema: CONFIRM_INPUT_SCHEMA,
+      output: {
+        example: CONFIRM_EXAMPLE,
+        schema: CONFIRM_OUTPUT_SCHEMA,
+      },
+    }),
+  );
+}
+
+export const CONFIRM_ROUTE_DESCRIPTION = CONFIRM_DESCRIPTION;

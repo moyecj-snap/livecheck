@@ -1,7 +1,9 @@
 import { Hono } from "hono";
 import type { MiddlewareHandler } from "hono";
+import { confirmUrl, parseConfirmBody } from "./confirm.js";
 import { NETWORK, PRICE_USD, USER_AGENT, VERIFY_DESCRIPTION, isLiveSettlement, missingLiveKeyNames } from "./config.js";
 import { demoHtml } from "./demo-page.js";
+import { openApiDocument, wellKnownX402 } from "./discovery.js";
 import { FIXTURES } from "./fixtures.js";
 import { applyPaymentGate, settlementMode } from "./payments.js";
 import { publicVerifyUrl } from "./public-url.js";
@@ -32,6 +34,14 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
     return c.html(demoHtml(origin));
   });
 
+  app.get("/openapi.json", (c) => {
+    return c.json(openApiDocument(c.req.url, c.req.header("host")));
+  });
+
+  app.get("/.well-known/x402", (c) => {
+    return c.json(wellKnownX402(c.req.url, c.req.header("host")));
+  });
+
   app.get("/fixtures/*", (c) => {
     const id = c.req.path.replace(/^\/fixtures\//, "");
     const fixture = FIXTURES[id];
@@ -53,6 +63,25 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
     try {
       const target = parseTargetUrl(url);
       const verdict = await verifyUrl(target);
+      return c.json(verdict);
+    } catch (error) {
+      if (error instanceof VerifyError) {
+        return c.json({ error: error.message }, error.status as 400 | 502 | 504);
+      }
+      throw error;
+    }
+  });
+
+  app.post("/v1/confirm", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Request body must be JSON." }, 400);
+    }
+    try {
+      const { url } = parseConfirmBody(body);
+      const verdict = await confirmUrl(url);
       return c.json(verdict);
     } catch (error) {
       if (error instanceof VerifyError) {

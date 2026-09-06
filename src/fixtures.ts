@@ -96,6 +96,46 @@ const NOT_FOUND = `<!doctype html>
 </html>
 `;
 
+const CONFIRM_WITH_REF = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Thank you — Northwind Labs</title>
+</head>
+<body>
+  <h1>Thank you</h1>
+  <p>Your request has been received.</p>
+  <p>Confirmation number: CNF-1842</p>
+</body>
+</html>
+`;
+
+const THANK_YOU_NO_ID = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Thank you for contacting us</title>
+</head>
+<body>
+  <h1>Thank you</h1>
+  <p>Thanks for contacting us. We received your message and will get back to you shortly.</p>
+</body>
+</html>
+`;
+
+const SUBMIT_FAILED = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Submission failed</title>
+</head>
+<body>
+  <h1>Submission failed</h1>
+  <p>We could not submit your form. Please try again.</p>
+</body>
+</html>
+`;
+
 export const FIXTURES: Record<FixtureId, FixtureSpec> = {
   "live-apply-now": {
     id: "live-apply-now",
@@ -144,6 +184,24 @@ export const FIXTURES: Record<FixtureId, FixtureSpec> = {
     status: 404,
     body: NOT_FOUND,
     label: "HTTP 404 job URL",
+  },
+  "confirm-with-ref-id": {
+    id: "confirm-with-ref-id",
+    status: 200,
+    body: CONFIRM_WITH_REF,
+    label: "Thank-you page with Level-2 confirmation number",
+  },
+  "thank-you-no-id": {
+    id: "thank-you-no-id",
+    status: 200,
+    body: THANK_YOU_NO_ID,
+    label: "Thank-you page without confirmation/ref/ticket id",
+  },
+  "submit-failed": {
+    id: "submit-failed",
+    status: 200,
+    body: SUBMIT_FAILED,
+    label: "Explicit lead_submit failure page",
   },
 };
 
