@@ -1,9 +1,10 @@
-import { VERIFY_OUTPUT_SCHEMA } from "./bazaar.js";
-import { VERIFY_DESCRIPTION } from "./config.js";
-import { publicOrigin, publicVerifyUrl } from "./public-url.js";
+import { CONFIRM_OUTPUT_SCHEMA, VERIFY_OUTPUT_SCHEMA } from "./bazaar.js";
+import { CONFIRM_DESCRIPTION, VERIFY_DESCRIPTION } from "./config.js";
+import { publicConfirmUrl, publicOrigin, publicVerifyUrl } from "./public-url.js";
 
 const OPENAPI_VERSION = "0.1.0";
 const OPENAPI_PRICE_AMOUNT = "0.01";
+const OPENAPI_CONFIRM_PRICE_AMOUNT = "0.10";
 
 export function discoveryHeaders(): Record<string, string> {
   return {
@@ -73,6 +74,65 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
           },
         },
       },
+      "/v1/confirm": {
+        post: {
+          operationId: "confirmLeadSubmit",
+          summary: "Confirm a lead_submit side effect",
+          description: CONFIRM_DESCRIPTION,
+          tags: ["Confirm"],
+          "x-payment-info": {
+            price: {
+              mode: "fixed",
+              currency: "USD",
+              amount: OPENAPI_CONFIRM_PRICE_AMOUNT,
+            },
+            protocols: [{ x402: {} }],
+          },
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    url: {
+                      type: "string",
+                      format: "uri",
+                      description: "Absolute http(s) URL of the thank-you or result page.",
+                    },
+                    intent: {
+                      type: "string",
+                      enum: ["lead_submit"],
+                      description: "Day-1 Confirm intent. Only lead_submit is accepted.",
+                    },
+                    claim: {
+                      type: "object",
+                      description: "Optional. Ignored in v0.",
+                    },
+                  },
+                  required: ["url", "intent"],
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description: "Independent confirmed, failed, or unknown verdict",
+              content: {
+                "application/json": {
+                  schema: CONFIRM_OUTPUT_SCHEMA,
+                },
+              },
+            },
+            "400": {
+              description: "Unsupported intent or invalid body",
+            },
+            "402": {
+              description: "Payment Required",
+            },
+          },
+        },
+      },
     },
   };
 }
@@ -86,7 +146,7 @@ export function wellKnownX402(requestUrl?: string, host?: string): Record<string
   return {
     version: 1,
     x402Version: 2,
-    resources: [publicVerifyUrl(requestUrl, host)],
+    resources: [publicVerifyUrl(requestUrl, host), publicConfirmUrl(requestUrl, host)],
   };
 }
 

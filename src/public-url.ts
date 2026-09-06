@@ -5,7 +5,7 @@ function stripTrailingSlash(value: string): string {
 }
 
 function originOnly(value: string): string {
-  return stripTrailingSlash(value).replace(/\/v1\/verify$/i, "");
+  return stripTrailingSlash(value).replace(/\/v1\/(verify|confirm)$/i, "");
 }
 
 /** Force https for Fly public hostnames. 402 resource.url must not be http in production. */
@@ -60,4 +60,17 @@ export function publicOrigin(requestUrl?: string, host?: string): string {
 
 export function publicVerifyUrl(requestUrl?: string, host?: string): string {
   return `${publicOrigin(requestUrl, host)}/v1/verify`;
+}
+
+export function publicConfirmUrl(requestUrl?: string, host?: string): string {
+  return `${publicOrigin(requestUrl, host)}/v1/confirm`;
+}
+
+export function isConfirmRequestPath(requestUrl?: string): boolean {
+  if (!requestUrl) return false;
+  try {
+    return new URL(requestUrl).pathname.replace(/\/+$/, "").endsWith("/v1/confirm");
+  } catch {
+    return /\/v1\/confirm\/?(\?|$)/i.test(requestUrl);
+  }
 }

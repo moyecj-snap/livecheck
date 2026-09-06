@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { DEFAULT_PORT, PRICE_ATOMIC_USDC, PRICE_USD, VERIFY_DESCRIPTION, port } from "../src/config.js";
+import {
+  CONFIRM_DESCRIPTION,
+  CONFIRM_PRICE_ATOMIC_USDC,
+  CONFIRM_PRICE_USD,
+  DEFAULT_PORT,
+  PRICE_ATOMIC_USDC,
+  PRICE_USD,
+  VERIFY_DESCRIPTION,
+  port,
+} from "../src/config.js";
 
 describe("PORT bind", () => {
   it("defaults to 43127 when PORT is unset", () => {
@@ -34,6 +43,12 @@ describe("listing price and description", () => {
     assert.equal(
       VERIFY_DESCRIPTION,
       "Before you scrape a job posting, Shopify or HTML product page, or eBay item, POST the specific URL you already have and Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404); not a search engine.",
+    );
+    assert.equal(CONFIRM_PRICE_USD, 0.1);
+    assert.equal(CONFIRM_PRICE_ATOMIC_USDC, "100000");
+    assert.equal(
+      CONFIRM_DESCRIPTION,
+      "Independently verify whether a lead_submit side effect occurred (confirmation/ref id required for confirmed); actor ≠ verifier; not a thank-you-page classifier.",
     );
   });
 });

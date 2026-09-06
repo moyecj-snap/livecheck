@@ -2,7 +2,7 @@
 
 Before you scrape a listing, check if it is still there. POST a specific job posting, Shopify or HTML product URL, or eBay item URL. Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404). Product pages are HTML-only (Shopify-class add-to-cart / sold-out); eBay item URLs use Browse availability, not sold comps. Not a search engine. $0.01 USDC per check on Base via x402.
 
-This is a per-check agent API, not a platform. Agents pay **$0.01 USDC** per `POST /v1/verify` on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md). The endpoint accepts any `http(s)` URL.
+This is a per-check agent API, not a platform. Agents pay **$0.01 USDC** per `POST /v1/verify` and **$0.10 USDC** per `POST /v1/confirm` on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md).
 
 ## What you get
 
@@ -37,9 +37,9 @@ After payment verifies and settles:
 
 v1 reads HTML + status only. It does not execute page JavaScript. Redirects are followed; `canonical_url` is the final URL. User-Agent identifies Livecheck.
 
-Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, and `GET /.well-known/x402`. Paid: only `POST /v1/verify`.
+Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, and `GET /.well-known/x402`. Paid: `POST /v1/verify` ($0.01) and `POST /v1/confirm` ($0.10).
 
-Agent crawlers (x402scan, AgentCash, Circle OpenAPI discovery) read the free JSON docs. `GET /openapi.json` is the canonical contract: `POST /v1/verify` with JSON `{ "url": "https://..." }`, `x-payment-info` fixed **$0.01** USD (decimal; runtime 402 `accepts[].amount` stays `"10000"` atomic USDC), and a 200 schema of `live | closed | unknown`. `GET /.well-known/x402` is the compatibility fan-out (`version` + `resources` listing `https://livecheck.fly.dev/v1/verify`). Neither route returns 402.
+Agent crawlers (x402scan, AgentCash, Circle OpenAPI discovery) read the free JSON docs. `GET /openapi.json` is the canonical contract: `POST /v1/verify` with JSON `{ "url": "https://..." }`, `x-payment-info` fixed **$0.01** USD (decimal; runtime 402 `accepts[].amount` stays `"10000"` atomic USDC), and a 200 schema of `live | closed | unknown`. It also lists `POST /v1/confirm` at **$0.10** USD (`"100000"` atomic). `GET /.well-known/x402` lists both `https://livecheck.fly.dev/v1/verify` and `https://livecheck.fly.dev/v1/confirm`. Neither discovery route returns 402.
 
 Unpaid `POST /v1/verify` includes x402 v2 Bazaar discovery metadata (`extensions.bazaar` via `bazaarResourceServerExtension` + `declareDiscoveryExtension`). Listing in [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) is free to browse; CDP catalogs this route after a successful paid request that carries the extension. The 402 `resource.description` (and health `description`) is: Before you scrape a job posting, Shopify or HTML product page, or eBay item, POST the specific URL you already have and Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404); not a search engine.
 
@@ -67,6 +67,28 @@ curl -sS -D - -o /dev/null https://livecheck.fly.dev/v1/verify \
 # decode payment-required: resource.url must be https://livecheck.fly.dev/v1/verify
 # and extensions.bazaar must be present
 ```
+
+## Confirm (`POST /v1/confirm`)
+
+Independently verify whether a lead_submit side effect occurred (confirmation/ref id required for confirmed); actor ≠ verifier; not a thank-you-page classifier.
+
+Day-1 intent is **`lead_submit` only**. Price is **$0.10 USDC** (`100000` atomic). `/v1/verify` stays **$0.01**.
+
+```http
+POST /v1/confirm
+Content-Type: application/json
+
+{ "url": "https://example.com/thank-you", "intent": "lead_submit", "claim": {} }
+```
+
+`claim` is optional and ignored in v0. After payment:
+
+- **confirmed** — Level 2 only: extractable confirmation/ref/ticket/lead id, or a unique token in the confirmation URL. Thank-you copy alone is never confirmed.
+- **unknown** — Level 1 only (thank-you copy, no id).
+- **failed** — clear error/reject banner.
+- Fetch is cookieless. `independent_evidence` is true only then; cookies never produce `confirmed`.
+
+Other intents return HTTP 400. Booking, order, unsubscribe, screenshots, and LLM/vision are out of scope.
 
 ## Run locally
 

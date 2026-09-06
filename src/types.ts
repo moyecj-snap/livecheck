@@ -12,6 +12,28 @@ export type VerifyVerdict = {
   price_usd: number;
 };
 
+export type ConfirmVerdictStatus = "confirmed" | "failed" | "unknown";
+
+export type ConfirmEffect = {
+  type: "lead_submit";
+  id?: string;
+};
+
+export type ConfirmResult = {
+  verdict: ConfirmVerdictStatus;
+  effect: ConfirmEffect;
+  evidence_strength: 1 | 2;
+  signals: string[];
+  independent_signals: number;
+  independent_evidence: boolean;
+  evidence_id: string;
+  http_status: number;
+  fetched_at: string;
+  url: string;
+  canonical_url: string;
+  price_usd: number;
+};
+
 export type FetchedPage = {
   requestedUrl: string;
   canonicalUrl: string;

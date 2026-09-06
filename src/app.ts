@@ -1,12 +1,21 @@
 import { Hono } from "hono";
 import type { MiddlewareHandler } from "hono";
-import { NETWORK, PRICE_USD, USER_AGENT, VERIFY_DESCRIPTION, isLiveSettlement, missingLiveKeyNames } from "./config.js";
+import {
+  CONFIRM_PRICE_USD,
+  NETWORK,
+  PRICE_USD,
+  USER_AGENT,
+  VERIFY_DESCRIPTION,
+  isLiveSettlement,
+  missingLiveKeyNames,
+} from "./config.js";
+import { confirmUrl, parseConfirmRequest } from "./confirm.js";
 import { isEbayAdapterEnabled } from "./ebay.js";
 import { demoHtml } from "./demo-page.js";
 import { discoveryHeaders, openApiDocument, wellKnownX402 } from "./discovery.js";
 import { FIXTURES } from "./fixtures.js";
 import { applyPaymentGate, settlementMode } from "./payments.js";
-import { publicVerifyUrl } from "./public-url.js";
+import { publicConfirmUrl, publicVerifyUrl } from "./public-url.js";
 import { VerifyError, parseTargetUrl, verifyUrl } from "./verify.js";
 
 export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): Hono {
@@ -30,9 +39,12 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
       missing_keys: isLiveSettlement() ? [] : missingLiveKeyNames(),
       network: NETWORK,
       price_usd: PRICE_USD,
+      confirm_price_usd: CONFIRM_PRICE_USD,
       public_verify_url: publicVerifyUrl(c.req.url),
+      public_confirm_url: publicConfirmUrl(c.req.url),
       bazaar: true,
       ebay: isEbayAdapterEnabled(),
+      confirm: true,
       description: VERIFY_DESCRIPTION,
       user_agent: USER_AGENT,
     });
@@ -65,6 +77,25 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
       const target = parseTargetUrl(url);
       const verdict = await verifyUrl(target);
       return c.json(verdict);
+    } catch (error) {
+      if (error instanceof VerifyError) {
+        return c.json({ error: error.message }, error.status as 400 | 502 | 504);
+      }
+      throw error;
+    }
+  });
+
+  app.post("/v1/confirm", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Request body must be JSON." }, 400);
+    }
+    try {
+      const { url } = parseConfirmRequest(body);
+      const result = await confirmUrl(url);
+      return c.json(result);
     } catch (error) {
       if (error instanceof VerifyError) {
         return c.json({ error: error.message }, error.status as 400 | 502 | 504);

@@ -3,7 +3,14 @@ import { after, before, describe, it } from "node:test";
 import { serve } from "@hono/node-server";
 import type { FacilitatorClient } from "@x402/core/server";
 import { createApp } from "../src/app.js";
-import { MOCK_PAY_TO, NETWORK, PRICE_ATOMIC_USDC, PRICE_USD, VERIFY_DESCRIPTION } from "../src/config.js";
+import {
+  CONFIRM_DESCRIPTION,
+  MOCK_PAY_TO,
+  NETWORK,
+  PRICE_ATOMIC_USDC,
+  PRICE_USD,
+  VERIFY_DESCRIPTION,
+} from "../src/config.js";
 import { livePaymentMiddlewareFromServer, resourceServerFromFacilitator } from "../src/payments.js";
 
 function stubFacilitator(): FacilitatorClient {
@@ -40,6 +47,17 @@ type OpenApiDoc = {
         responses?: {
           "200"?: { content?: { "application/json"?: { schema?: { properties?: { status?: { enum?: string[] } } } } } };
           "402"?: object;
+        };
+      };
+    };
+    "/v1/confirm"?: {
+      post?: {
+        description?: string;
+        "x-payment-info"?: {
+          price?: { mode?: string; currency?: string; amount?: string };
+        };
+        requestBody?: {
+          content?: { "application/json"?: { schema?: { required?: string[] } } };
         };
       };
     };
@@ -100,6 +118,12 @@ describe("discovery documents (mock gate)", () => {
       op.responses?.["200"]?.content?.["application/json"]?.schema?.properties?.status?.enum,
       ["live", "closed", "unknown"],
     );
+    const confirm = doc.paths?.["/v1/confirm"]?.post;
+    assert.ok(confirm, "expected POST /v1/confirm");
+    assert.equal(confirm.description, CONFIRM_DESCRIPTION);
+    assert.notEqual(confirm.description, VERIFY_DESCRIPTION);
+    assert.equal(confirm["x-payment-info"]?.price?.amount, "0.10");
+    assert.deepEqual(confirm.requestBody?.content?.["application/json"]?.schema?.required, ["url", "intent"]);
   });
 
   it("GET /.well-known/x402 is free 200 JSON listing the verify URL", async () => {
@@ -107,7 +131,10 @@ describe("discovery documents (mock gate)", () => {
     assertJsonDiscovery(res, ".well-known/x402");
     const body = (await res.json()) as { version?: number; resources?: unknown };
     assert.equal(body.version, 1);
-    assert.deepEqual(body.resources, ["https://livecheck.fly.dev/v1/verify"]);
+    assert.deepEqual(body.resources, [
+      "https://livecheck.fly.dev/v1/verify",
+      "https://livecheck.fly.dev/v1/confirm",
+    ]);
     assert.ok(Array.isArray(body.resources));
     assert.equal(typeof body.resources[0], "string");
   });

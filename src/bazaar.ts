@@ -1,5 +1,5 @@
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
-import { PRICE_USD, VERIFY_DESCRIPTION } from "./config.js";
+import { CONFIRM_DESCRIPTION, CONFIRM_PRICE_USD, PRICE_USD, VERIFY_DESCRIPTION } from "./config.js";
 
 export const VERIFY_EXAMPLE = {
   url: "https://boards.greenhouse.io/example/jobs/1842",
@@ -128,3 +128,92 @@ export function verifyBazaarExtensions(): Record<string, unknown> {
 }
 
 export const VERIFY_ROUTE_DESCRIPTION = VERIFY_DESCRIPTION;
+
+export const CONFIRM_EXAMPLE = {
+  url: "https://example.com/thank-you?ref=ABC123",
+  canonical_url: "https://example.com/thank-you?ref=ABC123",
+  verdict: "confirmed",
+  effect: { type: "lead_submit", id: "ABC123" },
+  evidence_strength: 2,
+  signals: ["cookieless_fetch", "confirmation_id", "level_2"],
+  independent_signals: 1,
+  independent_evidence: true,
+  evidence_id: "ev_01example",
+  http_status: 200,
+  fetched_at: "2026-09-06T17:00:00Z",
+  price_usd: CONFIRM_PRICE_USD,
+} as const;
+
+export const CONFIRM_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    verdict: { type: "string", enum: ["confirmed", "failed", "unknown"] },
+    effect: {
+      type: "object",
+      properties: {
+        type: { type: "string", enum: ["lead_submit"] },
+        id: { type: "string" },
+      },
+      required: ["type"],
+    },
+    evidence_strength: { type: "number", enum: [1, 2] },
+    signals: { type: "array", items: { type: "string" } },
+    independent_signals: { type: "number" },
+    independent_evidence: { type: "boolean" },
+    evidence_id: { type: "string" },
+    http_status: { type: "number" },
+    fetched_at: { type: "string" },
+    url: { type: "string" },
+    canonical_url: { type: "string" },
+    price_usd: { type: "number" },
+  },
+  required: [
+    "verdict",
+    "effect",
+    "evidence_strength",
+    "signals",
+    "independent_signals",
+    "independent_evidence",
+    "evidence_id",
+    "http_status",
+    "fetched_at",
+    "url",
+    "canonical_url",
+    "price_usd",
+  ],
+} as const;
+
+export const CONFIRM_INPUT_SCHEMA = {
+  properties: {
+    url: {
+      type: "string",
+      description: "Absolute http(s) URL of the thank-you or result page to confirm independently.",
+    },
+    intent: {
+      type: "string",
+      enum: ["lead_submit"],
+      description: "Day-1 Confirm intent. Only lead_submit is accepted.",
+    },
+    claim: {
+      type: "object",
+      description: "Optional. Ignored in v0.",
+    },
+  },
+  required: ["url", "intent"],
+} as const;
+
+export function confirmBazaarExtensions(): Record<string, unknown> {
+  return withPostJsonMethod(
+    declareDiscoveryExtension({
+      bodyType: "json",
+      input: { url: CONFIRM_EXAMPLE.url, intent: "lead_submit" },
+      inputSchema: CONFIRM_INPUT_SCHEMA,
+      output: {
+        example: CONFIRM_EXAMPLE,
+        schema: CONFIRM_OUTPUT_SCHEMA,
+      },
+    }),
+  );
+}
+
+export const CONFIRM_ROUTE_DESCRIPTION = CONFIRM_DESCRIPTION;

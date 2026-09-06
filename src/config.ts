@@ -2,6 +2,12 @@ export const PRICE_USD = 0.01;
 export const PRICE_LABEL = "$0.01";
 /** $0.01 USDC at 6 decimals = 10000 atomic. */
 export const PRICE_ATOMIC_USDC = "10000";
+export const CONFIRM_PRICE_USD = 0.1;
+export const CONFIRM_PRICE_LABEL = "$0.10";
+/** $0.10 USDC at 6 decimals = 100000 atomic. */
+export const CONFIRM_PRICE_ATOMIC_USDC = "100000";
+export const CONFIRM_DESCRIPTION =
+  "Independently verify whether a lead_submit side effect occurred (confirmation/ref id required for confirmed); actor ≠ verifier; not a thank-you-page classifier.";
 export const NETWORK = "eip155:8453";
 export const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 export const USDC_EIP712 = { name: "USD Coin", version: "2" } as const;

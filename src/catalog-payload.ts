@@ -1,6 +1,6 @@
-import { verifyBazaarExtensions } from "./bazaar.js";
-import { VERIFY_DESCRIPTION } from "./config.js";
-import { publicVerifyUrl } from "./public-url.js";
+import { confirmBazaarExtensions, verifyBazaarExtensions } from "./bazaar.js";
+import { CONFIRM_DESCRIPTION, VERIFY_DESCRIPTION } from "./config.js";
+import { publicConfirmUrl, publicVerifyUrl } from "./public-url.js";
 
 export type CatalogResourceInfo = {
   url: string;
@@ -17,12 +17,24 @@ export type PaymentEnvelope = {
   [key: string]: unknown;
 };
 
-export function advertisedResourceInfo(): CatalogResourceInfo {
+export function advertisedResourceInfo(kind: "verify" | "confirm" = "verify"): CatalogResourceInfo {
+  if (kind === "confirm") {
+    return {
+      url: publicConfirmUrl(),
+      description: CONFIRM_DESCRIPTION,
+      mimeType: "application/json",
+    };
+  }
   return {
     url: publicVerifyUrl(),
     description: VERIFY_DESCRIPTION,
     mimeType: "application/json",
   };
+}
+
+function resourceKindFromUrl(url: string | undefined): "verify" | "confirm" {
+  if (url && /\/v1\/confirm\/?(\?|$)/i.test(url)) return "confirm";
+  return "verify";
 }
 
 /** URL on a v2 PaymentPayload.resource (object or string). Never logs the signed payload. */
@@ -59,8 +71,9 @@ export function fillCatalogPaymentPayload(payload: PaymentEnvelope): {
   resourceFilled: boolean;
   bazaarFilled: boolean;
 } {
-  const advertised = advertisedResourceInfo();
   const inboundUrl = paymentPayloadResourceUrl(payload);
+  const kind = resourceKindFromUrl(inboundUrl);
+  const advertised = advertisedResourceInfo(kind);
   const resourceFilled = needsAdvertisedResource(inboundUrl, advertised.url);
   const bazaarFilled = !paymentPayloadHasBazaar(payload);
 
@@ -72,8 +85,9 @@ export function fillCatalogPaymentPayload(payload: PaymentEnvelope): {
   }
 
   if (bazaarFilled) {
+    const bazaar = kind === "confirm" ? confirmBazaarExtensions() : verifyBazaarExtensions();
     next.extensions = {
-      ...verifyBazaarExtensions(),
+      ...bazaar,
       ...(payload.extensions && typeof payload.extensions === "object" ? payload.extensions : {}),
     };
   }

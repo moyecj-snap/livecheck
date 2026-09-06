@@ -282,6 +282,45 @@ const SHOPIFY_COLLECTION_APPLY = `<!doctype html>
 </html>
 `;
 
+const CONFIRM_THANK_YOU_ID = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Thank you</title>
+</head>
+<body>
+  <h1>Thank you</h1>
+  <p>We've received your request. Confirmation number: ABC123</p>
+</body>
+</html>
+`;
+
+const CONFIRM_THANK_YOU_ONLY = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Thank you</title>
+</head>
+<body>
+  <h1>Thank you</h1>
+  <p>Thanks for submitting. We'll be in touch.</p>
+</body>
+</html>
+`;
+
+const CONFIRM_ERROR_BANNER = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Submission failed</title>
+</head>
+<body>
+  <h1>Something went wrong</h1>
+  <p class="error">Your submission was rejected. Please try again.</p>
+</body>
+</html>
+`;
+
 const PRODUCT_404 = `<!doctype html>
 <html lang="en">
 <head>
@@ -409,6 +448,24 @@ export const FIXTURES: Record<FixtureId, FixtureSpec> = {
     status: 200,
     body: SHOPIFY_COLLECTION_APPLY,
     label: "Collection page that accidentally includes Apply now",
+  },
+  "confirm/thank-you-id": {
+    id: "confirm/thank-you-id",
+    status: 200,
+    body: CONFIRM_THANK_YOU_ID,
+    label: "Thank-you page with confirmation number ABC123",
+  },
+  "confirm/thank-you-only": {
+    id: "confirm/thank-you-only",
+    status: 200,
+    body: CONFIRM_THANK_YOU_ONLY,
+    label: "Thank-you copy with no confirmation id",
+  },
+  "confirm/error-banner": {
+    id: "confirm/error-banner",
+    status: 200,
+    body: CONFIRM_ERROR_BANNER,
+    label: "Lead submit error / reject banner",
   },
 };
 

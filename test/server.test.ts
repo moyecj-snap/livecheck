@@ -28,18 +28,24 @@ describe("HTTP surface", () => {
       ok: boolean;
       settlement: string;
       price_usd: number;
+      confirm_price_usd?: number;
       bazaar?: boolean;
       ebay?: boolean;
+      confirm?: boolean;
       public_verify_url?: string;
+      public_confirm_url?: string;
       description?: string;
     };
     assert.equal(body.ok, true);
     assert.equal(body.settlement, "disabled");
     assert.equal(body.price_usd, PRICE_USD);
+    assert.equal(body.confirm_price_usd, 0.1);
     assert.equal(body.description, VERIFY_DESCRIPTION);
     assert.equal(body.bazaar, true);
     assert.equal(body.ebay, false);
+    assert.equal(body.confirm, true);
     assert.ok(body.public_verify_url?.endsWith("/v1/verify"));
+    assert.ok(body.public_confirm_url?.endsWith("/v1/confirm"));
   });
 
   it("GET / is a human demo page", async () => {

@@ -6,8 +6,10 @@ import { bazaarResourceServerExtension } from "@x402/extensions/bazaar";
 import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import type { RoutesConfig } from "@x402/core/server";
 import type { MiddlewareHandler } from "hono";
-import { verifyBazaarExtensions } from "./bazaar.js";
+import { confirmBazaarExtensions, verifyBazaarExtensions } from "./bazaar.js";
 import {
+  CONFIRM_DESCRIPTION,
+  CONFIRM_PRICE_LABEL,
   MOCK_PAYMENT_HEADER,
   NETWORK,
   PRICE_LABEL,
@@ -16,9 +18,10 @@ import {
   missingLiveKeyNames,
   readLiveKeys,
 } from "./config.js";
-import { publicVerifyUrl } from "./public-url.js";
+import { publicConfirmUrl, publicVerifyUrl } from "./public-url.js";
 import {
   advertisePaymentRequired,
+  confirmPaymentRequiredBody,
   decodePaymentRequired,
   encodePaymentRequired,
   paymentRequiredBody,
@@ -49,6 +52,20 @@ export function verifyPaymentRoutes(payTo: string): RoutesConfig {
       // upgrades a leftover http://*.fly.dev request URL after the library 402.
       resource: publicVerifyUrl(),
       extensions: verifyBazaarExtensions(),
+    },
+    "POST /v1/confirm": {
+      accepts: [
+        {
+          scheme: "exact" as const,
+          price: CONFIRM_PRICE_LABEL,
+          network: NETWORK as `${string}:${string}`,
+          payTo,
+        },
+      ],
+      description: CONFIRM_DESCRIPTION,
+      mimeType: "application/json",
+      resource: publicConfirmUrl(),
+      extensions: confirmBazaarExtensions(),
     },
   };
 }
@@ -131,7 +148,8 @@ function livePaymentMiddleware(): MiddlewareHandler {
 
 function mockPaymentMiddleware(): MiddlewareHandler {
   return async (c, next) => {
-    if (c.req.method !== "POST" || c.req.path !== "/v1/verify") {
+    const paidPath = c.req.path === "/v1/verify" || c.req.path === "/v1/confirm";
+    if (c.req.method !== "POST" || !paidPath) {
       return next();
     }
 
@@ -145,7 +163,10 @@ function mockPaymentMiddleware(): MiddlewareHandler {
       return next();
     }
 
-    const body = paymentRequiredBody(publicVerifyUrl(c.req.url));
+    const body =
+      c.req.path === "/v1/confirm"
+        ? confirmPaymentRequiredBody(publicConfirmUrl(c.req.url))
+        : paymentRequiredBody(publicVerifyUrl(c.req.url));
     const encoded = encodePaymentRequired(body);
     c.header("payment-required", encoded);
     c.header("cache-control", "no-store");
