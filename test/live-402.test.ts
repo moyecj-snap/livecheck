@@ -3,7 +3,7 @@ import { after, before, describe, it } from "node:test";
 import { serve } from "@hono/node-server";
 import type { FacilitatorClient } from "@x402/core/server";
 import { createApp } from "../src/app.js";
-import { MOCK_PAY_TO, NETWORK, VERIFY_DESCRIPTION } from "../src/config.js";
+import { CONFIRM_DESCRIPTION, MOCK_PAY_TO, NETWORK, VERIFY_DESCRIPTION } from "../src/config.js";
 import { livePaymentMiddlewareFromServer, resourceServerFromFacilitator } from "../src/payments.js";
 import { advertisePaymentRequired, decodePaymentRequired } from "../src/x402-payload.js";
 import { assertInfoInputMatchesSchema } from "./bazaar-schema.js";
@@ -88,6 +88,28 @@ describe("live @x402/hono 402 (decoded payment-required)", () => {
     assert.equal(accepts[0]?.scheme, "exact");
     assert.equal(accepts[0]?.amount, "10000");
     assertInfoInputMatchesSchema(extensions.bazaar, "live @x402/hono 402");
+  });
+
+  it("confirm 402 uses Livecheck Confirm copy plus resource tags", async () => {
+    const res = await fetch(`${origin}/v1/confirm`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: "https://example.com/thank-you", intent: "lead_submit" }),
+    });
+    assert.equal(res.status, 402);
+    const decoded = decode402(res);
+    const resource = decoded.resource as {
+      url?: string;
+      description?: string;
+      serviceName?: string;
+      tags?: string[];
+    };
+    assert.equal(resource.url, "https://livecheck.fly.dev/v1/confirm");
+    assert.equal(resource.description, CONFIRM_DESCRIPTION);
+    assert.match(resource.description ?? "", /Livecheck/);
+    assert.equal(resource.serviceName, "Livecheck");
+    assert.deepEqual(resource.tags, ["livecheck", "confirm"]);
+    assert.notEqual(resource.description, VERIFY_DESCRIPTION);
   });
 });
 

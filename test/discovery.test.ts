@@ -53,6 +53,8 @@ type OpenApiDoc = {
     "/v1/confirm"?: {
       post?: {
         description?: string;
+        "x-guidance"?: string;
+        tags?: string[];
         "x-payment-info"?: {
           price?: { mode?: string; currency?: string; amount?: string };
         };
@@ -121,6 +123,9 @@ describe("discovery documents (mock gate)", () => {
     const confirm = doc.paths?.["/v1/confirm"]?.post;
     assert.ok(confirm, "expected POST /v1/confirm");
     assert.equal(confirm.description, CONFIRM_DESCRIPTION);
+    assert.equal(confirm["x-guidance"], CONFIRM_DESCRIPTION);
+    assert.match(confirm.description ?? "", /Livecheck/);
+    assert.ok(confirm.tags?.includes("Livecheck"));
     assert.notEqual(confirm.description, VERIFY_DESCRIPTION);
     assert.equal(confirm["x-payment-info"]?.price?.amount, "0.10");
     assert.deepEqual(confirm.requestBody?.content?.["application/json"]?.schema?.required, ["url", "intent"]);

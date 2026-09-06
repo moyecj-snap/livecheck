@@ -1,11 +1,18 @@
 import { confirmBazaarExtensions, verifyBazaarExtensions } from "./bazaar.js";
-import { CONFIRM_DESCRIPTION, VERIFY_DESCRIPTION } from "./config.js";
+import {
+  CONFIRM_DESCRIPTION,
+  CONFIRM_RESOURCE_TAGS,
+  CONFIRM_SERVICE_NAME,
+  VERIFY_DESCRIPTION,
+} from "./config.js";
 import { publicConfirmUrl, publicVerifyUrl } from "./public-url.js";
 
 export type CatalogResourceInfo = {
   url: string;
   description: string;
   mimeType: string;
+  serviceName?: string;
+  tags?: string[];
 };
 
 export type PaymentEnvelope = {
@@ -23,6 +30,8 @@ export function advertisedResourceInfo(kind: "verify" | "confirm" = "verify"): C
       url: publicConfirmUrl(),
       description: CONFIRM_DESCRIPTION,
       mimeType: "application/json",
+      serviceName: CONFIRM_SERVICE_NAME,
+      tags: [...CONFIRM_RESOURCE_TAGS],
     };
   }
   return {

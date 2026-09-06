@@ -4,6 +4,8 @@ import {
   CONFIRM_DESCRIPTION,
   CONFIRM_PRICE_ATOMIC_USDC,
   CONFIRM_PRICE_USD,
+  CONFIRM_RESOURCE_TAGS,
+  CONFIRM_SERVICE_NAME,
   DEFAULT_PORT,
   PRICE_ATOMIC_USDC,
   PRICE_USD,
@@ -48,7 +50,10 @@ describe("listing price and description", () => {
     assert.equal(CONFIRM_PRICE_ATOMIC_USDC, "100000");
     assert.equal(
       CONFIRM_DESCRIPTION,
-      "Independently verify whether a lead_submit side effect occurred (confirmation/ref id required for confirmed); actor ≠ verifier; not a thank-you-page classifier.",
+      "Livecheck Confirm: independently verify whether a lead_submit side effect occurred (confirmation/ref id required for confirmed); actor ≠ verifier; not a thank-you-page classifier.",
     );
+    assert.match(CONFIRM_DESCRIPTION, /Livecheck/);
+    assert.equal(CONFIRM_SERVICE_NAME, "Livecheck");
+    assert.deepEqual([...CONFIRM_RESOURCE_TAGS], ["livecheck", "confirm"]);
   });
 });

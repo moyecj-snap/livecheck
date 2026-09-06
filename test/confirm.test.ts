@@ -203,13 +203,16 @@ describe("confirmUrl + HTTP", () => {
     assert.equal(res.status, 402);
     const decoded = JSON.parse(Buffer.from(res.headers.get("payment-required") ?? "", "base64").toString("utf8")) as {
       accepts?: Array<{ amount?: string }>;
-      resource?: { description?: string; url?: string };
+      resource?: { description?: string; url?: string; serviceName?: string; tags?: string[] };
     };
     assert.equal(decoded.accepts?.[0]?.amount, CONFIRM_PRICE_ATOMIC_USDC);
     assert.equal(decoded.accepts?.[0]?.amount, "100000");
     assert.equal(decoded.resource?.description, CONFIRM_DESCRIPTION);
+    assert.match(decoded.resource?.description ?? "", /Livecheck/);
     assert.notEqual(decoded.resource?.description, VERIFY_DESCRIPTION);
     assert.match(decoded.resource?.url ?? "", /\/v1\/confirm$/);
+    assert.equal(decoded.resource?.serviceName, "Livecheck");
+    assert.deepEqual(decoded.resource?.tags, ["livecheck", "confirm"]);
   });
 
   it("POST /v1/verify is still $0.01", async () => {
@@ -221,11 +224,13 @@ describe("confirmUrl + HTTP", () => {
     assert.equal(res.status, 402);
     const decoded = JSON.parse(Buffer.from(res.headers.get("payment-required") ?? "", "base64").toString("utf8")) as {
       accepts?: Array<{ amount?: string }>;
-      resource?: { description?: string };
+      resource?: { description?: string; tags?: string[]; serviceName?: string };
     };
     assert.equal(decoded.accepts?.[0]?.amount, PRICE_ATOMIC_USDC);
     assert.equal(decoded.accepts?.[0]?.amount, "10000");
     assert.equal(PRICE_USD, 0.01);
     assert.equal(decoded.resource?.description, VERIFY_DESCRIPTION);
+    assert.equal(decoded.resource?.tags, undefined);
+    assert.equal(decoded.resource?.serviceName, undefined);
   });
 });

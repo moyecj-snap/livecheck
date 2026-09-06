@@ -7,7 +7,10 @@ export const CONFIRM_PRICE_LABEL = "$0.10";
 /** $0.10 USDC at 6 decimals = 100000 atomic. */
 export const CONFIRM_PRICE_ATOMIC_USDC = "100000";
 export const CONFIRM_DESCRIPTION =
-  "Independently verify whether a lead_submit side effect occurred (confirmation/ref id required for confirmed); actor ≠ verifier; not a thank-you-page classifier.";
+  "Livecheck Confirm: independently verify whether a lead_submit side effect occurred (confirmation/ref id required for confirmed); actor ≠ verifier; not a thank-you-page classifier.";
+/** x402 ResourceInfo / RouteConfig — Confirm only, so CDP can find Confirm under Livecheck. */
+export const CONFIRM_SERVICE_NAME = "Livecheck";
+export const CONFIRM_RESOURCE_TAGS = ["livecheck", "confirm"] as const;
 export const NETWORK = "eip155:8453";
 export const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 export const USDC_EIP712 = { name: "USD Coin", version: "2" } as const;

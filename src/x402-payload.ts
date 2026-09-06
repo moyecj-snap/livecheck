@@ -2,6 +2,8 @@ import { confirmBazaarExtensions, verifyBazaarExtensions } from "./bazaar.js";
 import {
   CONFIRM_DESCRIPTION,
   CONFIRM_PRICE_ATOMIC_USDC,
+  CONFIRM_RESOURCE_TAGS,
+  CONFIRM_SERVICE_NAME,
   NETWORK,
   PRICE_ATOMIC_USDC,
   USDC_BASE,
@@ -18,6 +20,8 @@ export type PaymentRequiredBody = {
     url: string;
     description: string;
     mimeType: string;
+    serviceName?: string;
+    tags?: string[];
   };
   accepts: Array<{
     scheme: "exact";
@@ -65,6 +69,8 @@ export function confirmPaymentRequiredBody(resourceUrl: string): PaymentRequired
       url: resourceUrl,
       description: CONFIRM_DESCRIPTION,
       mimeType: "application/json",
+      serviceName: CONFIRM_SERVICE_NAME,
+      tags: [...CONFIRM_RESOURCE_TAGS],
     },
     accepts: [accept(CONFIRM_PRICE_ATOMIC_USDC)],
     extensions: confirmBazaarExtensions(),
@@ -109,12 +115,21 @@ export function advertisePaymentRequired(
   }
   return {
     ...payload,
-    resource: {
-      ...existingResource,
-      url: confirm ? publicConfirmUrl(requestUrl, host) : publicVerifyUrl(requestUrl, host),
-      description: confirm ? CONFIRM_DESCRIPTION : VERIFY_DESCRIPTION,
-      mimeType: "application/json",
-    },
+    resource: confirm
+      ? {
+          ...existingResource,
+          url: publicConfirmUrl(requestUrl, host),
+          description: CONFIRM_DESCRIPTION,
+          mimeType: "application/json",
+          serviceName: CONFIRM_SERVICE_NAME,
+          tags: [...CONFIRM_RESOURCE_TAGS],
+        }
+      : {
+          ...existingResource,
+          url: publicVerifyUrl(requestUrl, host),
+          description: VERIFY_DESCRIPTION,
+          mimeType: "application/json",
+        },
     extensions,
   };
 }

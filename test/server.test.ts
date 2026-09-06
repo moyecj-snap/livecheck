@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { serve } from "@hono/node-server";
 import { createApp } from "../src/app.js";
-import { PRICE_ATOMIC_USDC, PRICE_USD, VERIFY_DESCRIPTION } from "../src/config.js";
+import { CONFIRM_DESCRIPTION, PRICE_ATOMIC_USDC, PRICE_USD, VERIFY_DESCRIPTION } from "../src/config.js";
 
 describe("HTTP surface", () => {
   const app = createApp();
@@ -35,12 +35,14 @@ describe("HTTP surface", () => {
       public_verify_url?: string;
       public_confirm_url?: string;
       description?: string;
+      confirm_description?: string;
     };
     assert.equal(body.ok, true);
     assert.equal(body.settlement, "disabled");
     assert.equal(body.price_usd, PRICE_USD);
     assert.equal(body.confirm_price_usd, 0.1);
     assert.equal(body.description, VERIFY_DESCRIPTION);
+    assert.equal(body.confirm_description, CONFIRM_DESCRIPTION);
     assert.equal(body.bazaar, true);
     assert.equal(body.ebay, false);
     assert.equal(body.confirm, true);

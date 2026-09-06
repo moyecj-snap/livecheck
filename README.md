@@ -70,7 +70,7 @@ curl -sS -D - -o /dev/null https://livecheck.fly.dev/v1/verify \
 
 ## Confirm (`POST /v1/confirm`)
 
-Independently verify whether a lead_submit side effect occurred (confirmation/ref id required for confirmed); actor ≠ verifier; not a thank-you-page classifier.
+Livecheck Confirm: independently verify whether a lead_submit side effect occurred (confirmation/ref id required for confirmed); actor ≠ verifier; not a thank-you-page classifier.
 
 Day-1 intent is **`lead_submit` only**. Price is **$0.10 USDC** (`100000` atomic). `/v1/verify` stays **$0.01**.
 

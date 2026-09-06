@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { MiddlewareHandler } from "hono";
 import {
+  CONFIRM_DESCRIPTION,
   CONFIRM_PRICE_USD,
   NETWORK,
   PRICE_USD,
@@ -46,6 +47,7 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
       ebay: isEbayAdapterEnabled(),
       confirm: true,
       description: VERIFY_DESCRIPTION,
+      confirm_description: CONFIRM_DESCRIPTION,
       user_agent: USER_AGENT,
     });
   });

@@ -64,6 +64,14 @@ describe("fillCatalogPaymentPayload", () => {
       assert.equal(resourceFilled, true);
       assert.equal(paymentPayloadResourceUrl(payload), "https://livecheck.fly.dev/v1/confirm");
       assert.notEqual(paymentPayloadResourceUrl(payload), advertised);
+      const resource = payload.resource as {
+        description?: string;
+        serviceName?: string;
+        tags?: string[];
+      };
+      assert.match(resource.description ?? "", /Livecheck Confirm/);
+      assert.equal(resource.serviceName, "Livecheck");
+      assert.deepEqual(resource.tags, ["livecheck", "confirm"]);
     } finally {
       if (previous === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
       else process.env.LIVECHECK_PUBLIC_URL = previous;
