@@ -3,8 +3,18 @@ import { createApp } from "./app.js";
 import { DEFAULT_PORT, isLiveSettlement, missingLiveKeyNames, port } from "./config.js";
 import { isEbayAdapterEnabled, logEbayAdapterDisabled } from "./ebay.js";
 import { loadDotEnvIfPresent } from "./env.js";
+import { initPaidCallStore } from "./paid-call-store.js";
 
 loadDotEnvIfPresent();
+
+const store = initPaidCallStore();
+if (store.ok) {
+  console.log(`paid_call retention: sqlite ${store.path}`);
+} else {
+  console.warn(
+    `paid_call retention: stdout-only (${store.reason}). CoS interim: npm run paid-call:cos -- --from-logs`,
+  );
+}
 
 const listenPort = port();
 const app = createApp();

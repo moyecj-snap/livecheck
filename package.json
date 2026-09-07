@@ -11,7 +11,8 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "mcp": "tsx src/mcp.ts",
-    "test": "tsx --test test/classify.test.ts test/verify.test.ts test/server.test.ts test/mcp-client.test.ts test/mcp-stdio.test.ts test/config.test.ts test/public-url.test.ts test/bazaar.test.ts test/live-402.test.ts test/catalog-payload.test.ts test/discovery.test.ts test/ebay.test.ts test/confirm.test.ts test/paid-call.test.ts",
+    "paid-call:cos": "tsx scripts/paid-call-cos.ts",
+    "test": "tsx --test --test-concurrency=1 test/classify.test.ts test/verify.test.ts test/server.test.ts test/mcp-client.test.ts test/mcp-stdio.test.ts test/config.test.ts test/public-url.test.ts test/bazaar.test.ts test/live-402.test.ts test/catalog-payload.test.ts test/discovery.test.ts test/ebay.test.ts test/confirm.test.ts test/paid-call.test.ts test/paid-call-store.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -98,7 +98,7 @@ cp .env.example .env   # optional — omit keys to boot in mock/dev mode
 npm start
 ```
 
-The process binds `0.0.0.0` and uses `process.env.PORT || 43127`. On a Mac that is still `http://127.0.0.1:43127` unless you set `PORT`. Without live keys it prints a banner: settlement is disabled. Unpaid verify still returns a realistic x402 `402` with a `payment-required` header. The verifier still runs against local fixtures.
+The process binds `0.0.0.0` and uses `process.env.PORT || 43127`. On a Mac that is still `http://127.0.0.1:43127` unless you set `PORT`. Without live keys it prints a banner: settlement is disabled. Unpaid verify still returns a realistic x402 `402` with a `payment-required` header. The verifier still runs against local fixtures. Successful mock-paid checks write `livecheck.paid_call` to stdout and a row in `./data/paid-calls.sqlite` (`npm run paid-call:cos` to count L7d/L30d).
 
 ```bash
 # Free discovery docs (no 402)
@@ -319,19 +319,57 @@ After this ships: `fly deploy` from Origin. Listing the catalog is free; CDP cat
 
 ### Paid-call analytics (`livecheck.paid_call`)
 
-Each successful paid `POST /v1/verify` and `POST /v1/confirm` writes **one** structured JSON line to stdout. Stripe PaymentIntent recording is unchanged.
+Each successful paid `POST /v1/verify` and `POST /v1/confirm` writes **one** structured JSON line to stdout **and** a row in a small SQLite table (when the Fly volume is mounted). Stripe PaymentIntent recording is unchanged. The stdout line is stable — do not change the `event` name or field set; `fly logs | grep livecheck.paid_call` must keep working.
 
 ```json
 {"event":"livecheck.paid_call","route":"verify","status":"live","host":"boards.greenhouse.io","url_hash":"…","payer":"0x…","tx":"0x…","payment_intent":"pi_…","ts":"2026-09-06T20:34:00Z"}
 ```
 
-Confirm lines add `intent` (`lead_submit`) and `verdict` instead of `status`. Privacy rule: **never** log raw query strings, emails, or full URLs — hostname + SHA-256 of the full URL only. `payer` / `tx` / `payment_intent` are omitted when missing (mock/dev).
+Confirm lines add `intent` (`lead_submit`) and `verdict` instead of `status`. Privacy rule: **never** log or store raw query strings, emails, or full URLs — hostname + SHA-256 of the full URL only. `payer` / `tx` / `payment_intent` are omitted when missing (mock/dev).
 
-On Fly, grep machine logs for the event name:
+Retained columns (SQLite `paid_calls` at `PAID_CALL_DB_PATH`, default `/data/paid-calls.sqlite` on Fly): `ts`, `route` (`verify` | `confirm`), `payer`, `tx`, `payment_intent`, `host`, `url_sha256` (same digest as log `url_hash`).
+
+CoS pull — L7d / L30d **row counts only** (calls = rows; unique_payers = distinct non-null wallet). No other KPIs:
+
+```bash
+# local (after paid mock/live calls have written ./data/paid-calls.sqlite)
+npm run paid-call:cos
+
+# production, from the machine that holds the volume
+fly ssh console -a livecheck -C "npm run paid-call:cos"
+
+# JSON for agents
+npm run paid-call:cos -- --json
+```
+
+Interim if the volume is missing or the file is empty — parse the existing stdout lines (same column shape, same counts):
 
 ```bash
 fly logs -a livecheck | grep livecheck.paid_call
+fly logs -a livecheck | npm run paid-call:cos -- --from-logs
 ```
+
+TODO: after the `livecheck_data` volume is attached and `/data/paid-calls.sqlite` is writable, production CoS pulls should use the sqlite command, not `--from-logs`.
+
+#### Patty — Fly volume (required before first deploy of this mount)
+
+`fly.toml` now has `[[mounts]]` `livecheck_data` → `/data`. `fly deploy` fails until the volume exists. Single machine only (`min_machines_running = 1`); do not scale out without another volume.
+
+```bash
+# once, region must match primary_region (sjc)
+fly volumes create livecheck_data --region sjc --size 1 -a livecheck
+
+fly deploy
+
+# SSH is root; the process user is `node`. One-time so SQLite can create the file:
+fly ssh console -a livecheck -C "chown node:node /data"
+
+# confirm retention
+fly ssh console -a livecheck -C "ls -l /data/paid-calls.sqlite"
+fly ssh console -a livecheck -C "npm run paid-call:cos"
+```
+
+No new secrets. `PAID_CALL_DB_PATH` is public/path config (`/data/paid-calls.sqlite` in `fly.toml` `[env]`). Local default is `./data/paid-calls.sqlite`.
 
 ## How agents find this
 

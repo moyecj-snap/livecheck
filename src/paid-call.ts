@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
 import { isLiveSettlement } from "./config.js";
+import { retainPaidCall } from "./paid-call-store.js";
 
 export const PAID_CALL_EVENT = "livecheck.paid_call" as const;
 
@@ -238,6 +239,7 @@ export function emitPaidCall(
   const event = buildPaidCallEvent(remembered, settlement, now);
   if (store) store.emitted = true;
   writer(serializePaidCall(event));
+  retainPaidCall(event);
   return event;
 }
 
