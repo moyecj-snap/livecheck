@@ -7,7 +7,7 @@ export const CONFIRM_PRICE_LABEL = "$0.10";
 /** $0.10 USDC at 6 decimals = 100000 atomic. */
 export const CONFIRM_PRICE_ATOMIC_USDC = "100000";
 export const CONFIRM_DESCRIPTION =
-  "Livecheck Confirm: independently verify whether a lead_submit side effect occurred (confirmation/ref id required for confirmed); actor ≠ verifier; not a thank-you-page classifier.";
+  "Livecheck Confirm — use after your agent submits a lead/contact form (intent=lead_submit): POST {url, intent} where url is the thank-you or result page. Returns confirmed|failed|unknown with Level-2+ evidence (confirmation/ref/ticket id required for confirmed). Independent cookieless verifier — actor ≠ verifier — so you do not grade your own homework before the next paid or irreversible step. Not URL/stock liveness (use /v1/verify), not payment/tx settlement, not a thank-you-page classifier.";
 /** x402 ResourceInfo / RouteConfig — Confirm only, so CDP can find Confirm under Livecheck. */
 export const CONFIRM_SERVICE_NAME = "Livecheck";
 export const CONFIRM_RESOURCE_TAGS = ["livecheck", "confirm"] as const;

@@ -77,10 +77,10 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
       "/v1/confirm": {
         post: {
           operationId: "confirmLeadSubmit",
-          summary: "Confirm a lead_submit side effect",
+          summary: "Confirm lead_submit side effects independently before your next step",
           description: CONFIRM_DESCRIPTION,
           "x-guidance": CONFIRM_DESCRIPTION,
-          tags: ["Confirm", "Livecheck"],
+          tags: ["Confirm", "lead_submit", "side-effect"],
           "x-payment-info": {
             price: {
               mode: "fixed",

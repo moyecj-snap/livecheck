@@ -70,7 +70,7 @@ curl -sS -D - -o /dev/null https://livecheck.fly.dev/v1/verify \
 
 ## Confirm (`POST /v1/confirm`)
 
-Livecheck Confirm: independently verify whether a lead_submit side effect occurred (confirmation/ref id required for confirmed); actor ≠ verifier; not a thank-you-page classifier.
+Livecheck Confirm — use after your agent submits a lead/contact form (intent=lead_submit): POST {url, intent} where url is the thank-you or result page. Returns confirmed|failed|unknown with Level-2+ evidence (confirmation/ref/ticket id required for confirmed). Independent cookieless verifier — actor ≠ verifier — so you do not grade your own homework before the next paid or irreversible step. Not URL/stock liveness (use /v1/verify), not payment/tx settlement, not a thank-you-page classifier.
 
 Day-1 intent is **`lead_submit` only**. Price is **$0.10 USDC** (`100000` atomic). `/v1/verify` stays **$0.01**.
 
