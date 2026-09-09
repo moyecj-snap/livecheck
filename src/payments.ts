@@ -14,7 +14,6 @@ import {
   CONFIRM_SERVICE_NAME,
   MOCK_PAYMENT_HEADER,
   NETWORK,
-  ORDER_PLACED_PRICE_LABEL,
   PRICE_LABEL,
   VERIFY_DESCRIPTION,
   isLiveSettlement,
@@ -60,15 +59,12 @@ export function verifyPaymentRoutes(payTo: string): RoutesConfig {
     },
     "POST /v1/confirm": {
       accepts: [
+        // Hotfix 2026-09-09: dual accepts ($0.10 + $0.25) break CDP facilitator
+        // verify (paymentPayload invalid) with purl 0.2.8. Single $0.10 until
+        // order_placed has its own route / fixed multi-price accepts.
         {
           scheme: "exact" as const,
           price: CONFIRM_PRICE_LABEL,
-          network: NETWORK as `${string}:${string}`,
-          payTo,
-        },
-        {
-          scheme: "exact" as const,
-          price: ORDER_PLACED_PRICE_LABEL,
           network: NETWORK as `${string}:${string}`,
           payTo,
         },

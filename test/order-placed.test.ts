@@ -228,7 +228,7 @@ describe("order_placed HTTP + regressions", () => {
       accepts?: Array<{ amount?: string }>;
     };
     assert.equal(decoded.accepts?.[0]?.amount, "100000");
-    assert.equal(decoded.accepts?.[1]?.amount, "250000");
+    assert.equal(decoded.accepts?.length, 1);
   });
 
   it("lead_submit regression: thank-you + id still confirmed at $0.10", async () => {

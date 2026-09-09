@@ -5,7 +5,6 @@ import {
   CONFIRM_RESOURCE_TAGS,
   CONFIRM_SERVICE_NAME,
   NETWORK,
-  ORDER_PLACED_PRICE_ATOMIC_USDC,
   PRICE_ATOMIC_USDC,
   USDC_BASE,
   USDC_EIP712,
@@ -73,11 +72,9 @@ export function confirmPaymentRequiredBody(resourceUrl: string): PaymentRequired
       serviceName: CONFIRM_SERVICE_NAME,
       tags: [...CONFIRM_RESOURCE_TAGS],
     },
-    // Route-level 402 is emitted before intent is parsed. $0.10 stays first
-    // (lead_submit / listing_published). $0.25 lists order_placed as payable.
-    // After verify, the confirm handler rejects order_placed unless the
-    // matched accept is ≥ $0.25 (HTTP 402 payment_amount_insufficient).
-    accepts: [accept(CONFIRM_PRICE_ATOMIC_USDC), accept(ORDER_PLACED_PRICE_ATOMIC_USDC)],
+    // Hotfix 2026-09-09: single $0.10 accept only. Dual accepts broke CDP
+    // facilitator verify (paymentPayload invalid) with purl 0.2.8.
+    accepts: [accept(CONFIRM_PRICE_ATOMIC_USDC)],
     extensions: confirmBazaarExtensions(),
   };
 }

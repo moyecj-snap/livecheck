@@ -161,7 +161,7 @@ describe("underpaid order_placed HTTP", () => {
     };
     assert.equal(decoded.error, "payment_amount_insufficient");
     assert.equal(decoded.accepts?.[0]?.amount, "100000");
-    assert.equal(decoded.accepts?.[1]?.amount, "250000");
+    assert.equal(decoded.accepts?.length, 1);
   });
 
   it("still runs lead_submit and listing_published after a $0.10 settle", async () => {
