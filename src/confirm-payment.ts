@@ -2,7 +2,6 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { FacilitatorClient } from "@x402/core/server";
 import type { MiddlewareHandler } from "hono";
 import {
-  CONFIRM_PRICE_ATOMIC_USDC,
   MOCK_PAYMENT_HEADER,
   ORDER_PLACED_PRICE_ATOMIC_USDC,
   ORDER_PLACED_PRICE_LABEL,
@@ -184,5 +183,3 @@ export function settledAmountGate(atomic: string | "mock"): MiddlewareHandler {
     return next();
   };
 }
-
-export const CONFIRM_ROUTE_DEFAULT_ATOMIC = CONFIRM_PRICE_ATOMIC_USDC;
