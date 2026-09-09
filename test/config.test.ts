@@ -57,11 +57,11 @@ describe("listing price and description", () => {
     assert.equal(ORDER_PLACED_PRICE_ATOMIC_USDC, "250000");
     assert.equal(
       CONFIRM_DESCRIPTION,
-      "Livecheck Confirm — use after your agent submits a lead/contact form (intent=lead_submit): POST {url, intent} where url is the thank-you or result page. Returns confirmed|failed|unknown with Level-2+ evidence (confirmation/ref/ticket id required for confirmed). Independent cookieless verifier — actor ≠ verifier. Also accepts intent=listing_published ($0.10) for listing go-live checks — see OpenAPI. Signed receipts + GET /stats. Not URL/stock liveness (use /v1/verify). Not Trust Oracle / L3.",
+      "Livecheck Confirm — independent side-effect verification (actor ≠ verifier). POST /v1/confirm with {url, intent} (+ optional claim). Returns confirmed|failed|unknown; thank-you fluff alone never confirmed — durable ref/id required. Intents: lead_submit $0.10 (lead/contact thank-you), listing_published $0.10 (listing go-live; claim title/sku/id optional), order_placed $0.25 (order confirm/status; claim optional; underpay rejected). Signed receipts + GET /stats. Same origin as Livecheck verify ($0.01). Not Trust Oracle / L3. Budget from intent_prices in OpenAPI.",
     );
     assert.match(CONFIRM_DESCRIPTION, /Livecheck/);
     assert.match(CONFIRM_DESCRIPTION, /listing_published/);
-    assert.doesNotMatch(CONFIRM_DESCRIPTION, /order_placed/);
+    assert.match(CONFIRM_DESCRIPTION, /order_placed/);
     assert.match(OPENAPI_CONFIRM_SUMMARY, /order_placed/);
     assert.match(OPENAPI_CONFIRM_DESCRIPTION, /order_placed \(\$0\.25\)/);
     assert.match(OPENAPI_CONFIRM_DESCRIPTION, /listing_published \(\$0\.10\)/);

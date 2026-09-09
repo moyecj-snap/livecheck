@@ -31,6 +31,7 @@ describe("GET /stats", () => {
         lead_submit?: {
           payable?: boolean;
           price_usd?: number;
+          status?: string;
           l7d?: { paid_calls?: number; receipts?: number };
         };
         listing_published?: {
@@ -51,14 +52,15 @@ describe("GET /stats", () => {
     assert.equal(body.ok, true);
     assert.equal(body.intents?.lead_submit?.payable, true);
     assert.equal(body.intents?.lead_submit?.price_usd, CONFIRM_PRICE_USD);
+    assert.equal(body.intents?.lead_submit?.status, "ga");
     assert.equal(typeof body.intents?.lead_submit?.l7d?.paid_calls, "number");
     assert.equal(body.intents?.listing_published?.payable, true);
     assert.equal(body.intents?.listing_published?.price_usd, CONFIRM_PRICE_USD);
-    assert.equal(body.intents?.listing_published?.status, "payable");
+    assert.equal(body.intents?.listing_published?.status, "ga");
     assert.equal(typeof body.intents?.listing_published?.l7d?.paid_calls, "number");
     assert.equal(body.intents?.order_placed?.payable, true);
     assert.equal(body.intents?.order_placed?.price_usd, 0.25);
-    assert.equal(body.intents?.order_placed?.status, "payable");
+    assert.equal(body.intents?.order_placed?.status, "ga");
     assert.equal(body.benches?.false_confirmed_rate, null);
     assert.match(body.benches?.note ?? "", /not published/i);
   });

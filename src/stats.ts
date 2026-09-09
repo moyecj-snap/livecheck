@@ -81,14 +81,14 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
       listing_published: {
         payable: true,
         price_usd: CONFIRM_PRICE_USD,
-        status: "payable",
+        status: "ga",
         l7d: windowFromReceipts(listing7),
         l30d: windowFromReceipts(listing30),
       },
       order_placed: {
         payable: true,
         price_usd: ORDER_PLACED_PRICE_USD,
-        status: "payable",
+        status: "ga",
         l7d: windowFromReceipts(order7),
         l30d: windowFromReceipts(order30),
       },
