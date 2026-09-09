@@ -4,6 +4,7 @@ import { serve } from "@hono/node-server";
 import { createApp } from "../src/app.js";
 import {
   CONFIRM_DESCRIPTION,
+  CONFIRM_PAYMENT_DESCRIPTION,
   CONFIRM_PRICE_ATOMIC_USDC,
   CONFIRM_PRICE_USD,
   PRICE_ATOMIC_USDC,
@@ -275,7 +276,7 @@ describe("confirmUrl + HTTP", () => {
     };
     assert.equal(decoded.accepts?.[0]?.amount, CONFIRM_PRICE_ATOMIC_USDC);
     assert.equal(decoded.accepts?.[0]?.amount, "100000");
-    assert.equal(decoded.resource?.description, CONFIRM_DESCRIPTION);
+    assert.equal(decoded.resource?.description, CONFIRM_PAYMENT_DESCRIPTION);
     assert.match(decoded.resource?.description ?? "", /Livecheck/);
     assert.notEqual(decoded.resource?.description, VERIFY_DESCRIPTION);
     assert.match(decoded.resource?.url ?? "", /\/v1\/confirm$/);

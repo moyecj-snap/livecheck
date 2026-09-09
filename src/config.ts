@@ -19,6 +19,11 @@ export function confirmIntentPriceUsd(intent: string): number {
 export const CONFIRM_DESCRIPTION =
   "Livecheck Confirm — independent side-effect verification (actor ≠ verifier). POST /v1/confirm with {url, intent} (+ optional claim). Returns confirmed|failed|unknown; thank-you fluff alone never confirmed — durable ref/id required. Intents: lead_submit $0.10 (lead/contact thank-you), listing_published $0.10 (listing go-live; claim title/sku/id optional), order_placed $0.25 (order confirm/status; claim optional; underpay rejected). Signed receipts + GET /stats. Same origin as Livecheck verify ($0.01). Not Trust Oracle / L3. Budget from intent_prices in OpenAPI.";
 /** OpenAPI POST /v1/confirm summary — machine-accurate for all payable intents. */
+/** ASCII-only copy for x402 payment-required (purl/CDP). Keep CONFIRM_DESCRIPTION for /health. */
+export const CONFIRM_PAYMENT_DESCRIPTION =
+  "Livecheck Confirm - independent side-effect verification (actor != verifier). POST /v1/confirm with {url, intent} (+ optional claim). Returns confirmed|failed|unknown; thank-you fluff alone never confirmed - durable ref/id required. Intents: lead_submit $0.10, listing_published $0.10, order_placed $0.25 (claim optional; underpay rejected). Signed receipts + GET /stats. Same origin as Livecheck verify ($0.01). Not Trust Oracle / L3. Budget from intent_prices in OpenAPI.";
+
+
 export const OPENAPI_CONFIRM_SUMMARY =
   "Independently confirm lead_submit ($0.10), listing_published ($0.10), or order_placed ($0.25)";
 /**

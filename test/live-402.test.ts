@@ -3,7 +3,7 @@ import { after, before, describe, it } from "node:test";
 import { serve } from "@hono/node-server";
 import type { FacilitatorClient } from "@x402/core/server";
 import { createApp } from "../src/app.js";
-import { CONFIRM_DESCRIPTION, MOCK_PAY_TO, NETWORK, VERIFY_DESCRIPTION } from "../src/config.js";
+import { CONFIRM_PAYMENT_DESCRIPTION, MOCK_PAY_TO, NETWORK, VERIFY_DESCRIPTION } from "../src/config.js";
 import { livePaymentMiddlewareFromServer, resourceServerFromFacilitator } from "../src/payments.js";
 import { advertisePaymentRequired, decodePaymentRequired } from "../src/x402-payload.js";
 import { assertInfoInputMatchesSchema } from "./bazaar-schema.js";
@@ -105,7 +105,7 @@ describe("live @x402/hono 402 (decoded payment-required)", () => {
       tags?: string[];
     };
     assert.equal(resource.url, "https://livecheck.fly.dev/v1/confirm");
-    assert.equal(resource.description, CONFIRM_DESCRIPTION);
+    assert.equal(resource.description, CONFIRM_PAYMENT_DESCRIPTION);
     assert.match(resource.description ?? "", /Livecheck/);
     assert.notEqual(resource.description, VERIFY_DESCRIPTION);
   });

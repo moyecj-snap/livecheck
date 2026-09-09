@@ -1,6 +1,6 @@
-import { confirmBazaarExtensions, verifyBazaarExtensions } from "./bazaar.js";
+import { verifyBazaarExtensions } from "./bazaar.js";
 import {
-  CONFIRM_DESCRIPTION,
+  CONFIRM_PAYMENT_DESCRIPTION,
   CONFIRM_PRICE_ATOMIC_USDC,
   NETWORK,
   PRICE_ATOMIC_USDC,
@@ -65,13 +65,13 @@ export function confirmPaymentRequiredBody(resourceUrl: string): PaymentRequired
     error: "PAYMENT-SIGNATURE header is required",
     resource: {
       url: resourceUrl,
-      description: CONFIRM_DESCRIPTION,
+      description: CONFIRM_PAYMENT_DESCRIPTION,
       mimeType: "application/json",
     },
     // Hotfix 2026-09-09: single $0.10 accept only. Dual accepts broke CDP
     // facilitator verify (paymentPayload invalid) with purl 0.2.8.
     accepts: [accept(CONFIRM_PRICE_ATOMIC_USDC)],
-    extensions: confirmBazaarExtensions(),
+    extensions: {},
   };
 }
 
@@ -103,21 +103,22 @@ export function advertisePaymentRequired(
     payload.extensions && typeof payload.extensions === "object"
       ? (payload.extensions as Record<string, unknown>)
       : {};
-  const routeBazaar = confirm ? confirmBazaarExtensions() : verifyBazaarExtensions();
-  const extensions: Record<string, unknown> = {
-    ...routeBazaar,
-    ...libraryExtensions,
-  };
-  if (!extensions.bazaar) {
+  const routeBazaar = confirm ? {} : verifyBazaarExtensions();
+  const extensions: Record<string, unknown> = confirm
+    ? { ...libraryExtensions }
+    : { ...routeBazaar, ...libraryExtensions };
+  if (!confirm && !extensions.bazaar) {
     Object.assign(extensions, routeBazaar);
   }
+  // Hotfix: confirm 402 stays bazaar-free + ASCII description until settle works.
+  if (confirm && "bazaar" in extensions) delete extensions.bazaar;
   return {
     ...payload,
     resource: confirm
       ? {
           ...existingResource,
           url: publicConfirmUrl(requestUrl, host),
-          description: CONFIRM_DESCRIPTION,
+          description: CONFIRM_PAYMENT_DESCRIPTION,
           mimeType: "application/json",
         }
       : {

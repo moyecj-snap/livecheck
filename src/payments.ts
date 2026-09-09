@@ -8,7 +8,7 @@ import type { RoutesConfig } from "@x402/core/server";
 import type { MiddlewareHandler } from "hono";
 import { confirmBazaarExtensions, verifyBazaarExtensions } from "./bazaar.js";
 import {
-  CONFIRM_DESCRIPTION,
+  CONFIRM_PAYMENT_DESCRIPTION,
   CONFIRM_PRICE_LABEL,
   MOCK_PAYMENT_HEADER,
   NETWORK,
@@ -67,12 +67,13 @@ export function verifyPaymentRoutes(payTo: string): RoutesConfig {
           payTo,
         },
       ],
-      description: CONFIRM_DESCRIPTION,
+      description: CONFIRM_PAYMENT_DESCRIPTION,
       mimeType: "application/json",
       // Hotfix: omit serviceName/tags — verify settles; confirm with these
       // fields still got CDP facilitator paymentPayload 400 with purl 0.2.8.
       resource: publicConfirmUrl(),
-      extensions: confirmBazaarExtensions(),
+      // Hotfix: omit confirm bazaar on 402 — fat schema suspected in CDP paymentPayload 400.
+      // extensions: confirmBazaarExtensions(),
     },
   };
 }
