@@ -2,7 +2,7 @@ import { CONFIRM_OUTPUT_SCHEMA, VERIFY_OUTPUT_SCHEMA } from "./bazaar.js";
 import { CONFIRM_DESCRIPTION, VERIFY_DESCRIPTION } from "./config.js";
 import { publicConfirmUrl, publicOrigin, publicVerifyUrl } from "./public-url.js";
 
-const OPENAPI_VERSION = "0.1.0";
+const OPENAPI_VERSION = "1.0.0";
 const OPENAPI_PRICE_AMOUNT = "0.01";
 const OPENAPI_CONFIRM_PRICE_AMOUNT = "0.10";
 
@@ -104,11 +104,12 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
                     intent: {
                       type: "string",
                       enum: ["lead_submit"],
-                      description: "Day-1 Confirm intent. Only lead_submit is accepted.",
+                      description: "Confirm intent. Only lead_submit is payable; other values return 400 unsupported_intent.",
                     },
                     claim: {
                       type: "object",
-                      description: "Optional. Ignored in v0.",
+                      description:
+                        "Optional for lead_submit. Not required. Ignored by the lead_submit classifier in this phase.",
                     },
                   },
                   required: ["url", "intent"],
@@ -126,11 +127,69 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
               },
             },
             "400": {
-              description: "Unsupported intent or invalid body",
+              description:
+                "unsupported_intent or invalid body. Only lead_submit is a payable Confirm intent.",
             },
             "402": {
               description: "Payment Required",
             },
+          },
+        },
+      },
+      "/v1/receipt/{id}": {
+        get: {
+          operationId: "getConfirmReceipt",
+          summary: "Fetch a Confirm receipt by id",
+          description:
+            "Free. Returns the stored receipt, canonical payload, and verify metadata. Unsigned when CONFIRM_RECEIPT_PRIVATE_KEY is unset.",
+          tags: ["Confirm"],
+          parameters: [
+            {
+              name: "id",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+              description: "Confirm id (cfm_ + ULID).",
+            },
+          ],
+          responses: {
+            "200": { description: "Receipt and verify metadata" },
+            "404": { description: "Unknown id" },
+          },
+        },
+      },
+      "/.well-known/livecheck-keys.json": {
+        get: {
+          operationId: "livecheckKeys",
+          summary: "Ed25519 public key for Confirm receipts",
+          description: "Free JWKS-style document. keys is empty when signing is not configured.",
+          tags: ["Confirm"],
+          responses: {
+            "200": { description: "Public keys" },
+          },
+        },
+      },
+      "/stats": {
+        get: {
+          operationId: "confirmStats",
+          summary: "Confirm rolling counts",
+          description:
+            "Free. lead_submit paid-call and receipt counts. No published false-confirmed rate. Not a payable route.",
+          tags: ["Confirm"],
+          responses: {
+            "200": { description: "JSON stats (HTML when Accept: text/html)" },
+          },
+        },
+      },
+      "/v1/judge": {
+        get: {
+          operationId: "confirmJudgeStub",
+          summary: "Human review stub",
+          description:
+            "Not implemented in this phase. Returns 501. Not a payable x402 resource; est_price_usd on next_step is a stub only.",
+          tags: ["Confirm"],
+          responses: {
+            "501": { description: "not_implemented" },
           },
         },
       },

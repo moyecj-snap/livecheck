@@ -10,9 +10,8 @@ import {
   PRICE_USD,
   VERIFY_DESCRIPTION,
 } from "../src/config.js";
-import { classifyLeadSubmit, confirmUrl, parseConfirmRequest } from "../src/confirm.js";
+import { classifyLeadSubmit, confirmUrl, parseConfirmRequest, UnsupportedIntentError } from "../src/confirm.js";
 import { FIXTURES } from "../src/fixtures.js";
-import { VerifyError } from "../src/verify.js";
 import type { FetchedPage } from "../src/types.js";
 
 function page(partial: Partial<FetchedPage> & Pick<FetchedPage, "requestedUrl" | "html" | "httpStatus">): FetchedPage {
@@ -45,6 +44,8 @@ describe("classifyLeadSubmit", () => {
     );
     assert.equal(verdict.verdict, "confirmed");
     assert.equal(verdict.evidence_strength, 2);
+    assert.equal(verdict.evidence_level, 2);
+    assert.ok(verdict.confidence >= 0.9);
     assert.equal(verdict.effect.type, "lead_submit");
     assert.equal(verdict.effect.id, "ABC123");
     assert.equal(verdict.independent_evidence, true);
@@ -65,6 +66,10 @@ describe("classifyLeadSubmit", () => {
     );
     assert.equal(verdict.verdict, "unknown");
     assert.equal(verdict.evidence_strength, 1);
+    assert.equal(verdict.evidence_level, 1);
+    assert.ok(verdict.confidence < 0.9);
+    assert.equal(verdict.next_step?.action, "human_review");
+    assert.equal(verdict.next_step?.endpoint, "/v1/judge");
     assert.equal("id" in verdict.effect, false);
     assert.ok(verdict.signals.includes("thank_you_copy"));
     assert.equal(verdict.independent_evidence, true);
@@ -100,11 +105,29 @@ describe("classifyLeadSubmit", () => {
 });
 
 describe("parseConfirmRequest", () => {
-  it("rejects intent other than lead_submit", () => {
+  it("rejects intent other than lead_submit as unsupported_intent", () => {
     assert.throws(
       () => parseConfirmRequest({ url: "https://example.com/thanks", intent: "booking" }),
-      (error: unknown) => error instanceof VerifyError && error.status === 400,
+      (error: unknown) =>
+        error instanceof UnsupportedIntentError &&
+        error.status === 400 &&
+        error.code === "unsupported_intent",
     );
+  });
+
+  it("does not require claim for lead_submit", () => {
+    const parsed = parseConfirmRequest({ url: "https://example.com/thanks", intent: "lead_submit" });
+    assert.equal(parsed.intent, "lead_submit");
+    assert.equal(parsed.claim, undefined);
+  });
+
+  it("accepts an optional claim object", () => {
+    const parsed = parseConfirmRequest({
+      url: "https://example.com/thanks",
+      intent: "lead_submit",
+      claim: { ref: "ABC123" },
+    });
+    assert.equal(parsed.claim?.ref, "ABC123");
   });
 });
 
@@ -148,15 +171,24 @@ describe("confirmUrl + HTTP", () => {
     const body = (await res.json()) as {
       verdict: string;
       evidence_strength: number;
+      evidence_level?: number;
+      confidence?: number;
+      id?: string;
       effect: { type: string; id?: string };
       independent_evidence: boolean;
       price_usd: number;
+      receipt?: { hash?: string; verify_url?: string; signature?: string };
     };
     assert.equal(body.verdict, "confirmed");
     assert.equal(body.evidence_strength, 2);
+    assert.equal(body.evidence_level, 2);
+    assert.ok((body.confidence ?? 0) >= 0.9);
     assert.equal(body.effect.id, "ABC123");
     assert.equal(body.independent_evidence, true);
     assert.equal(body.price_usd, 0.1);
+    assert.match(body.id ?? "", /^cfm_/);
+    assert.ok(body.receipt?.hash);
+    assert.ok(body.receipt?.verify_url?.includes("/v1/receipt/"));
   });
 
   it("POST /v1/confirm thank-you copy only is unknown", async () => {
@@ -166,10 +198,18 @@ describe("confirmUrl + HTTP", () => {
       body: JSON.stringify({ url: `${origin}/fixtures/confirm/thank-you-only`, intent: "lead_submit" }),
     });
     assert.equal(res.status, 200);
-    const body = (await res.json()) as { verdict: string; evidence_strength: number; effect: { id?: string } };
+    const body = (await res.json()) as {
+      verdict: string;
+      evidence_strength: number;
+      effect: { id?: string };
+      next_step?: { action?: string; endpoint?: string; est_price_usd?: number };
+    };
     assert.equal(body.verdict, "unknown");
     assert.equal(body.evidence_strength, 1);
     assert.equal(body.effect.id, undefined);
+    assert.equal(body.next_step?.action, "human_review");
+    assert.equal(body.next_step?.endpoint, "/v1/judge");
+    assert.equal(body.next_step?.est_price_usd, 1);
   });
 
   it("POST /v1/confirm error banner is failed", async () => {
@@ -190,8 +230,20 @@ describe("confirmUrl + HTTP", () => {
       body: JSON.stringify({ url: `${origin}/fixtures/confirm/thank-you-id`, intent: "booking" }),
     });
     assert.equal(res.status, 400);
+    const body = (await res.json()) as { error?: string; intent?: unknown };
+    assert.equal(body.error, "unsupported_intent");
+    assert.equal(body.intent, "booking");
+  });
+
+  it("POST /v1/confirm listing_published is 400 unsupported_intent after mock pay", async () => {
+    const res = await fetch(`${origin}/v1/confirm`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
+      body: JSON.stringify({ url: `${origin}/fixtures/confirm/thank-you-id`, intent: "listing_published" }),
+    });
+    assert.equal(res.status, 400);
     const body = (await res.json()) as { error?: string };
-    assert.match(body.error ?? "", /lead_submit/);
+    assert.equal(body.error, "unsupported_intent");
   });
 
   it("unpaid POST /v1/confirm is 402 at $0.10 and does not use verify copy", async () => {

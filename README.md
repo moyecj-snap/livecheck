@@ -37,7 +37,7 @@ After payment verifies and settles:
 
 v1 reads HTML + status only. It does not execute page JavaScript. Redirects are followed; `canonical_url` is the final URL. User-Agent identifies Livecheck.
 
-Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, and `GET /.well-known/x402`. Paid: `POST /v1/verify` ($0.01) and `POST /v1/confirm` ($0.10).
+Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, `GET /.well-known/x402`, `GET /.well-known/livecheck-keys.json`, `GET /stats`, and `GET /v1/receipt/{id}`. Paid: `POST /v1/verify` ($0.01) and `POST /v1/confirm` ($0.10). `GET /v1/judge` is a 501 stub.
 
 Agent crawlers (x402scan, AgentCash, Circle OpenAPI discovery) read the free JSON docs. `GET /openapi.json` is the canonical contract: `POST /v1/verify` with JSON `{ "url": "https://..." }`, `x-payment-info` fixed **$0.01** USD (decimal; runtime 402 `accepts[].amount` stays `"10000"` atomic USDC), and a 200 schema of `live | closed | unknown`. It also lists `POST /v1/confirm` at **$0.10** USD (`"100000"` atomic). `GET /.well-known/x402` lists both `https://livecheck.fly.dev/v1/verify` and `https://livecheck.fly.dev/v1/confirm`. Neither discovery route returns 402.
 
@@ -81,14 +81,35 @@ Content-Type: application/json
 { "url": "https://example.com/thank-you", "intent": "lead_submit", "claim": {} }
 ```
 
-`claim` is optional and ignored in v0. After payment:
+`claim` is optional for `lead_submit` (not required). After payment:
 
-- **confirmed** — Level 2 only: extractable confirmation/ref/ticket/lead id, or a unique token in the confirmation URL. Thank-you copy alone is never confirmed.
-- **unknown** — Level 1 only (thank-you copy, no id).
+- **confirmed** — Level 2 only: extractable confirmation/ref/ticket/lead id, or a unique token in the confirmation URL. Thank-you copy alone is never confirmed. `evidence_level` is 2 and `confidence` is ≥ 0.90 (lead_submit L2 uses 0.92).
+- **unknown** — Level 1 only (thank-you copy, no id). May include `next_step: { action: "human_review", endpoint: "/v1/judge", est_price_usd: 1.00 }` (`GET /v1/judge` is a 501 stub, not payable).
 - **failed** — clear error/reject banner.
 - Fetch is cookieless. `independent_evidence` is true only then; cookies never produce `confirmed`.
 
-Other intents return HTTP 400. Booking, order, unsubscribe, screenshots, and LLM/vision are out of scope.
+Successful JSON is additive on the v0 fields (`verdict`, `effect`, `signals`, `evidence_strength`, `evidence_id`, …):
+
+- `id` — stable `cfm_` + ULID
+- `evidence_level` — 0–4 (lead_submit confirmed stays L2)
+- `confidence` — 0–1
+- `receipt` — `{ hash, verify_url }` always; `signature` + `signer` when `CONFIRM_RECEIPT_PRIVATE_KEY` is set
+
+Unknown intents return HTTP **400** `{ "error": "unsupported_intent" }`. `listing_published` and `order_placed` are **not** payable in this phase (no Bazaar price).
+
+Free Confirm extras: `GET /v1/receipt/{id}`, `GET /.well-known/livecheck-keys.json`, `GET /stats` (JSON; HTML if `Accept: text/html`). `GET /stats` publishes lead_submit rolling counts and explicitly **null** false-confirmed rate (no fake benches).
+
+### Signed receipts
+
+Set `CONFIRM_RECEIPT_PRIVATE_KEY` to an Ed25519 **PKCS#8 PEM** (recommended) or a **32-byte seed** as hex (64 chars) or base64. Generate PEM:
+
+```bash
+node --input-type=module -e "import { generateKeyPairSync } from 'node:crypto'; process.stdout.write(generateKeyPairSync('ed25519').privateKey.export({ type: 'pkcs8', format: 'pem' }).toString())"
+```
+
+The signature is Ed25519 over canonical JSON `{id,intent,verdict,confidence,evidence_level,evidence_summary_or_hash,observed_at,url_hash,claim_hash}` (that key order). `evidence_summary_or_hash` is a SHA-256 of signals/verdict (not the raw confirmation id). Receipts persist on the same SQLite volume as paid_calls (`PAID_CALL_DB_PATH`). If the key is unset, Confirm still returns `id` plus an unsigned receipt stub (`hash` + `verify_url`); the paid path does not crash.
+
+Verify: `GET /v1/receipt/{id}` and `GET /.well-known/livecheck-keys.json` (`kid` `livecheck-confirm-v1`).
 
 ## Run locally
 

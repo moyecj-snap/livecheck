@@ -19,6 +19,22 @@ export type ConfirmEffect = {
   id?: string;
 };
 
+/** v1.0 Confirm evidence scale. lead_submit confirmed is L2 (confirmation/ref/ticket id). */
+export type EvidenceLevel = 0 | 1 | 2 | 3 | 4;
+
+export type ConfirmReceipt = {
+  hash: string;
+  verify_url: string;
+  signature?: string;
+  signer?: string;
+};
+
+export type ConfirmNextStep = {
+  action: "human_review";
+  endpoint: "/v1/judge";
+  est_price_usd: number;
+};
+
 export type ConfirmResult = {
   verdict: ConfirmVerdictStatus;
   effect: ConfirmEffect;
@@ -32,6 +48,13 @@ export type ConfirmResult = {
   url: string;
   canonical_url: string;
   price_usd: number;
+  /** Stable confirm id (`cfm_` + ULID). Present on successful HTTP confirm. */
+  id?: string;
+  evidence_level: EvidenceLevel;
+  /** 0–1. confirmed requires ≥0.90 and evidence_level ≥ 2. */
+  confidence: number;
+  receipt?: ConfirmReceipt;
+  next_step?: ConfirmNextStep;
 };
 
 export type FetchedPage = {

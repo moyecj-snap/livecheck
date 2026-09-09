@@ -31,7 +31,8 @@ describe("HTTP surface", () => {
       confirm_price_usd?: number;
       bazaar?: boolean;
       ebay?: boolean;
-      confirm?: boolean;
+                      confirm?: boolean;
+                      receipt_signing?: boolean;
       public_verify_url?: string;
       public_confirm_url?: string;
       description?: string;
@@ -46,6 +47,7 @@ describe("HTTP surface", () => {
     assert.equal(body.bazaar, true);
     assert.equal(body.ebay, false);
     assert.equal(body.confirm, true);
+    assert.equal(typeof body.receipt_signing, "boolean");
     assert.ok(body.public_verify_url?.endsWith("/v1/verify"));
     assert.ok(body.public_confirm_url?.endsWith("/v1/confirm"));
   });

@@ -192,6 +192,10 @@ describe("discovery documents (live @x402/hono gate)", () => {
     assertJsonDiscovery(openapi, "live openapi.json");
     const wellKnown = await fetch(`${origin}/.well-known/x402`);
     assertJsonDiscovery(wellKnown, "live .well-known/x402");
+    const keys = await fetch(`${origin}/.well-known/livecheck-keys.json`);
+    assertJsonDiscovery(keys, "live .well-known/livecheck-keys.json");
+    const stats = await fetch(`${origin}/stats`);
+    assert.equal(stats.status, 200, "GET /stats must not 402");
     const verify = await fetch(`${origin}/v1/verify`, { method: "POST" });
     assert.equal(verify.status, 402);
   });

@@ -132,9 +132,12 @@ export const VERIFY_ROUTE_DESCRIPTION = VERIFY_DESCRIPTION;
 export const CONFIRM_EXAMPLE = {
   url: "https://example.com/thank-you?ref=ABC123",
   canonical_url: "https://example.com/thank-you?ref=ABC123",
+  id: "cfm_01J8Z0K3N4P5Q6R7S8T9V0WXYZ",
   verdict: "confirmed",
   effect: { type: "lead_submit", id: "ABC123" },
   evidence_strength: 2,
+  evidence_level: 2,
+  confidence: 0.92,
   signals: ["cookieless_fetch", "confirmation_id", "level_2"],
   independent_signals: 1,
   independent_evidence: true,
@@ -142,11 +145,16 @@ export const CONFIRM_EXAMPLE = {
   http_status: 200,
   fetched_at: "2026-09-06T17:00:00Z",
   price_usd: CONFIRM_PRICE_USD,
+  receipt: {
+    hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    verify_url: "https://livecheck.fly.dev/v1/receipt/cfm_01J8Z0K3N4P5Q6R7S8T9V0WXYZ",
+  },
 } as const;
 
 export const CONFIRM_OUTPUT_SCHEMA = {
   type: "object",
   properties: {
+    id: { type: "string", description: "Stable confirm id (cfm_ + ULID)." },
     verdict: { type: "string", enum: ["confirmed", "failed", "unknown"] },
     effect: {
       type: "object",
@@ -157,6 +165,8 @@ export const CONFIRM_OUTPUT_SCHEMA = {
       required: ["type"],
     },
     evidence_strength: { type: "number", enum: [1, 2] },
+    evidence_level: { type: "number", enum: [0, 1, 2, 3, 4] },
+    confidence: { type: "number", minimum: 0, maximum: 1 },
     signals: { type: "array", items: { type: "string" } },
     independent_signals: { type: "number" },
     independent_evidence: { type: "boolean" },
@@ -166,11 +176,33 @@ export const CONFIRM_OUTPUT_SCHEMA = {
     url: { type: "string" },
     canonical_url: { type: "string" },
     price_usd: { type: "number" },
+    receipt: {
+      type: "object",
+      properties: {
+        hash: { type: "string" },
+        signature: { type: "string" },
+        signer: { type: "string" },
+        verify_url: { type: "string" },
+      },
+      required: ["hash", "verify_url"],
+    },
+    next_step: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["human_review"] },
+        endpoint: { type: "string", enum: ["/v1/judge"] },
+        est_price_usd: { type: "number" },
+      },
+      description: "Present when verdict is unknown. /v1/judge is a 501 stub in this phase and is not payable.",
+    },
   },
   required: [
+    "id",
     "verdict",
     "effect",
     "evidence_strength",
+    "evidence_level",
+    "confidence",
     "signals",
     "independent_signals",
     "independent_evidence",
@@ -180,6 +212,7 @@ export const CONFIRM_OUTPUT_SCHEMA = {
     "url",
     "canonical_url",
     "price_usd",
+    "receipt",
   ],
 } as const;
 
@@ -192,11 +225,11 @@ export const CONFIRM_INPUT_SCHEMA = {
     intent: {
       type: "string",
       enum: ["lead_submit"],
-      description: "Day-1 Confirm intent. Only lead_submit is accepted.",
+      description: "Day-1 Confirm intent. Only lead_submit is a payable intent.",
     },
     claim: {
       type: "object",
-      description: "Optional. Ignored in v0.",
+      description: "Optional for lead_submit. Not required. Ignored by the lead_submit classifier in this phase.",
     },
   },
   required: ["url", "intent"],

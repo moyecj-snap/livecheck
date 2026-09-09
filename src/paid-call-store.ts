@@ -10,6 +10,7 @@ import {
   type PaidCallEvent,
   type PaidCallRoute,
 } from "./paid-call.js";
+import { CONFIRM_RECEIPTS_SCHEMA, bindReceiptSqlite } from "./receipt-store.js";
 
 export const PAID_CALLS_TABLE = "paid_calls" as const;
 
@@ -55,6 +56,7 @@ CREATE TABLE IF NOT EXISTS paid_calls (
 );
 CREATE INDEX IF NOT EXISTS idx_paid_calls_ts ON paid_calls(ts);
 CREATE INDEX IF NOT EXISTS idx_paid_calls_route_ts ON paid_calls(route, ts);
+${CONFIRM_RECEIPTS_SCHEMA}
 `;
 
 type OpenStore = { ok: true; path: string; db: DatabaseSync };
@@ -62,6 +64,12 @@ type ClosedStore = { ok: false; path?: string; reason: string };
 type StoreState = OpenStore | ClosedStore;
 
 let state: StoreState | undefined;
+
+function sqliteDb(): DatabaseSync | undefined {
+  return state?.ok ? state.db : undefined;
+}
+
+bindReceiptSqlite(sqliteDb);
 
 export function defaultPaidCallDbPath(): string {
   const fromEnv = process.env.PAID_CALL_DB_PATH?.trim();

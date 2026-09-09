@@ -1,7 +1,29 @@
 import { randomUUID } from "node:crypto";
 import { CONFIRM_PRICE_USD } from "./config.js";
-import type { ConfirmResult, FetchedPage } from "./types.js";
+import type { ConfirmNextStep, ConfirmResult, ConfirmVerdictStatus, EvidenceLevel, FetchedPage } from "./types.js";
 import { VerifyError, fetchPage, parseTargetUrl } from "./verify.js";
+
+export const CONFIRMED_MIN_CONFIDENCE = 0.9;
+export const CONFIRMED_MIN_EVIDENCE_LEVEL = 2;
+/** lead_submit L2 confirmed — at/above the confirmed gate; do not downgrade existing L2. */
+export const LEAD_SUBMIT_L2_CONFIDENCE = 0.92;
+
+export const HUMAN_REVIEW_NEXT_STEP: ConfirmNextStep = {
+  action: "human_review",
+  endpoint: "/v1/judge",
+  est_price_usd: 1.0,
+};
+
+export class UnsupportedIntentError extends VerifyError {
+  readonly code = "unsupported_intent" as const;
+  readonly intent: unknown;
+
+  constructor(intent: unknown) {
+    super('unsupported_intent: only "lead_submit" is accepted.', 400);
+    this.name = "UnsupportedIntentError";
+    this.intent = intent;
+  }
+}
 
 export const LEAD_SUBMIT_INTENT = "lead_submit" as const;
 
@@ -132,16 +154,98 @@ export function extractLabeledConfirmationId(text: string): string | undefined {
   return undefined;
 }
 
-export function parseConfirmRequest(body: unknown): { url: string; intent: typeof LEAD_SUBMIT_INTENT } {
+export type ConfirmRequest = {
+  url: string;
+  intent: typeof LEAD_SUBMIT_INTENT;
+  claim?: Record<string, unknown>;
+};
+
+export function parseConfirmRequest(body: unknown): ConfirmRequest {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new VerifyError('JSON body must include { "url": "https://...", "intent": "lead_submit" }.');
   }
-  const record = body as { url?: unknown; intent?: unknown };
+  const record = body as { url?: unknown; intent?: unknown; claim?: unknown };
   const url = parseTargetUrl(record.url);
   if (record.intent !== LEAD_SUBMIT_INTENT) {
-    throw new VerifyError('intent must be "lead_submit".', 400);
+    throw new UnsupportedIntentError(record.intent);
   }
-  return { url, intent: LEAD_SUBMIT_INTENT };
+  if (record.claim !== undefined) {
+    if (!record.claim || typeof record.claim !== "object" || Array.isArray(record.claim)) {
+      throw new VerifyError("claim must be a JSON object when provided.");
+    }
+  }
+  const parsed: ConfirmRequest = { url, intent: LEAD_SUBMIT_INTENT };
+  if (record.claim && typeof record.claim === "object" && !Array.isArray(record.claim)) {
+    parsed.claim = record.claim as Record<string, unknown>;
+  }
+  return parsed;
+}
+
+export function evidenceLevelFor(input: {
+  verdict: ConfirmVerdictStatus;
+  evidence_strength: 1 | 2;
+  independent_evidence: boolean;
+  signals: string[];
+}): EvidenceLevel {
+  if (input.verdict === "confirmed" && input.evidence_strength >= 2 && input.independent_evidence) {
+    return 2;
+  }
+  if (
+    input.independent_evidence &&
+    input.signals.some((s) => s === "level_2" || s === "confirmation_id" || s === "confirmation_url_token")
+  ) {
+    return 2;
+  }
+  if (
+    input.signals.some(
+      (s) =>
+        s.startsWith("failure_banner:") ||
+        s === "thank_you_copy" ||
+        s === "level_2_not_independent" ||
+        s === "no_confirmation_id",
+    )
+  ) {
+    return 1;
+  }
+  return 0;
+}
+
+export function confidenceFor(verdict: ConfirmVerdictStatus, evidenceLevel: EvidenceLevel): number {
+  if (verdict === "confirmed") return LEAD_SUBMIT_L2_CONFIDENCE;
+  if (verdict === "failed") return 0.8;
+  if (evidenceLevel >= 1) return 0.48;
+  return 0.22;
+}
+
+/** New Confirm logic: confirmed requires confidence ≥ 0.90 and evidence_level ≥ 2. */
+export function applyConfirmedGate(
+  verdict: ConfirmVerdictStatus,
+  confidence: number,
+  evidenceLevel: EvidenceLevel,
+): ConfirmVerdictStatus {
+  if (verdict !== "confirmed") return verdict;
+  if (confidence >= CONFIRMED_MIN_CONFIDENCE && evidenceLevel >= CONFIRMED_MIN_EVIDENCE_LEVEL) {
+    return "confirmed";
+  }
+  return "unknown";
+}
+
+function finishResult(
+  partial: Omit<ConfirmResult, "evidence_level" | "confidence" | "next_step">,
+): ConfirmResult {
+  const evidence_level = evidenceLevelFor(partial);
+  let verdict = applyConfirmedGate(partial.verdict, confidenceFor(partial.verdict, evidence_level), evidence_level);
+  const confidence = confidenceFor(verdict, evidence_level);
+  const result: ConfirmResult = {
+    ...partial,
+    verdict,
+    evidence_level,
+    confidence,
+  };
+  if (verdict === "unknown") {
+    result.next_step = HUMAN_REVIEW_NEXT_STEP;
+  }
+  return result;
 }
 
 function cookielessFetch(fetcher: typeof fetch): { fetchImpl: typeof fetch; cookiesUsed: () => boolean } {
@@ -176,7 +280,7 @@ export function classifyLeadSubmit(
 
   if (failedPhrase) {
     signals.push(`failure_banner:${failedPhrase}`);
-    return {
+    return finishResult({
       verdict: "failed",
       effect: { type: "lead_submit" },
       evidence_strength: 1,
@@ -189,14 +293,14 @@ export function classifyLeadSubmit(
       url: page.requestedUrl,
       canonical_url: page.canonicalUrl,
       price_usd: CONFIRM_PRICE_USD,
-    };
+    });
   }
 
   if (level2Id && independent) {
     if (labeledId) signals.push("confirmation_id");
     if (urlToken) signals.push("confirmation_url_token");
     signals.push("level_2");
-    return {
+    return finishResult({
       verdict: "confirmed",
       effect: { type: "lead_submit", id: level2Id },
       evidence_strength: 2,
@@ -209,7 +313,7 @@ export function classifyLeadSubmit(
       url: page.requestedUrl,
       canonical_url: page.canonicalUrl,
       price_usd: CONFIRM_PRICE_USD,
-    };
+    });
   }
 
   if (level2Id && !independent) {
@@ -218,7 +322,7 @@ export function classifyLeadSubmit(
   if (thankYou) signals.push("thank_you_copy");
   if (!level2Id && !thankYou) signals.push("no_confirmation_id");
 
-  return {
+  return finishResult({
     verdict: "unknown",
     effect: { type: "lead_submit" },
     evidence_strength: 1,
@@ -231,7 +335,7 @@ export function classifyLeadSubmit(
     url: page.requestedUrl,
     canonical_url: page.canonicalUrl,
     price_usd: CONFIRM_PRICE_USD,
-  };
+  });
 }
 
 export async function confirmUrl(

@@ -10,7 +10,7 @@ import {
   isLiveSettlement,
   missingLiveKeyNames,
 } from "./config.js";
-import { confirmUrl, parseConfirmRequest } from "./confirm.js";
+import { confirmUrl, parseConfirmRequest, UnsupportedIntentError } from "./confirm.js";
 import { isEbayAdapterEnabled } from "./ebay.js";
 import { demoHtml } from "./demo-page.js";
 import { discoveryHeaders, openApiDocument, wellKnownX402 } from "./discovery.js";
@@ -18,6 +18,14 @@ import { FIXTURES } from "./fixtures.js";
 import { recordSuccessfulPaidCheck, withPaidCallContext } from "./paid-call.js";
 import { applyPaymentGate, settlementMode } from "./payments.js";
 import { publicConfirmUrl, publicVerifyUrl } from "./public-url.js";
+import { isConfirmId } from "./confirm-id.js";
+import {
+  livecheckKeysDocument,
+  lookupReceiptResponse,
+  receiptSigningEnabled,
+  sealConfirmResult,
+} from "./receipt.js";
+import { buildStatsDocument, statsHtml } from "./stats.js";
 import { VerifyError, parseTargetUrl, verifyUrl } from "./verify.js";
 
 export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): Hono {
@@ -34,6 +42,42 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
     return c.json(wellKnownX402(c.req.url, c.req.header("host")), 200, discoveryHeaders());
   });
 
+  app.get("/.well-known/livecheck-keys.json", (c) => {
+    return c.json(livecheckKeysDocument(), 200, discoveryHeaders());
+  });
+
+  app.get("/stats", (c) => {
+    const doc = buildStatsDocument();
+    const format = c.req.query("format");
+    const accept = c.req.header("accept") ?? "";
+    const wantsHtml =
+      format === "html" || (format !== "json" && accept.includes("text/html") && !accept.includes("application/json"));
+    if (wantsHtml) return c.html(statsHtml(doc));
+    return c.json(doc);
+  });
+
+  app.get("/v1/receipt/:id", (c) => {
+    const id = c.req.param("id");
+    if (!id || !isConfirmId(id)) {
+      return c.json({ error: "not_found" }, 404);
+    }
+    const body = lookupReceiptResponse(id, c.req.url, c.req.header("host"));
+    if (!body) return c.json({ error: "not_found" }, 404);
+    return c.json(body);
+  });
+
+  app.all("/v1/judge", (c) => {
+    return c.json(
+      {
+        error: "not_implemented",
+        action: "human_review",
+        endpoint: "/v1/judge",
+        est_price_usd: 1.0,
+      },
+      501,
+    );
+  });
+
   app.get("/health", (c) => {
     return c.json({
       ok: true,
@@ -48,6 +92,7 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
       bazaar: true,
       ebay: isEbayAdapterEnabled(),
       confirm: true,
+      receipt_signing: receiptSigningEnabled(),
       description: VERIFY_DESCRIPTION,
       confirm_description: CONFIRM_DESCRIPTION,
       user_agent: USER_AGENT,
@@ -98,8 +143,15 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
       return c.json({ error: "Request body must be JSON." }, 400);
     }
     try {
-      const { url, intent } = parseConfirmRequest(body);
-      const result = await confirmUrl(url);
+      const { url, intent, claim } = parseConfirmRequest(body);
+      const classified = await confirmUrl(url);
+      const result = sealConfirmResult(classified, {
+        intent,
+        url,
+        claim,
+        requestUrl: c.req.url,
+        host: c.req.header("host"),
+      });
       recordSuccessfulPaidCheck({
         route: "confirm",
         url,
@@ -108,6 +160,9 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
       });
       return c.json(result);
     } catch (error) {
+      if (error instanceof UnsupportedIntentError) {
+        return c.json({ error: "unsupported_intent", intent: error.intent ?? null }, 400);
+      }
       if (error instanceof VerifyError) {
         return c.json({ error: error.message }, error.status as 400 | 502 | 504);
       }
