@@ -70,7 +70,7 @@ curl -sS -D - -o /dev/null https://livecheck.fly.dev/v1/verify \
 
 ## Confirm (`POST /v1/confirm`)
 
-Livecheck Confirm — use after your agent submits a lead/contact form (intent=lead_submit): POST {url, intent} where url is the thank-you or result page. Returns confirmed|failed|unknown with Level-2+ evidence (confirmation/ref/ticket id required for confirmed). Independent cookieless verifier — actor ≠ verifier — so you do not grade your own homework before the next paid or irreversible step. Not URL/stock liveness (use /v1/verify), not payment/tx settlement, not a thank-you-page classifier.
+Livecheck Confirm — use after your agent submits a lead/contact form (intent=lead_submit): POST {url, intent} where url is the thank-you or result page. Returns confirmed|failed|unknown with Level-2+ evidence (confirmation/ref/ticket id required for confirmed). Independent cookieless verifier — actor ≠ verifier. Also accepts intent=listing_published ($0.10) for listing go-live checks — see OpenAPI. Signed receipts + GET /stats. Not URL/stock liveness (use /v1/verify). Not Trust Oracle / L3.
 
 Payable Confirm intents are **`lead_submit`** ($0.10), **`listing_published`** ($0.10), and **`order_placed`** ($0.25). `/v1/verify` stays **$0.01**. Bazaar 402 copy stays lead_submit-primary until CoS publishes a false-confirmed rate. Do not treat OpenAPI/x402 listing `order_placed` as a Bazaar marketing ad.
 
@@ -107,7 +107,7 @@ Successful JSON is additive on the v0 fields (`verdict`, `effect`, `signals`, `e
 
 Unknown intents return HTTP **400** `{ "error": "unsupported_intent" }` after pay. OpenAPI / x402 document `order_placed` as payable at $0.25 once the handler is live. Do not treat Bazaar marketing copy as a GA order_placed ad.
 
-**Payment caveat (multi-price on one route):** `@x402/hono` prices the *route*, not the JSON `intent`. Unpaid `POST /v1/confirm` therefore 402s before intent validation. The 402 `accepts[]` lists **$0.10 first** (lead_submit / listing_published) and **$0.25 second** (order_placed). A client that pays $0.10 can still send `order_placed` after settle; this phase does not re-check the settled amount against intent. Mock pay (`X-Livecheck-Mock: 1`) bypasses amount entirely. Successful JSON still returns `price_usd: 0.25` for `order_placed`.
+**Payment (multi-price on one route):** `@x402/hono` prices the *route*, not the JSON `intent`. Unpaid `POST /v1/confirm` therefore 402s before intent validation. The 402 `accepts[]` lists **$0.10 first** (lead_submit / listing_published) and **$0.25 second** (order_placed). After verify — and before the `order_placed` handler — Livecheck requires the matched accept ≥ **$0.25 / 250000 atomic**. Underpay returns HTTP **402** `{ "error": "payment_amount_insufficient" }` plus a `payment-required` challenge so `@x402/hono` 2.24.0 cancels settle (it settles only when the handler returns status below 400). `lead_submit` / `listing_published` stay $0.10. Mock pay (`X-Livecheck-Mock: 1`) still bypasses amount. Successful JSON still returns `price_usd: 0.25` for `order_placed`.
 
 Free Confirm extras: `GET /v1/receipt/{id}`, `GET /.well-known/livecheck-keys.json`, `GET /stats` (JSON; HTML if `Accept: text/html`). `GET /stats` publishes lead_submit, listing_published, and order_placed rolling counts and explicitly **null** false-confirmed rate (no published bench number on the live route). Local honesty benches: `npm run bench:listing-published` and `npm run bench:order-placed` (gate: `false_confirmed = 0`).
 

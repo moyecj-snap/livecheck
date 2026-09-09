@@ -4,6 +4,9 @@ import {
   CONFIRM_DESCRIPTION,
   CONFIRM_PRICE_ATOMIC_USDC,
   CONFIRM_PRICE_USD,
+  OPENAPI_CONFIRM_DESCRIPTION,
+  OPENAPI_CONFIRM_INTENT_DESCRIPTION,
+  OPENAPI_CONFIRM_SUMMARY,
   ORDER_PLACED_PRICE_ATOMIC_USDC,
   ORDER_PLACED_PRICE_USD,
   CONFIRM_RESOURCE_TAGS,
@@ -54,9 +57,21 @@ describe("listing price and description", () => {
     assert.equal(ORDER_PLACED_PRICE_ATOMIC_USDC, "250000");
     assert.equal(
       CONFIRM_DESCRIPTION,
-      "Livecheck Confirm — use after your agent submits a lead/contact form (intent=lead_submit): POST {url, intent} where url is the thank-you or result page. Returns confirmed|failed|unknown with Level-2+ evidence (confirmation/ref/ticket id required for confirmed). Independent cookieless verifier — actor ≠ verifier — so you do not grade your own homework before the next paid or irreversible step. Not URL/stock liveness (use /v1/verify), not payment/tx settlement, not a thank-you-page classifier.",
+      "Livecheck Confirm — use after your agent submits a lead/contact form (intent=lead_submit): POST {url, intent} where url is the thank-you or result page. Returns confirmed|failed|unknown with Level-2+ evidence (confirmation/ref/ticket id required for confirmed). Independent cookieless verifier — actor ≠ verifier. Also accepts intent=listing_published ($0.10) for listing go-live checks — see OpenAPI. Signed receipts + GET /stats. Not URL/stock liveness (use /v1/verify). Not Trust Oracle / L3.",
     );
     assert.match(CONFIRM_DESCRIPTION, /Livecheck/);
+    assert.match(CONFIRM_DESCRIPTION, /listing_published/);
+    assert.doesNotMatch(CONFIRM_DESCRIPTION, /order_placed/);
+    assert.match(OPENAPI_CONFIRM_SUMMARY, /order_placed/);
+    assert.match(OPENAPI_CONFIRM_DESCRIPTION, /order_placed \(\$0\.25\)/);
+    assert.match(OPENAPI_CONFIRM_DESCRIPTION, /listing_published \(\$0\.10\)/);
+    assert.match(OPENAPI_CONFIRM_DESCRIPTION, /GET \/v1\/receipt\/\{id\}/);
+    assert.match(OPENAPI_CONFIRM_DESCRIPTION, /livecheck-keys\.json/);
+    assert.match(OPENAPI_CONFIRM_DESCRIPTION, /missing ≠ false-confirmed rate of 0/);
+    assert.match(OPENAPI_CONFIRM_DESCRIPTION, /Trust Oracle \/ L3/);
+    assert.match(OPENAPI_CONFIRM_DESCRIPTION, /400 unsupported_intent/);
+    assert.match(OPENAPI_CONFIRM_INTENT_DESCRIPTION, /claim\.title\/sku\/id optional/);
+    assert.notEqual(OPENAPI_CONFIRM_DESCRIPTION, CONFIRM_DESCRIPTION);
     assert.equal(CONFIRM_SERVICE_NAME, "Livecheck");
     assert.deepEqual([...CONFIRM_RESOURCE_TAGS], ["livecheck", "confirm"]);
   });

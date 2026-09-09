@@ -1,5 +1,11 @@
 import { CONFIRM_OUTPUT_SCHEMA, VERIFY_OUTPUT_SCHEMA } from "./bazaar.js";
-import { CONFIRM_DESCRIPTION, VERIFY_DESCRIPTION } from "./config.js";
+import {
+  OPENAPI_CONFIRM_CLAIM_DESCRIPTION,
+  OPENAPI_CONFIRM_DESCRIPTION,
+  OPENAPI_CONFIRM_INTENT_DESCRIPTION,
+  OPENAPI_CONFIRM_SUMMARY,
+  VERIFY_DESCRIPTION,
+} from "./config.js";
 import { publicConfirmUrl, publicOrigin, publicVerifyUrl } from "./public-url.js";
 
 const OPENAPI_VERSION = "1.0.0";
@@ -78,9 +84,9 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
       "/v1/confirm": {
         post: {
           operationId: "confirmLeadSubmit",
-          summary: "Confirm lead_submit side effects independently before your next step",
-          description: CONFIRM_DESCRIPTION,
-          "x-guidance": CONFIRM_DESCRIPTION,
+          summary: OPENAPI_CONFIRM_SUMMARY,
+          description: OPENAPI_CONFIRM_DESCRIPTION,
+          "x-guidance": OPENAPI_CONFIRM_DESCRIPTION,
           tags: ["Confirm", "lead_submit", "side-effect"],
           "x-payment-info": {
             price: {
@@ -111,13 +117,11 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
                     intent: {
                       type: "string",
                       enum: ["lead_submit", "listing_published", "order_placed"],
-                      description:
-                        "Confirm intent. lead_submit and listing_published are payable at $0.10. order_placed is payable at $0.25. Other values return 400 unsupported_intent after pay.",
+                      description: OPENAPI_CONFIRM_INTENT_DESCRIPTION,
                     },
                     claim: {
                       type: "object",
-                      description:
-                        "Optional. lead_submit ignores claim. listing_published may use claim.title / claim.sku / claim.id. order_placed may use claim.order_id / total / email_domain when present; never invents order ids.",
+                      description: OPENAPI_CONFIRM_CLAIM_DESCRIPTION,
                     },
                   },
                   required: ["url", "intent"],
@@ -139,7 +143,8 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
                 "unsupported_intent or invalid body. Payable intents: lead_submit, listing_published, order_placed.",
             },
             "402": {
-              description: "Payment Required",
+              description:
+                "Payment required, or payment_amount_insufficient when a $0.10 payment is reused for order_placed ($0.25).",
             },
           },
         },

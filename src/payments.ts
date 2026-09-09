@@ -29,6 +29,7 @@ import {
   encodePaymentRequired,
   paymentRequiredBody,
 } from "./x402-payload.js";
+import { rememberMockConfirmPayment, wrapFacilitatorForVerifiedAmount } from "./confirm-payment.js";
 import { wrapFacilitatorForCatalog } from "./facilitator-catalog.js";
 import { emitPaidCallAfterSettle, extractPayer } from "./paid-call.js";
 import { createStripeClient, recordSettledPayment } from "./stripe-record.js";
@@ -135,7 +136,7 @@ export function livePaymentMiddlewareFromServer(
 }
 
 export function resourceServerFromFacilitator(facilitatorClient: FacilitatorClient): x402ResourceServer {
-  return new x402ResourceServer(facilitatorClient)
+  return new x402ResourceServer(wrapFacilitatorForVerifiedAmount(facilitatorClient))
     .register(NETWORK, new ExactEvmScheme())
     .registerExtension(bazaarResourceServerExtension);
 }
@@ -176,6 +177,7 @@ function mockPaymentMiddleware(): MiddlewareHandler {
       c.req.header("x-payment") === MOCK_PAYMENT_HEADER;
 
     if (mock) {
+      rememberMockConfirmPayment();
       c.header("x-livecheck-settlement", "disabled");
       return next();
     }

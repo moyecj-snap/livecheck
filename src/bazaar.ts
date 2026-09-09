@@ -227,12 +227,12 @@ export const CONFIRM_INPUT_SCHEMA = {
       type: "string",
       enum: ["lead_submit", "listing_published", "order_placed"],
       description:
-        "Payable Confirm intents: lead_submit and listing_published at $0.10; order_placed at $0.25. Other values return 400 unsupported_intent after pay.",
+        "Payable: lead_submit ($0.10), listing_published ($0.10), order_placed ($0.25). listing_published claim.title/sku/id optional (match or veto; not required for L2). order_placed claim.order_id/total/etc optional; thank-you fluff alone never confirmed; durable order/confirmation/ref/ticket id required for confirmed. Other values → 400 unsupported_intent.",
     },
     claim: {
       type: "object",
       description:
-        "Optional. Not required. listing_published may match claim.title / sku / id. order_placed may use claim.order_id / total / email_domain when present; never invents order ids.",
+        "Optional. Not required. lead_submit ignores claim. listing_published: title/sku/id may match or veto; not required for L2. order_placed: order_id/total/email_domain may match or veto; never invents ids.",
     },
   },
   required: ["url", "intent"],

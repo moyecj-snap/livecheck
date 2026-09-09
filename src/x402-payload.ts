@@ -75,7 +75,8 @@ export function confirmPaymentRequiredBody(resourceUrl: string): PaymentRequired
     },
     // Route-level 402 is emitted before intent is parsed. $0.10 stays first
     // (lead_submit / listing_published). $0.25 lists order_placed as payable.
-    // Middleware cannot bind the paid amount to JSON intent on this shared route.
+    // After verify, the confirm handler rejects order_placed unless the
+    // matched accept is ≥ $0.25 (HTTP 402 payment_amount_insufficient).
     accepts: [accept(CONFIRM_PRICE_ATOMIC_USDC), accept(ORDER_PLACED_PRICE_ATOMIC_USDC)],
     extensions: confirmBazaarExtensions(),
   };

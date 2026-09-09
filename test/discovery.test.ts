@@ -7,6 +7,8 @@ import {
   CONFIRM_DESCRIPTION,
   MOCK_PAY_TO,
   NETWORK,
+  OPENAPI_CONFIRM_DESCRIPTION,
+  OPENAPI_CONFIRM_SUMMARY,
   PRICE_ATOMIC_USDC,
   PRICE_USD,
   VERIFY_DESCRIPTION,
@@ -60,8 +62,16 @@ type OpenApiDoc = {
           price?: { mode?: string; currency?: string; amount?: string };
         };
         requestBody?: {
-          content?: { "application/json"?: { schema?: { required?: string[] } } };
+          content?: {
+            "application/json"?: {
+              schema?: {
+                required?: string[];
+                properties?: { intent?: { description?: string; enum?: string[] } };
+              };
+            };
+          };
         };
+        responses?: { "402"?: { description?: string } };
       };
     };
   };
@@ -123,14 +133,21 @@ describe("discovery documents (mock gate)", () => {
     );
     const confirm = doc.paths?.["/v1/confirm"]?.post;
     assert.ok(confirm, "expected POST /v1/confirm");
-    assert.equal(confirm.summary, "Confirm lead_submit side effects independently before your next step");
-    assert.equal(confirm.description, CONFIRM_DESCRIPTION);
-    assert.equal(confirm["x-guidance"], CONFIRM_DESCRIPTION);
-    assert.match(confirm.description ?? "", /Livecheck/);
+    assert.equal(confirm.summary, OPENAPI_CONFIRM_SUMMARY);
+    assert.equal(confirm.description, OPENAPI_CONFIRM_DESCRIPTION);
+    assert.equal(confirm["x-guidance"], OPENAPI_CONFIRM_DESCRIPTION);
+    assert.notEqual(confirm.description, CONFIRM_DESCRIPTION);
+    assert.match(confirm.description ?? "", /order_placed \(\$0\.25\)/);
+    assert.match(confirm.description ?? "", /GET \/stats/);
     assert.deepEqual(confirm.tags, ["Confirm", "lead_submit", "side-effect"]);
     assert.notEqual(confirm.description, VERIFY_DESCRIPTION);
     assert.equal(confirm["x-payment-info"]?.price?.amount, "0.10");
     assert.deepEqual(confirm.requestBody?.content?.["application/json"]?.schema?.required, ["url", "intent"]);
+    assert.match(
+      confirm.requestBody?.content?.["application/json"]?.schema?.properties?.intent?.description ?? "",
+      /claim\.title\/sku\/id optional/,
+    );
+    assert.match(confirm.responses?.["402"]?.description ?? "", /payment_amount_insufficient/);
   });
 
   it("GET /.well-known/x402 is free 200 JSON listing the verify URL", async () => {

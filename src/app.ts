@@ -11,6 +11,13 @@ import {
   isLiveSettlement,
   missingLiveKeyNames,
 } from "./config.js";
+import {
+  assertConfirmPaymentCoversIntent,
+  InsufficientConfirmPaymentError,
+  resolveConfirmPayment,
+  underpaidOrderPlacedBody,
+  withConfirmPaymentContext,
+} from "./confirm-payment.js";
 import { confirmUrl, parseConfirmRequest, UnsupportedIntentError } from "./confirm.js";
 import { isEbayAdapterEnabled } from "./ebay.js";
 import { demoHtml } from "./demo-page.js";
@@ -19,6 +26,7 @@ import { FIXTURES } from "./fixtures.js";
 import { recordSuccessfulPaidCheck, withPaidCallContext } from "./paid-call.js";
 import { applyPaymentGate, settlementMode } from "./payments.js";
 import { publicConfirmUrl, publicVerifyUrl } from "./public-url.js";
+import { confirmPaymentRequiredBody, encodePaymentRequired } from "./x402-payload.js";
 import { isConfirmId } from "./confirm-id.js";
 import {
   livecheckKeysDocument,
@@ -33,6 +41,7 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
   const app = new Hono();
 
   app.use(withPaidCallContext());
+  app.use(withConfirmPaymentContext());
   app.use(paymentGate);
 
   app.get("/openapi.json", (c) => {
@@ -146,6 +155,7 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
     }
     try {
       const { url, intent, claim } = parseConfirmRequest(body);
+      assertConfirmPaymentCoversIntent(intent, resolveConfirmPayment({ get: (name) => c.req.header(name) }));
       const classified = await confirmUrl(url, fetch, new Date(), { intent, claim });
       const result = sealConfirmResult(classified, {
         intent,
@@ -162,6 +172,15 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
       });
       return c.json(result);
     } catch (error) {
+      if (error instanceof InsufficientConfirmPaymentError) {
+        const challenge = confirmPaymentRequiredBody(publicConfirmUrl(c.req.url, c.req.header("host")));
+        challenge.error = "payment_amount_insufficient";
+        return c.json(underpaidOrderPlacedBody(error), 402, {
+          "content-type": "application/json",
+          "cache-control": "no-store",
+          "payment-required": encodePaymentRequired(challenge),
+        });
+      }
       if (error instanceof UnsupportedIntentError) {
         return c.json({ error: "unsupported_intent", intent: error.intent ?? null }, 400);
       }

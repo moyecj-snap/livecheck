@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { serve } from "@hono/node-server";
 import { createApp } from "../src/app.js";
-import { CONFIRM_PRICE_USD } from "../src/config.js";
+import { CONFIRM_PRICE_USD, OPENAPI_CONFIRM_DESCRIPTION, OPENAPI_CONFIRM_INTENT_DESCRIPTION } from "../src/config.js";
 import { openApiDocument } from "../src/discovery.js";
 
 describe("GET /stats", () => {
@@ -77,10 +77,14 @@ describe("OpenAPI Confirm v1.0 spine", () => {
       paths?: {
         "/v1/confirm"?: {
           post?: {
+            description?: string;
+            "x-guidance"?: string;
             requestBody?: {
               content?: {
                 "application/json"?: {
-                  schema?: { properties?: { intent?: { enum?: string[] }; claim?: object } };
+                  schema?: {
+                    properties?: { intent?: { enum?: string[]; description?: string }; claim?: object };
+                  };
                 };
               };
             };
@@ -102,6 +106,13 @@ describe("OpenAPI Confirm v1.0 spine", () => {
     const intentEnum = doc.paths?.["/v1/confirm"]?.post?.requestBody?.content?.["application/json"]?.schema?.properties
       ?.intent?.enum;
     assert.deepEqual(intentEnum, ["lead_submit", "listing_published", "order_placed"]);
+    assert.equal(doc.paths?.["/v1/confirm"]?.post?.description, OPENAPI_CONFIRM_DESCRIPTION);
+    assert.equal(doc.paths?.["/v1/confirm"]?.post?.["x-guidance"], OPENAPI_CONFIRM_DESCRIPTION);
+    assert.equal(
+      doc.paths?.["/v1/confirm"]?.post?.requestBody?.content?.["application/json"]?.schema?.properties?.intent
+        ?.description,
+      OPENAPI_CONFIRM_INTENT_DESCRIPTION,
+    );
     assert.ok(
       doc.paths?.["/v1/confirm"]?.post?.requestBody?.content?.["application/json"]?.schema?.properties?.claim,
     );
