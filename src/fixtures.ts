@@ -321,6 +321,72 @@ const CONFIRM_ERROR_BANNER = `<!doctype html>
 </html>
 `;
 
+const ORDER_THANK_YOU_ID = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Order confirmation</title>
+</head>
+<body>
+  <h1>Thank you for your order</h1>
+  <p>Your order has been placed. Order number: ORD-18421</p>
+  <p>Order total: $42.00</p>
+</body>
+</html>
+`;
+
+const ORDER_THANK_YOU_ONLY = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Thanks for your order</title>
+</head>
+<body>
+  <h1>Thank you for your order</h1>
+  <p>We've received your order. A confirmation email is on the way.</p>
+</body>
+</html>
+`;
+
+const ORDER_PAYMENT_FAILED = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Payment failed</title>
+</head>
+<body>
+  <h1>Checkout failed</h1>
+  <p class="error">Your payment was declined. We could not process your payment.</p>
+</body>
+</html>
+`;
+
+const ORDER_CANCELLED = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Order cancelled</title>
+</head>
+<body>
+  <h1>Order cancelled</h1>
+  <p>Your order has been cancelled. No charge was made.</p>
+</body>
+</html>
+`;
+
+const ORDER_LOGINWALL = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Sign in to view your order</title>
+</head>
+<body>
+  <h1>Sign in to view your order</h1>
+  <p>Please log in to view this confirmation. Login required.</p>
+</body>
+</html>
+`;
+
 const PRODUCT_404 = `<!doctype html>
 <html lang="en">
 <head>
@@ -472,6 +538,36 @@ export const FIXTURES: Record<FixtureId, FixtureSpec> = {
     status: 200,
     body: CONFIRM_ERROR_BANNER,
     label: "Lead submit error / reject banner",
+  },
+  "confirm/order-thank-you-id": {
+    id: "confirm/order-thank-you-id",
+    status: 200,
+    body: ORDER_THANK_YOU_ID,
+    label: "Order thank-you page with order number ORD-18421",
+  },
+  "confirm/order-thank-you-only": {
+    id: "confirm/order-thank-you-only",
+    status: 200,
+    body: ORDER_THANK_YOU_ONLY,
+    label: "Order thank-you copy with no order id",
+  },
+  "confirm/order-payment-failed": {
+    id: "confirm/order-payment-failed",
+    status: 200,
+    body: ORDER_PAYMENT_FAILED,
+    label: "Payment declined / checkout failed banner",
+  },
+  "confirm/order-cancelled": {
+    id: "confirm/order-cancelled",
+    status: 200,
+    body: ORDER_CANCELLED,
+    label: "Order cancelled banner",
+  },
+  "confirm/order-loginwall": {
+    id: "confirm/order-loginwall",
+    status: 200,
+    body: ORDER_LOGINWALL,
+    label: "Login wall on an order confirmation URL",
   },
 };
 

@@ -14,14 +14,14 @@ export type VerifyVerdict = {
 
 export type ConfirmVerdictStatus = "confirmed" | "failed" | "unknown";
 
-export type ConfirmIntent = "lead_submit" | "listing_published";
+export type ConfirmIntent = "lead_submit" | "listing_published" | "order_placed";
 
 export type ConfirmEffect = {
   type: ConfirmIntent;
   id?: string;
 };
 
-/** v1.0 Confirm evidence scale. lead_submit confirmed is L2 (confirmation/ref/ticket id). listing_published confirmed is L2 (specific live listing + strong Verify signals). */
+/** v1.0 Confirm evidence scale. lead_submit / listing_published / order_placed confirmed stay L2 (independent id or strong listing signals). */
 export type EvidenceLevel = 0 | 1 | 2 | 3 | 4;
 
 export type ConfirmReceipt = {

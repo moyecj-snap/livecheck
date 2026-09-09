@@ -39,7 +39,12 @@ describe("GET /stats", () => {
           status?: string;
           l7d?: { paid_calls?: number; receipts?: number };
         };
-        order_placed?: unknown;
+        order_placed?: {
+          payable?: boolean;
+          price_usd?: number;
+          status?: string;
+          l7d?: { paid_calls?: number; receipts?: number };
+        };
       };
       benches?: { false_confirmed_rate?: unknown; note?: string };
     };
@@ -51,7 +56,9 @@ describe("GET /stats", () => {
     assert.equal(body.intents?.listing_published?.price_usd, CONFIRM_PRICE_USD);
     assert.equal(body.intents?.listing_published?.status, "payable");
     assert.equal(typeof body.intents?.listing_published?.l7d?.paid_calls, "number");
-    assert.equal(body.intents?.order_placed, undefined);
+    assert.equal(body.intents?.order_placed?.payable, true);
+    assert.equal(body.intents?.order_placed?.price_usd, 0.25);
+    assert.equal(body.intents?.order_placed?.status, "payable");
     assert.equal(body.benches?.false_confirmed_rate, null);
     assert.match(body.benches?.note ?? "", /not published/i);
   });
@@ -94,7 +101,7 @@ describe("OpenAPI Confirm v1.0 spine", () => {
     };
     const intentEnum = doc.paths?.["/v1/confirm"]?.post?.requestBody?.content?.["application/json"]?.schema?.properties
       ?.intent?.enum;
-    assert.deepEqual(intentEnum, ["lead_submit", "listing_published"]);
+    assert.deepEqual(intentEnum, ["lead_submit", "listing_published", "order_placed"]);
     assert.ok(
       doc.paths?.["/v1/confirm"]?.post?.requestBody?.content?.["application/json"]?.schema?.properties?.claim,
     );

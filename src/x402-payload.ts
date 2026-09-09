@@ -5,6 +5,7 @@ import {
   CONFIRM_RESOURCE_TAGS,
   CONFIRM_SERVICE_NAME,
   NETWORK,
+  ORDER_PLACED_PRICE_ATOMIC_USDC,
   PRICE_ATOMIC_USDC,
   USDC_BASE,
   USDC_EIP712,
@@ -72,7 +73,10 @@ export function confirmPaymentRequiredBody(resourceUrl: string): PaymentRequired
       serviceName: CONFIRM_SERVICE_NAME,
       tags: [...CONFIRM_RESOURCE_TAGS],
     },
-    accepts: [accept(CONFIRM_PRICE_ATOMIC_USDC)],
+    // Route-level 402 is emitted before intent is parsed. $0.10 stays first
+    // (lead_submit / listing_published). $0.25 lists order_placed as payable.
+    // Middleware cannot bind the paid amount to JSON intent on this shared route.
+    accepts: [accept(CONFIRM_PRICE_ATOMIC_USDC), accept(ORDER_PLACED_PRICE_ATOMIC_USDC)],
     extensions: confirmBazaarExtensions(),
   };
 }

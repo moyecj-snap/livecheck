@@ -5,6 +5,7 @@ import { publicConfirmUrl, publicOrigin, publicVerifyUrl } from "./public-url.js
 const OPENAPI_VERSION = "1.0.0";
 const OPENAPI_PRICE_AMOUNT = "0.01";
 const OPENAPI_CONFIRM_PRICE_AMOUNT = "0.10";
+const OPENAPI_ORDER_PLACED_PRICE_AMOUNT = "0.25";
 
 export function discoveryHeaders(): Record<string, string> {
   return {
@@ -87,6 +88,11 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
               currency: "USD",
               amount: OPENAPI_CONFIRM_PRICE_AMOUNT,
             },
+            intent_prices: {
+              lead_submit: OPENAPI_CONFIRM_PRICE_AMOUNT,
+              listing_published: OPENAPI_CONFIRM_PRICE_AMOUNT,
+              order_placed: OPENAPI_ORDER_PLACED_PRICE_AMOUNT,
+            },
             protocols: [{ x402: {} }],
           },
           requestBody: {
@@ -100,18 +106,18 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
                       type: "string",
                       format: "uri",
                       description:
-                        "Absolute http(s) URL. lead_submit: thank-you or result page. listing_published: the specific job, product, or eBay item URL claimed to be live.",
+                        "Absolute http(s) URL. lead_submit: thank-you or result page. listing_published: the specific job, product, or eBay item URL claimed to be live. order_placed: thank-you / confirmation / order-status page after checkout.",
                     },
                     intent: {
                       type: "string",
-                      enum: ["lead_submit", "listing_published"],
+                      enum: ["lead_submit", "listing_published", "order_placed"],
                       description:
-                        "Confirm intent. lead_submit and listing_published are payable at $0.10. order_placed and other values return 400 unsupported_intent.",
+                        "Confirm intent. lead_submit and listing_published are payable at $0.10. order_placed is payable at $0.25. Other values return 400 unsupported_intent after pay.",
                     },
                     claim: {
                       type: "object",
                       description:
-                        "Optional. lead_submit ignores claim. listing_published may use claim.title / claim.sku / claim.id; claim is not required if Verify alone reaches L2.",
+                        "Optional. lead_submit ignores claim. listing_published may use claim.title / claim.sku / claim.id. order_placed may use claim.order_id / total / email_domain when present; never invents order ids.",
                     },
                   },
                   required: ["url", "intent"],
@@ -130,7 +136,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
             },
             "400": {
               description:
-                "unsupported_intent or invalid body. order_placed is not a payable Confirm intent.",
+                "unsupported_intent or invalid body. Payable intents: lead_submit, listing_published, order_placed.",
             },
             "402": {
               description: "Payment Required",
@@ -176,7 +182,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
           operationId: "confirmStats",
           summary: "Confirm rolling counts",
           description:
-            "Free. lead_submit and listing_published rolling counts. No published false-confirmed rate. Not a payable route.",
+            "Free. lead_submit, listing_published, and order_placed rolling counts. No published false-confirmed rate. Not a payable route.",
           tags: ["Confirm"],
           responses: {
             "200": { description: "JSON stats (HTML when Accept: text/html)" },

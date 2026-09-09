@@ -1,0 +1,15 @@
+{
+  "n": 100,
+  "true_placed": 34,
+  "true_failed": 30,
+  "trap": 36,
+  "confirmed": 34,
+  "failed": 30,
+  "unknown": 36,
+  "false_confirmed": 0,
+  "expect_mismatches": 0,
+  "false_confirmed_ids": [],
+  "failures": [],
+  "fc_zero": true,
+  "path": "scripts/order-placed-bench.ts"
+}

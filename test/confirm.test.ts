@@ -105,7 +105,7 @@ describe("classifyLeadSubmit", () => {
 });
 
 describe("parseConfirmRequest", () => {
-  it("rejects intent other than lead_submit or listing_published as unsupported_intent", () => {
+  it("rejects intent other than payable Confirm intents as unsupported_intent", () => {
     assert.throws(
       () => parseConfirmRequest({ url: "https://example.com/thanks", intent: "booking" }),
       (error: unknown) =>
@@ -115,14 +115,9 @@ describe("parseConfirmRequest", () => {
     );
   });
 
-  it("rejects order_placed as unsupported_intent", () => {
-    assert.throws(
-      () => parseConfirmRequest({ url: "https://example.com/order/1", intent: "order_placed" }),
-      (error: unknown) =>
-        error instanceof UnsupportedIntentError &&
-        error.status === 400 &&
-        error.code === "unsupported_intent",
-    );
+  it("accepts order_placed", () => {
+    const parsed = parseConfirmRequest({ url: "https://example.com/order/1", intent: "order_placed" });
+    assert.equal(parsed.intent, "order_placed");
   });
 
   it("accepts listing_published without a claim", () => {
@@ -254,16 +249,17 @@ describe("confirmUrl + HTTP", () => {
     assert.equal(body.intent, "booking");
   });
 
-  it("POST /v1/confirm order_placed is 400 unsupported_intent after mock pay", async () => {
+  it("POST /v1/confirm order_placed is payable after mock pay", async () => {
     const res = await fetch(`${origin}/v1/confirm`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
-      body: JSON.stringify({ url: `${origin}/fixtures/confirm/thank-you-id`, intent: "order_placed" }),
+      body: JSON.stringify({ url: `${origin}/fixtures/confirm/order-thank-you-id`, intent: "order_placed" }),
     });
-    assert.equal(res.status, 400);
-    const body = (await res.json()) as { error?: string; intent?: unknown };
-    assert.equal(body.error, "unsupported_intent");
-    assert.equal(body.intent, "order_placed");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { verdict?: string; effect?: { type?: string }; price_usd?: number };
+    assert.equal(body.verdict, "confirmed");
+    assert.equal(body.effect?.type, "order_placed");
+    assert.equal(body.price_usd, 0.25);
   });
 
   it("unpaid POST /v1/confirm is 402 at $0.10 and does not use verify copy", async () => {

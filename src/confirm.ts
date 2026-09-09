@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { CONFIRM_PRICE_USD } from "./config.js";
 import { HUMAN_REVIEW_NEXT_STEP, applyConfirmedGate } from "./confirm-shared.js";
 import { classifyListingPublished, LISTING_PUBLISHED_INTENT } from "./listing-published.js";
+import { classifyOrderPlaced, ORDER_PLACED_INTENT } from "./order-placed.js";
 import type { ConfirmIntent, ConfirmResult, ConfirmVerdictStatus, EvidenceLevel, FetchedPage } from "./types.js";
 import { classify } from "./classify.js";
 import { isEbayAdapterEnabled, parseEbayItemUrl, verifyEbayItem } from "./ebay.js";
@@ -22,18 +23,29 @@ export class UnsupportedIntentError extends VerifyError {
   readonly intent: unknown;
 
   constructor(intent: unknown) {
-    super('unsupported_intent: only "lead_submit" and "listing_published" are accepted.', 400);
+    super(
+      'unsupported_intent: only "lead_submit", "listing_published", and "order_placed" are accepted.',
+      400,
+    );
     this.name = "UnsupportedIntentError";
     this.intent = intent;
   }
 }
 
 export const LEAD_SUBMIT_INTENT = "lead_submit" as const;
-export const PAYABLE_CONFIRM_INTENTS = [LEAD_SUBMIT_INTENT, LISTING_PUBLISHED_INTENT] as const;
+export const PAYABLE_CONFIRM_INTENTS = [
+  LEAD_SUBMIT_INTENT,
+  LISTING_PUBLISHED_INTENT,
+  ORDER_PLACED_INTENT,
+] as const;
 export type PayableConfirmIntent = (typeof PAYABLE_CONFIRM_INTENTS)[number];
 
 function isPayableConfirmIntent(value: unknown): value is PayableConfirmIntent {
-  return value === LEAD_SUBMIT_INTENT || value === LISTING_PUBLISHED_INTENT;
+  return (
+    value === LEAD_SUBMIT_INTENT ||
+    value === LISTING_PUBLISHED_INTENT ||
+    value === ORDER_PLACED_INTENT
+  );
 }
 
 const FAILED_PHRASES = [
@@ -172,7 +184,7 @@ export type ConfirmRequest = {
 export function parseConfirmRequest(body: unknown): ConfirmRequest {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new VerifyError(
-      'JSON body must include { "url": "https://...", "intent": "lead_submit" | "listing_published" }.',
+      'JSON body must include { "url": "https://...", "intent": "lead_submit" | "listing_published" | "order_placed" }.',
     );
   }
   const record = body as { url?: unknown; intent?: unknown; claim?: unknown };
@@ -365,5 +377,8 @@ export async function confirmUrl(
   }
   const { fetchImpl, cookiesUsed } = cookielessFetch(fetcher);
   const page = await fetchPage(url, fetchImpl);
+  if (intent === ORDER_PLACED_INTENT) {
+    return classifyOrderPlaced(page, { cookiesUsed: cookiesUsed(), now, claim: options.claim });
+  }
   return classifyLeadSubmit(page, { cookiesUsed: cookiesUsed(), now });
 }

@@ -4,6 +4,8 @@ import {
   CONFIRM_DESCRIPTION,
   CONFIRM_PRICE_ATOMIC_USDC,
   CONFIRM_PRICE_USD,
+  ORDER_PLACED_PRICE_ATOMIC_USDC,
+  ORDER_PLACED_PRICE_USD,
   CONFIRM_RESOURCE_TAGS,
   CONFIRM_SERVICE_NAME,
   DEFAULT_PORT,
@@ -48,6 +50,8 @@ describe("listing price and description", () => {
     );
     assert.equal(CONFIRM_PRICE_USD, 0.1);
     assert.equal(CONFIRM_PRICE_ATOMIC_USDC, "100000");
+    assert.equal(ORDER_PLACED_PRICE_USD, 0.25);
+    assert.equal(ORDER_PLACED_PRICE_ATOMIC_USDC, "250000");
     assert.equal(
       CONFIRM_DESCRIPTION,
       "Livecheck Confirm — use after your agent submits a lead/contact form (intent=lead_submit): POST {url, intent} where url is the thank-you or result page. Returns confirmed|failed|unknown with Level-2+ evidence (confirmation/ref/ticket id required for confirmed). Independent cookieless verifier — actor ≠ verifier — so you do not grade your own homework before the next paid or irreversible step. Not URL/stock liveness (use /v1/verify), not payment/tx settlement, not a thank-you-page classifier.",

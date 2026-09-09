@@ -6,6 +6,15 @@ export const CONFIRM_PRICE_USD = 0.1;
 export const CONFIRM_PRICE_LABEL = "$0.10";
 /** $0.10 USDC at 6 decimals = 100000 atomic. */
 export const CONFIRM_PRICE_ATOMIC_USDC = "100000";
+/** order_placed only. lead_submit / listing_published stay $0.10. */
+export const ORDER_PLACED_PRICE_USD = 0.25;
+export const ORDER_PLACED_PRICE_LABEL = "$0.25";
+/** $0.25 USDC at 6 decimals = 250000 atomic. */
+export const ORDER_PLACED_PRICE_ATOMIC_USDC = "250000";
+
+export function confirmIntentPriceUsd(intent: string): number {
+  return intent === "order_placed" ? ORDER_PLACED_PRICE_USD : CONFIRM_PRICE_USD;
+}
 export const CONFIRM_DESCRIPTION =
   "Livecheck Confirm — use after your agent submits a lead/contact form (intent=lead_submit): POST {url, intent} where url is the thank-you or result page. Returns confirmed|failed|unknown with Level-2+ evidence (confirmation/ref/ticket id required for confirmed). Independent cookieless verifier — actor ≠ verifier — so you do not grade your own homework before the next paid or irreversible step. Not URL/stock liveness (use /v1/verify), not payment/tx settlement, not a thank-you-page classifier.";
 /** x402 ResourceInfo / RouteConfig — Confirm only, so CDP can find Confirm under Livecheck. */

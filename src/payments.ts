@@ -14,6 +14,7 @@ import {
   CONFIRM_SERVICE_NAME,
   MOCK_PAYMENT_HEADER,
   NETWORK,
+  ORDER_PLACED_PRICE_LABEL,
   PRICE_LABEL,
   VERIFY_DESCRIPTION,
   isLiveSettlement,
@@ -61,6 +62,12 @@ export function verifyPaymentRoutes(payTo: string): RoutesConfig {
         {
           scheme: "exact" as const,
           price: CONFIRM_PRICE_LABEL,
+          network: NETWORK as `${string}:${string}`,
+          payTo,
+        },
+        {
+          scheme: "exact" as const,
+          price: ORDER_PLACED_PRICE_LABEL,
           network: NETWORK as `${string}:${string}`,
           payTo,
         },

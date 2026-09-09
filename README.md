@@ -2,7 +2,7 @@
 
 Before you scrape a listing, check if it is still there. POST a specific job posting, Shopify or HTML product URL, or eBay item URL. Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404). Product pages are HTML-only (Shopify-class add-to-cart / sold-out); eBay item URLs use Browse availability, not sold comps. Not a search engine. $0.01 USDC per check on Base via x402.
 
-This is a per-check agent API, not a platform. Agents pay **$0.01 USDC** per `POST /v1/verify` and **$0.10 USDC** per `POST /v1/confirm` on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md).
+This is a per-check agent API, not a platform. Agents pay **$0.01 USDC** per `POST /v1/verify` and **$0.10 USDC** per `POST /v1/confirm` (`lead_submit` / `listing_published`) or **$0.25 USDC** for `intent=order_placed` on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md).
 
 ## What you get
 
@@ -37,9 +37,9 @@ After payment verifies and settles:
 
 v1 reads HTML + status only. It does not execute page JavaScript. Redirects are followed; `canonical_url` is the final URL. User-Agent identifies Livecheck.
 
-Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, `GET /.well-known/x402`, `GET /.well-known/livecheck-keys.json`, `GET /stats`, and `GET /v1/receipt/{id}`. Paid: `POST /v1/verify` ($0.01) and `POST /v1/confirm` ($0.10). `GET /v1/judge` is a 501 stub.
+Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, `GET /.well-known/x402`, `GET /.well-known/livecheck-keys.json`, `GET /stats`, and `GET /v1/receipt/{id}`. Paid: `POST /v1/verify` ($0.01) and `POST /v1/confirm` ($0.10 for lead_submit / listing_published; $0.25 for order_placed). `GET /v1/judge` is a 501 stub.
 
-Agent crawlers (x402scan, AgentCash, Circle OpenAPI discovery) read the free JSON docs. `GET /openapi.json` is the canonical contract: `POST /v1/verify` with JSON `{ "url": "https://..." }`, `x-payment-info` fixed **$0.01** USD (decimal; runtime 402 `accepts[].amount` stays `"10000"` atomic USDC), and a 200 schema of `live | closed | unknown`. It also lists `POST /v1/confirm` at **$0.10** USD (`"100000"` atomic). `GET /.well-known/x402` lists both `https://livecheck.fly.dev/v1/verify` and `https://livecheck.fly.dev/v1/confirm`. Neither discovery route returns 402.
+Agent crawlers (x402scan, AgentCash, Circle OpenAPI discovery) read the free JSON docs. `GET /openapi.json` is the canonical contract: `POST /v1/verify` with JSON `{ "url": "https://..." }`, `x-payment-info` fixed **$0.01** USD (decimal; runtime 402 `accepts[].amount` stays `"10000"` atomic USDC), and a 200 schema of `live | closed | unknown`. It also lists `POST /v1/confirm` at **$0.10** USD (`"100000"` atomic) for `lead_submit` / `listing_published`, and documents `order_placed` at **$0.25** (`"250000"` atomic) via `x-payment-info.intent_prices`. `GET /.well-known/x402` lists both `https://livecheck.fly.dev/v1/verify` and `https://livecheck.fly.dev/v1/confirm`. Neither discovery route returns 402.
 
 Unpaid `POST /v1/verify` includes x402 v2 Bazaar discovery metadata (`extensions.bazaar` via `bazaarResourceServerExtension` + `declareDiscoveryExtension`). Listing in [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) is free to browse; CDP catalogs this route after a successful paid request that carries the extension. The 402 `resource.description` (and health `description`) is: Before you scrape a job posting, Shopify or HTML product page, or eBay item, POST the specific URL you already have and Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404); not a search engine.
 
@@ -72,7 +72,7 @@ curl -sS -D - -o /dev/null https://livecheck.fly.dev/v1/verify \
 
 Livecheck Confirm — use after your agent submits a lead/contact form (intent=lead_submit): POST {url, intent} where url is the thank-you or result page. Returns confirmed|failed|unknown with Level-2+ evidence (confirmation/ref/ticket id required for confirmed). Independent cookieless verifier — actor ≠ verifier — so you do not grade your own homework before the next paid or irreversible step. Not URL/stock liveness (use /v1/verify), not payment/tx settlement, not a thank-you-page classifier.
 
-Payable Confirm intents are **`lead_submit`** and **`listing_published`**. Price is **$0.10 USDC** (`100000` atomic) for either. `/v1/verify` stays **$0.01**. `order_placed` is still **400 `unsupported_intent`**. Bazaar 402 copy stays lead_submit-primary until CoS publishes a false-confirmed rate.
+Payable Confirm intents are **`lead_submit`** ($0.10), **`listing_published`** ($0.10), and **`order_placed`** ($0.25). `/v1/verify` stays **$0.01**. Bazaar 402 copy stays lead_submit-primary until CoS publishes a false-confirmed rate. Do not treat OpenAPI/x402 listing `order_placed` as a Bazaar marketing ad.
 
 ```http
 POST /v1/confirm
@@ -84,6 +84,11 @@ Content-Type: application/json
 `claim` is optional (not required). After payment:
 
 - **lead_submit confirmed** — Level 2 only: extractable confirmation/ref/ticket/lead id, or a unique token in the confirmation URL. Thank-you copy alone is never confirmed. `evidence_level` is 2 and `confidence` is ≥ 0.90 (lead_submit L2 uses 0.92).
+- **order_placed** — caller claims an order was placed; `url` is typically a thank-you / confirmation / order-status page after checkout. Optional `claim.order_id` / `claim.total` / `claim.email_domain` may match or veto; they are never invented. Mapping:
+  - Independent order / confirmation / receipt / ref / ticket id on the page or confirmation URL → `confirmed` only if `evidence_level≥2` and `confidence≥0.90`
+  - Explicit payment failed / declined / cancelled banners → `failed`
+  - Thank-you fluff only, login walls, challenge pages, cookies, or ambiguous status → `unknown` (`next_step` → `/v1/judge` stub)
+  - Honesty: prefer unknown over a false confirmed. Never invent order ids.
 - **listing_published** — caller claims a specific job, product, or eBay item URL is still published/live. Reuses the Verify pipeline (cookieless HTML / Shopify-class stock / ATS / eBay Browse). Mapping:
   - Verify `live` with a strong independent signal (`in-stock`, `apply form present`, or `ebay-in-stock`) on a specific listing URL → `confirmed` only if `evidence_level≥2` and `confidence≥0.90`
   - Explicitly closed / sold-out / ATS empty / 404 → `failed`
@@ -96,13 +101,15 @@ Content-Type: application/json
 Successful JSON is additive on the v0 fields (`verdict`, `effect`, `signals`, `evidence_strength`, `evidence_id`, …):
 
 - `id` — stable `cfm_` + ULID
-- `evidence_level` — 0–4 (lead_submit and listing_published confirmed stay L2)
+- `evidence_level` — 0–4 (lead_submit, listing_published, and order_placed confirmed stay L2)
 - `confidence` — 0–1
 - `receipt` — `{ hash, verify_url }` always; `signature` + `signer` when `CONFIRM_RECEIPT_PRIVATE_KEY` is set
 
-Unknown intents (including `order_placed`) return HTTP **400** `{ "error": "unsupported_intent" }`. OpenAPI / x402 document `listing_published` as payable once the handler is live. Do not treat Bazaar marketing copy as a GA listing_published ad.
+Unknown intents return HTTP **400** `{ "error": "unsupported_intent" }` after pay. OpenAPI / x402 document `order_placed` as payable at $0.25 once the handler is live. Do not treat Bazaar marketing copy as a GA order_placed ad.
 
-Free Confirm extras: `GET /v1/receipt/{id}`, `GET /.well-known/livecheck-keys.json`, `GET /stats` (JSON; HTML if `Accept: text/html`). `GET /stats` publishes lead_submit and listing_published rolling counts and explicitly **null** false-confirmed rate (no published bench number on the live route). Local honesty bench: `npm run bench:listing-published` (gate: `false_confirmed = 0`).
+**Payment caveat (multi-price on one route):** `@x402/hono` prices the *route*, not the JSON `intent`. Unpaid `POST /v1/confirm` therefore 402s before intent validation. The 402 `accepts[]` lists **$0.10 first** (lead_submit / listing_published) and **$0.25 second** (order_placed). A client that pays $0.10 can still send `order_placed` after settle; this phase does not re-check the settled amount against intent. Mock pay (`X-Livecheck-Mock: 1`) bypasses amount entirely. Successful JSON still returns `price_usd: 0.25` for `order_placed`.
+
+Free Confirm extras: `GET /v1/receipt/{id}`, `GET /.well-known/livecheck-keys.json`, `GET /stats` (JSON; HTML if `Accept: text/html`). `GET /stats` publishes lead_submit, listing_published, and order_placed rolling counts and explicitly **null** false-confirmed rate (no published bench number on the live route). Local honesty benches: `npm run bench:listing-published` and `npm run bench:order-placed` (gate: `false_confirmed = 0`).
 
 ### Signed receipts
 
@@ -351,7 +358,7 @@ Each successful paid `POST /v1/verify` and `POST /v1/confirm` writes **one** str
 {"event":"livecheck.paid_call","route":"verify","status":"live","host":"boards.greenhouse.io","url_hash":"…","payer":"0x…","tx":"0x…","payment_intent":"pi_…","ts":"2026-09-06T20:34:00Z"}
 ```
 
-Confirm lines add `intent` (`lead_submit` or `listing_published`) and `verdict` instead of `status`. Privacy rule: **never** log or store raw query strings, emails, or full URLs — hostname + SHA-256 of the full URL only. `payer` / `tx` / `payment_intent` are omitted when missing (mock/dev).
+Confirm lines add `intent` (`lead_submit`, `listing_published`, or `order_placed`) and `verdict` instead of `status`. Privacy rule: **never** log or store raw query strings, emails, or full URLs — hostname + SHA-256 of the full URL only. `payer` / `tx` / `payment_intent` are omitted when missing (mock/dev).
 
 Retained columns (SQLite `paid_calls` at `PAID_CALL_DB_PATH`, default `/data/paid-calls.sqlite` on Fly): `ts`, `route` (`verify` | `confirm`), `payer`, `tx`, `payment_intent`, `host`, `url_sha256` (same digest as log `url_hash`).
 
