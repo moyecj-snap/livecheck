@@ -90,7 +90,7 @@ describe("live @x402/hono 402 (decoded payment-required)", () => {
     assertInfoInputMatchesSchema(extensions.bazaar, "live @x402/hono 402");
   });
 
-  it("confirm 402 uses Livecheck Confirm copy plus resource tags", async () => {
+  it("confirm 402 uses Livecheck Confirm copy (verify-shaped resource fields)", async () => {
     const res = await fetch(`${origin}/v1/confirm`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -107,8 +107,6 @@ describe("live @x402/hono 402 (decoded payment-required)", () => {
     assert.equal(resource.url, "https://livecheck.fly.dev/v1/confirm");
     assert.equal(resource.description, CONFIRM_DESCRIPTION);
     assert.match(resource.description ?? "", /Livecheck/);
-    assert.equal(resource.serviceName, "Livecheck");
-    assert.deepEqual(resource.tags, ["livecheck", "confirm"]);
     assert.notEqual(resource.description, VERIFY_DESCRIPTION);
   });
 });

@@ -2,8 +2,6 @@ import { confirmBazaarExtensions, verifyBazaarExtensions } from "./bazaar.js";
 import {
   CONFIRM_DESCRIPTION,
   CONFIRM_PRICE_ATOMIC_USDC,
-  CONFIRM_RESOURCE_TAGS,
-  CONFIRM_SERVICE_NAME,
   NETWORK,
   PRICE_ATOMIC_USDC,
   USDC_BASE,
@@ -69,8 +67,6 @@ export function confirmPaymentRequiredBody(resourceUrl: string): PaymentRequired
       url: resourceUrl,
       description: CONFIRM_DESCRIPTION,
       mimeType: "application/json",
-      serviceName: CONFIRM_SERVICE_NAME,
-      tags: [...CONFIRM_RESOURCE_TAGS],
     },
     // Hotfix 2026-09-09: single $0.10 accept only. Dual accepts broke CDP
     // facilitator verify (paymentPayload invalid) with purl 0.2.8.
@@ -123,8 +119,6 @@ export function advertisePaymentRequired(
           url: publicConfirmUrl(requestUrl, host),
           description: CONFIRM_DESCRIPTION,
           mimeType: "application/json",
-          serviceName: CONFIRM_SERVICE_NAME,
-          tags: [...CONFIRM_RESOURCE_TAGS],
         }
       : {
           ...existingResource,

@@ -279,8 +279,6 @@ describe("confirmUrl + HTTP", () => {
     assert.match(decoded.resource?.description ?? "", /Livecheck/);
     assert.notEqual(decoded.resource?.description, VERIFY_DESCRIPTION);
     assert.match(decoded.resource?.url ?? "", /\/v1\/confirm$/);
-    assert.equal(decoded.resource?.serviceName, "Livecheck");
-    assert.deepEqual(decoded.resource?.tags, ["livecheck", "confirm"]);
   });
 
   it("POST /v1/verify is still $0.01", async () => {

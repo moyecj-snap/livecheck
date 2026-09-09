@@ -10,8 +10,6 @@ import { confirmBazaarExtensions, verifyBazaarExtensions } from "./bazaar.js";
 import {
   CONFIRM_DESCRIPTION,
   CONFIRM_PRICE_LABEL,
-  CONFIRM_RESOURCE_TAGS,
-  CONFIRM_SERVICE_NAME,
   MOCK_PAYMENT_HEADER,
   NETWORK,
   PRICE_LABEL,
@@ -71,8 +69,8 @@ export function verifyPaymentRoutes(payTo: string): RoutesConfig {
       ],
       description: CONFIRM_DESCRIPTION,
       mimeType: "application/json",
-      serviceName: CONFIRM_SERVICE_NAME,
-      tags: [...CONFIRM_RESOURCE_TAGS],
+      // Hotfix: omit serviceName/tags — verify settles; confirm with these
+      // fields still got CDP facilitator paymentPayload 400 with purl 0.2.8.
       resource: publicConfirmUrl(),
       extensions: confirmBazaarExtensions(),
     },
