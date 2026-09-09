@@ -242,7 +242,7 @@ describe("order_placed HTTP + regressions", () => {
     const body = (await res.json()) as { error?: string; intent?: unknown; use?: string };
     assert.equal(body.error, "unsupported_intent");
     assert.equal(body.intent, "order_placed");
-    assert.equal(body.use, "/v1/confirm/order");
+    assert.equal(body.use, "/v1/confirm/order ($0.25)");
   });
 
   it("POST /v1/confirm/order rejects lead_submit after mock pay", async () => {
@@ -255,7 +255,7 @@ describe("order_placed HTTP + regressions", () => {
     const body = (await res.json()) as { error?: string; intent?: unknown; use?: string };
     assert.equal(body.error, "unsupported_intent");
     assert.equal(body.intent, "lead_submit");
-    assert.equal(body.use, "/v1/confirm");
+    assert.equal(body.use, "/v1/confirm ($0.10)");
   });
 
   it("lead_submit regression: thank-you + id still confirmed at $0.10", async () => {

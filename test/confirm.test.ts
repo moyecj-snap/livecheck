@@ -134,7 +134,7 @@ describe("parseConfirmRequest", () => {
       (error: unknown) =>
         error instanceof UnsupportedIntentError &&
         error.intent === "order_placed" &&
-        error.use === "/v1/confirm/order",
+        error.use === "/v1/confirm/order ($0.25)",
     );
   });
 
@@ -144,7 +144,7 @@ describe("parseConfirmRequest", () => {
       (error: unknown) =>
         error instanceof UnsupportedIntentError &&
         error.intent === "lead_submit" &&
-        error.use === "/v1/confirm",
+        error.use === "/v1/confirm ($0.10)",
     );
   });
 
@@ -287,7 +287,7 @@ describe("confirmUrl + HTTP", () => {
     const body = (await res.json()) as { error?: string; intent?: unknown; use?: string };
     assert.equal(body.error, "unsupported_intent");
     assert.equal(body.intent, "order_placed");
-    assert.equal(body.use, "/v1/confirm/order");
+    assert.equal(body.use, "/v1/confirm/order ($0.25)");
   });
 
   it("unpaid POST /v1/confirm is 402 at $0.10 and does not use verify copy", async () => {

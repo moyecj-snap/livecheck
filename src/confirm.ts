@@ -190,13 +190,13 @@ export type ConfirmRequest = {
 
 function hintForUnsupportedIntent(intent: unknown, allowed: readonly string[]): string | undefined {
   if (intent === ORDER_PLACED_INTENT && !allowed.includes(ORDER_PLACED_INTENT)) {
-    return "/v1/confirm/order";
+    return "/v1/confirm/order ($0.25)";
   }
   if (
     (intent === LEAD_SUBMIT_INTENT || intent === LISTING_PUBLISHED_INTENT) &&
     !allowed.includes(intent)
   ) {
-    return "/v1/confirm";
+    return "/v1/confirm ($0.10)";
   }
   return undefined;
 }

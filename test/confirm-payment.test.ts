@@ -146,7 +146,7 @@ describe("underpaid order_placed HTTP", () => {
     const body = (await res.json()) as { error?: string; intent?: string; use?: string };
     assert.equal(body.error, "unsupported_intent");
     assert.equal(body.intent, "order_placed");
-    assert.equal(body.use, "/v1/confirm/order");
+    assert.equal(body.use, "/v1/confirm/order ($0.25)");
   });
 
   it("still runs lead_submit and listing_published after a $0.10 settle", async () => {
