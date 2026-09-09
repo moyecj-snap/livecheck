@@ -3,7 +3,13 @@ import { after, before, describe, it } from "node:test";
 import { serve } from "@hono/node-server";
 import type { FacilitatorClient } from "@x402/core/server";
 import { createApp } from "../src/app.js";
-import { CONFIRM_PAYMENT_DESCRIPTION, MOCK_PAY_TO, NETWORK, VERIFY_DESCRIPTION } from "../src/config.js";
+import {
+  CONFIRM_PAYMENT_DESCRIPTION,
+  MOCK_PAY_TO,
+  NETWORK,
+  ORDER_PAYMENT_DESCRIPTION,
+  VERIFY_DESCRIPTION,
+} from "../src/config.js";
 import { livePaymentMiddlewareFromServer, resourceServerFromFacilitator } from "../src/payments.js";
 import { advertisePaymentRequired, decodePaymentRequired } from "../src/x402-payload.js";
 import { assertInfoInputMatchesSchema } from "./bazaar-schema.js";
@@ -108,6 +114,27 @@ describe("live @x402/hono 402 (decoded payment-required)", () => {
     assert.equal(resource.description, CONFIRM_PAYMENT_DESCRIPTION);
     assert.match(resource.description ?? "", /Livecheck/);
     assert.notEqual(resource.description, VERIFY_DESCRIPTION);
+    const accepts = decoded.accepts as Array<{ amount?: string; extra?: { name?: string; version?: string } }>;
+    assert.equal(accepts.length, 1);
+    assert.equal(accepts[0]?.amount, "100000");
+    assert.deepEqual(accepts[0]?.extra, { name: "USD Coin", version: "2" });
+  });
+
+  it("confirm/order 402 is one $0.25 accept with verify-shaped extra", async () => {
+    const res = await fetch(`${origin}/v1/confirm/order`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: "https://shop.example.com/thank-you", intent: "order_placed" }),
+    });
+    assert.equal(res.status, 402);
+    const decoded = decode402(res);
+    const resource = decoded.resource as { url?: string; description?: string };
+    assert.equal(resource.url, "https://livecheck.fly.dev/v1/confirm/order");
+    assert.equal(resource.description, ORDER_PAYMENT_DESCRIPTION);
+    const accepts = decoded.accepts as Array<{ amount?: string; extra?: { name?: string; version?: string } }>;
+    assert.equal(accepts.length, 1);
+    assert.equal(accepts[0]?.amount, "250000");
+    assert.deepEqual(accepts[0]?.extra, { name: "USD Coin", version: "2" });
   });
 });
 
@@ -148,6 +175,45 @@ describe("live 402 with FLY_APP_NAME and an http request URL", () => {
 });
 
 describe("advertisePaymentRequired on a production-shaped 402", () => {
+  it("does not change payment-requirements matching fields on accepts[]", () => {
+    const accepts = [
+      {
+        scheme: "exact",
+        network: NETWORK,
+        amount: "100000",
+        asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        payTo: MOCK_PAY_TO,
+        maxTimeoutSeconds: 60,
+        extra: { name: "USD Coin", version: "2" },
+      },
+    ];
+    const previousPublic = process.env.LIVECHECK_PUBLIC_URL;
+    process.env.LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev";
+    try {
+      const decoded = advertisePaymentRequired(
+        {
+          x402Version: 2,
+          error: "Payment required",
+          resource: {
+            url: "https://livecheck.fly.dev/v1/confirm",
+            description: CONFIRM_PAYMENT_DESCRIPTION,
+            mimeType: "application/json",
+          },
+          accepts: structuredClone(accepts),
+        },
+        "https://livecheck.fly.dev/v1/confirm",
+        "livecheck.fly.dev",
+      );
+      assert.deepEqual(decoded.accepts, accepts);
+      const resource = decoded.resource as { url: string; description: string };
+      assert.equal(resource.url, "https://livecheck.fly.dev/v1/confirm");
+      assert.equal(resource.description, CONFIRM_PAYMENT_DESCRIPTION);
+    } finally {
+      if (previousPublic === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
+      else process.env.LIVECHECK_PUBLIC_URL = previousPublic;
+    }
+  });
+
   it("upgrades the decoded http Fly 402 to https + bazaar + agent description", () => {
     const previousPublic = process.env.LIVECHECK_PUBLIC_URL;
     const previousFly = process.env.FLY_APP_NAME;

@@ -1,11 +1,12 @@
-import { confirmBazaarExtensions, verifyBazaarExtensions } from "./bazaar.js";
+import { confirmBazaarExtensions, orderConfirmBazaarExtensions, verifyBazaarExtensions } from "./bazaar.js";
 import {
   CONFIRM_DESCRIPTION,
   CONFIRM_RESOURCE_TAGS,
   CONFIRM_SERVICE_NAME,
+  ORDER_PAYMENT_DESCRIPTION,
   VERIFY_DESCRIPTION,
 } from "./config.js";
-import { publicConfirmUrl, publicVerifyUrl } from "./public-url.js";
+import { publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl } from "./public-url.js";
 
 export type CatalogResourceInfo = {
   url: string;
@@ -24,7 +25,16 @@ export type PaymentEnvelope = {
   [key: string]: unknown;
 };
 
-export function advertisedResourceInfo(kind: "verify" | "confirm" = "verify"): CatalogResourceInfo {
+export function advertisedResourceInfo(
+  kind: "verify" | "confirm" | "confirm_order" = "verify",
+): CatalogResourceInfo {
+  if (kind === "confirm_order") {
+    return {
+      url: publicConfirmOrderUrl(),
+      description: ORDER_PAYMENT_DESCRIPTION,
+      mimeType: "application/json",
+    };
+  }
   if (kind === "confirm") {
     return {
       url: publicConfirmUrl(),
@@ -41,7 +51,8 @@ export function advertisedResourceInfo(kind: "verify" | "confirm" = "verify"): C
   };
 }
 
-function resourceKindFromUrl(url: string | undefined): "verify" | "confirm" {
+function resourceKindFromUrl(url: string | undefined): "verify" | "confirm" | "confirm_order" {
+  if (url && /\/v1\/confirm\/order\/?(\?|$)/i.test(url)) return "confirm_order";
   if (url && /\/v1\/confirm\/?(\?|$)/i.test(url)) return "confirm";
   return "verify";
 }
@@ -94,7 +105,12 @@ export function fillCatalogPaymentPayload(payload: PaymentEnvelope): {
   }
 
   if (bazaarFilled) {
-    const bazaar = kind === "confirm" ? confirmBazaarExtensions() : verifyBazaarExtensions();
+    const bazaar =
+      kind === "confirm_order"
+        ? orderConfirmBazaarExtensions()
+        : kind === "confirm"
+          ? confirmBazaarExtensions()
+          : verifyBazaarExtensions();
     next.extensions = {
       ...bazaar,
       ...(payload.extensions && typeof payload.extensions === "object" ? payload.extensions : {}),

@@ -98,8 +98,8 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
       note: BENCH_NOTE,
     },
     notes: [
-      "Payable Confirm intents: lead_submit (GA, $0.10), listing_published ($0.10), and order_placed ($0.25).",
-      "Bazaar 402 copy stays lead_submit-primary. order_placed is documented on OpenAPI/x402, not advertised as the Confirm hero.",
+      "Payable Confirm intents: lead_submit (GA, $0.10) and listing_published ($0.10) on POST /v1/confirm; order_placed ($0.25) on POST /v1/confirm/order.",
+      "Bazaar 402 copy stays lead_submit-primary on /v1/confirm. order_placed is a separate fixed-price resource.",
       "lead_submit paid_calls are confirm-route volume. listing_published and order_placed paid_calls placeholders are receipt-backed until paid_calls rows store intent.",
     ],
   };

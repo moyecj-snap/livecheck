@@ -107,7 +107,15 @@ describe("OpenAPI Confirm v1.0 spine", () => {
     };
     const intentEnum = doc.paths?.["/v1/confirm"]?.post?.requestBody?.content?.["application/json"]?.schema?.properties
       ?.intent?.enum;
-    assert.deepEqual(intentEnum, ["lead_submit", "listing_published", "order_placed"]);
+    assert.deepEqual(intentEnum, ["lead_submit", "listing_published"]);
+    const orderEnum = (
+      doc.paths as {
+        "/v1/confirm/order"?: {
+          post?: { requestBody?: { content?: { "application/json"?: { schema?: { properties?: { intent?: { enum?: string[] } } } } } } };
+        };
+      }
+    )["/v1/confirm/order"]?.post?.requestBody?.content?.["application/json"]?.schema?.properties?.intent?.enum;
+    assert.deepEqual(orderEnum, ["order_placed"]);
     assert.equal(doc.paths?.["/v1/confirm"]?.post?.description, OPENAPI_CONFIRM_DESCRIPTION);
     assert.equal(doc.paths?.["/v1/confirm"]?.post?.["x-guidance"], OPENAPI_CONFIRM_DESCRIPTION);
     assert.equal(

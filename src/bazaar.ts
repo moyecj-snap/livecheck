@@ -1,5 +1,11 @@
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
-import { CONFIRM_DESCRIPTION, CONFIRM_PRICE_USD, PRICE_USD, VERIFY_DESCRIPTION } from "./config.js";
+import {
+  CONFIRM_DESCRIPTION,
+  CONFIRM_PRICE_USD,
+  ORDER_PLACED_PRICE_USD,
+  PRICE_USD,
+  VERIFY_DESCRIPTION,
+} from "./config.js";
 
 export const VERIFY_EXAMPLE = {
   url: "https://boards.greenhouse.io/example/jobs/1842",
@@ -221,23 +227,66 @@ export const CONFIRM_INPUT_SCHEMA = {
     url: {
       type: "string",
       description:
-        "Absolute http(s) URL. lead_submit: thank-you or result page. listing_published: specific job, product, or eBay item URL. order_placed: thank-you / confirmation / order-status page after checkout.",
+        "Absolute http(s) URL. lead_submit: thank-you or result page. listing_published: specific job, product, or eBay item URL.",
     },
     intent: {
       type: "string",
-      enum: ["lead_submit", "listing_published", "order_placed"],
+      enum: ["lead_submit", "listing_published"],
       description:
-        "Payable: lead_submit ($0.10), listing_published ($0.10), order_placed ($0.25). listing_published claim.title/sku/id optional (match or veto; not required for L2). order_placed claim.order_id/total/etc optional; thank-you fluff alone never confirmed; durable order/confirmation/ref/ticket id required for confirmed. Other values → 400 unsupported_intent.",
+        "Payable on POST /v1/confirm: lead_submit ($0.10), listing_published ($0.10). listing_published claim.title/sku/id optional. order_placed uses POST /v1/confirm/order.",
     },
     claim: {
       type: "object",
       description:
-        "Optional. Not required. lead_submit ignores claim. listing_published: title/sku/id may match or veto; not required for L2. order_placed: order_id/total/email_domain may match or veto; never invents ids.",
+        "Optional. Not required. lead_submit ignores claim. listing_published: title/sku/id may match or veto; not required for L2.",
     },
   },
   required: ["url", "intent"],
 } as const;
 
+export const ORDER_CONFIRM_EXAMPLE = {
+  url: "https://shop.example.com/thank-you?order_id=ORD-18421",
+  canonical_url: "https://shop.example.com/thank-you?order_id=ORD-18421",
+  id: "cfm_01J8Z0K3N4P5Q6R7S8T9V0WORD",
+  verdict: "confirmed",
+  effect: { type: "order_placed", id: "ORD-18421" },
+  evidence_strength: 2,
+  evidence_level: 2,
+  confidence: 0.9,
+  signals: ["cookieless_fetch", "order_id", "level_2"],
+  independent_signals: 1,
+  independent_evidence: true,
+  evidence_id: "ev_01order",
+  http_status: 200,
+  fetched_at: "2026-09-06T17:00:00Z",
+  price_usd: ORDER_PLACED_PRICE_USD,
+  receipt: {
+    hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    verify_url: "https://livecheck.fly.dev/v1/receipt/cfm_01J8Z0K3N4P5Q6R7S8T9V0WORD",
+  },
+} as const;
+
+export const ORDER_CONFIRM_INPUT_SCHEMA = {
+  properties: {
+    url: {
+      type: "string",
+      description: "Absolute http(s) URL of the thank-you / confirmation / order-status page after checkout.",
+    },
+    intent: {
+      type: "string",
+      enum: ["order_placed"],
+      description: "Payable on POST /v1/confirm/order: order_placed ($0.25).",
+    },
+    claim: {
+      type: "object",
+      description:
+        "Optional. Not required. order_id/total/email_domain may match or veto; never invents ids.",
+    },
+  },
+  required: ["url", "intent"],
+} as const;
+
+/** Verify-shaped Bazaar: POST JSON + method, same wrapper as /v1/verify. */
 export function confirmBazaarExtensions(): Record<string, unknown> {
   return withPostJsonMethod(
     declareDiscoveryExtension({
@@ -246,6 +295,20 @@ export function confirmBazaarExtensions(): Record<string, unknown> {
       inputSchema: CONFIRM_INPUT_SCHEMA,
       output: {
         example: CONFIRM_EXAMPLE,
+        schema: CONFIRM_OUTPUT_SCHEMA,
+      },
+    }),
+  );
+}
+
+export function orderConfirmBazaarExtensions(): Record<string, unknown> {
+  return withPostJsonMethod(
+    declareDiscoveryExtension({
+      bodyType: "json",
+      input: { url: ORDER_CONFIRM_EXAMPLE.url, intent: "order_placed" },
+      inputSchema: ORDER_CONFIRM_INPUT_SCHEMA,
+      output: {
+        example: ORDER_CONFIRM_EXAMPLE,
         schema: CONFIRM_OUTPUT_SCHEMA,
       },
     }),

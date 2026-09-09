@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { publicConfirmUrl, publicOrigin, publicVerifyUrl } from "../src/public-url.js";
+import { publicConfirmOrderUrl, publicConfirmUrl, publicOrigin, publicVerifyUrl } from "../src/public-url.js";
 
 function withoutPublicUrl(fn: () => void) {
   const previous = process.env.LIVECHECK_PUBLIC_URL;
@@ -23,6 +23,7 @@ describe("public verify URL", () => {
       assert.equal(publicOrigin("http://127.0.0.1:43127/v1/verify"), "http://127.0.0.1:43127");
       assert.equal(publicVerifyUrl("http://127.0.0.1:43127/"), "http://127.0.0.1:43127/v1/verify");
       assert.equal(publicConfirmUrl("http://127.0.0.1:43127/"), "http://127.0.0.1:43127/v1/confirm");
+      assert.equal(publicConfirmOrderUrl("http://127.0.0.1:43127/"), "http://127.0.0.1:43127/v1/confirm/order");
     });
   });
 

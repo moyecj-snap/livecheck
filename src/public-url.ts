@@ -5,7 +5,7 @@ function stripTrailingSlash(value: string): string {
 }
 
 function originOnly(value: string): string {
-  return stripTrailingSlash(value).replace(/\/v1\/(verify|confirm)$/i, "");
+  return stripTrailingSlash(value).replace(/\/v1\/(verify|confirm(\/order)?)$/i, "");
 }
 
 /** Force https for Fly public hostnames. 402 resource.url must not be http in production. */
@@ -66,11 +66,41 @@ export function publicConfirmUrl(requestUrl?: string, host?: string): string {
   return `${publicOrigin(requestUrl, host)}/v1/confirm`;
 }
 
-export function isConfirmRequestPath(requestUrl?: string): boolean {
-  if (!requestUrl) return false;
+export function publicConfirmOrderUrl(requestUrl?: string, host?: string): string {
+  return `${publicOrigin(requestUrl, host)}/v1/confirm/order`;
+}
+
+export type PaidResourceKind = "verify" | "confirm" | "confirm_order";
+
+function pathnameOf(requestUrl?: string): string | undefined {
+  if (!requestUrl) return undefined;
   try {
-    return new URL(requestUrl).pathname.replace(/\/+$/, "").endsWith("/v1/confirm");
+    return new URL(requestUrl).pathname.replace(/\/+$/, "");
   } catch {
-    return /\/v1\/confirm\/?(\?|$)/i.test(requestUrl);
+    return undefined;
   }
+}
+
+export function isConfirmOrderRequestPath(requestUrl?: string): boolean {
+  const pathname = pathnameOf(requestUrl);
+  if (pathname) return pathname.endsWith("/v1/confirm/order");
+  return Boolean(requestUrl && /\/v1\/confirm\/order\/?(\?|$)/i.test(requestUrl));
+}
+
+export function isConfirmRequestPath(requestUrl?: string): boolean {
+  if (isConfirmOrderRequestPath(requestUrl)) return false;
+  const pathname = pathnameOf(requestUrl);
+  if (pathname) return pathname.endsWith("/v1/confirm");
+  return Boolean(requestUrl && /\/v1\/confirm\/?(\?|$)/i.test(requestUrl));
+}
+
+export function paidResourceKind(requestUrl?: string): PaidResourceKind {
+  if (isConfirmOrderRequestPath(requestUrl)) return "confirm_order";
+  if (isConfirmRequestPath(requestUrl)) return "confirm";
+  return "verify";
+}
+
+export function isPaidPostPath(path: string): boolean {
+  const normalized = path.replace(/\/+$/, "") || "/";
+  return normalized === "/v1/verify" || normalized === "/v1/confirm" || normalized === "/v1/confirm/order";
 }

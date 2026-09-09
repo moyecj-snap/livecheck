@@ -151,8 +151,8 @@ describe("order_placed HTTP + regressions", () => {
 
   after(() => close());
 
-  it("POST /v1/confirm order_placed happy path after mock pay", async () => {
-    const res = await fetch(`${origin}/v1/confirm`, {
+  it("POST /v1/confirm/order order_placed happy path after mock pay", async () => {
+    const res = await fetch(`${origin}/v1/confirm/order`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
       body: JSON.stringify({
@@ -186,8 +186,8 @@ describe("order_placed HTTP + regressions", () => {
     assert.equal(receiptBody.intent, "order_placed");
   });
 
-  it("POST /v1/confirm order_placed failed / unknown / trap", async () => {
-    const failed = await fetch(`${origin}/v1/confirm`, {
+  it("POST /v1/confirm/order order_placed failed / unknown / trap", async () => {
+    const failed = await fetch(`${origin}/v1/confirm/order`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
       body: JSON.stringify({
@@ -198,7 +198,7 @@ describe("order_placed HTTP + regressions", () => {
     assert.equal(failed.status, 200);
     assert.equal(((await failed.json()) as { verdict: string }).verdict, "failed");
 
-    const unknown = await fetch(`${origin}/v1/confirm`, {
+    const unknown = await fetch(`${origin}/v1/confirm/order`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
       body: JSON.stringify({
@@ -217,18 +217,45 @@ describe("order_placed HTTP + regressions", () => {
     assert.equal(unknownBody.next_step?.endpoint, "/v1/judge");
   });
 
-  it("unpaid order_placed still 402 before intent validation; first accept stays $0.10", async () => {
-    const res = await fetch(`${origin}/v1/confirm`, {
+  it("unpaid POST /v1/confirm/order is 402 with one $0.25 accept", async () => {
+    const res = await fetch(`${origin}/v1/confirm/order`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ url: "https://shop.example.com/thank-you", intent: "order_placed" }),
     });
     assert.equal(res.status, 402);
     const decoded = JSON.parse(Buffer.from(res.headers.get("payment-required") ?? "", "base64").toString("utf8")) as {
-      accepts?: Array<{ amount?: string }>;
+      accepts?: Array<{ amount?: string; extra?: unknown }>;
     };
-    assert.equal(decoded.accepts?.[0]?.amount, "100000");
+    assert.equal(decoded.accepts?.[0]?.amount, "250000");
     assert.equal(decoded.accepts?.length, 1);
+    assert.deepEqual(decoded.accepts?.[0]?.extra, { name: "USD Coin", version: "2" });
+  });
+
+  it("POST /v1/confirm rejects order_placed after mock pay", async () => {
+    const res = await fetch(`${origin}/v1/confirm`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
+      body: JSON.stringify({ url: `${origin}/fixtures/confirm/order-thank-you-id`, intent: "order_placed" }),
+    });
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error?: string; intent?: unknown; use?: string };
+    assert.equal(body.error, "unsupported_intent");
+    assert.equal(body.intent, "order_placed");
+    assert.equal(body.use, "/v1/confirm/order");
+  });
+
+  it("POST /v1/confirm/order rejects lead_submit after mock pay", async () => {
+    const res = await fetch(`${origin}/v1/confirm/order`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
+      body: JSON.stringify({ url: `${origin}/fixtures/confirm/thank-you-id`, intent: "lead_submit" }),
+    });
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error?: string; intent?: unknown; use?: string };
+    assert.equal(body.error, "unsupported_intent");
+    assert.equal(body.intent, "lead_submit");
+    assert.equal(body.use, "/v1/confirm");
   });
 
   it("lead_submit regression: thank-you + id still confirmed at $0.10", async () => {

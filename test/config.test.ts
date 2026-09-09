@@ -57,13 +57,15 @@ describe("listing price and description", () => {
     assert.equal(ORDER_PLACED_PRICE_ATOMIC_USDC, "250000");
     assert.equal(
       CONFIRM_DESCRIPTION,
-      "Livecheck Confirm — independent side-effect verification (actor ≠ verifier). POST /v1/confirm with {url, intent} (+ optional claim). Returns confirmed|failed|unknown; thank-you fluff alone never confirmed — durable ref/id required. Intents: lead_submit $0.10 (lead/contact thank-you), listing_published $0.10 (listing go-live; claim title/sku/id optional), order_placed $0.25 (order confirm/status; claim optional; underpay rejected). Signed receipts + GET /stats. Same origin as Livecheck verify ($0.01). Not Trust Oracle / L3. Budget from intent_prices in OpenAPI.",
+      "Livecheck Confirm — independent side-effect verification (actor ≠ verifier). POST /v1/confirm with {url, intent} (+ optional claim). Returns confirmed|failed|unknown; thank-you fluff alone never confirmed — durable ref/id required. Intents: lead_submit $0.10 (lead/contact thank-you), listing_published $0.10 (listing go-live; claim title/sku/id optional) on /v1/confirm; order_placed $0.25 on POST /v1/confirm/order (order confirm/status; claim optional). Signed receipts + GET /stats. Same origin as Livecheck verify ($0.01). Not Trust Oracle / L3.",
     );
     assert.match(CONFIRM_DESCRIPTION, /Livecheck/);
     assert.match(CONFIRM_DESCRIPTION, /listing_published/);
     assert.match(CONFIRM_DESCRIPTION, /order_placed/);
-    assert.match(OPENAPI_CONFIRM_SUMMARY, /order_placed/);
-    assert.match(OPENAPI_CONFIRM_DESCRIPTION, /order_placed \(\$0\.25\)/);
+    assert.match(CONFIRM_DESCRIPTION, /\/v1\/confirm\/order/);
+    assert.match(OPENAPI_CONFIRM_SUMMARY, /lead_submit \(\$0\.10\)/);
+    assert.doesNotMatch(OPENAPI_CONFIRM_SUMMARY, /order_placed/);
+    assert.match(OPENAPI_CONFIRM_DESCRIPTION, /POST \/v1\/confirm\/order \(\$0\.25\)/);
     assert.match(OPENAPI_CONFIRM_DESCRIPTION, /listing_published \(\$0\.10\)/);
     assert.match(OPENAPI_CONFIRM_DESCRIPTION, /GET \/v1\/receipt\/\{id\}/);
     assert.match(OPENAPI_CONFIRM_DESCRIPTION, /livecheck-keys\.json/);

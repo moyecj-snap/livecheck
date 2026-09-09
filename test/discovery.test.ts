@@ -60,6 +60,7 @@ type OpenApiDoc = {
         tags?: string[];
         "x-payment-info"?: {
           price?: { mode?: string; currency?: string; amount?: string };
+          intent_prices?: unknown;
         };
         requestBody?: {
           content?: {
@@ -137,17 +138,29 @@ describe("discovery documents (mock gate)", () => {
     assert.equal(confirm.description, OPENAPI_CONFIRM_DESCRIPTION);
     assert.equal(confirm["x-guidance"], OPENAPI_CONFIRM_DESCRIPTION);
     assert.notEqual(confirm.description, CONFIRM_DESCRIPTION);
-    assert.match(confirm.description ?? "", /order_placed \(\$0\.25\)/);
+    assert.match(confirm.description ?? "", /POST \/v1\/confirm\/order \(\$0\.25\)/);
     assert.match(confirm.description ?? "", /GET \/stats/);
     assert.deepEqual(confirm.tags, ["Confirm", "lead_submit", "side-effect"]);
     assert.notEqual(confirm.description, VERIFY_DESCRIPTION);
     assert.equal(confirm["x-payment-info"]?.price?.amount, "0.10");
+    assert.equal(confirm["x-payment-info"]?.intent_prices, undefined);
     assert.deepEqual(confirm.requestBody?.content?.["application/json"]?.schema?.required, ["url", "intent"]);
+    assert.deepEqual(confirm.requestBody?.content?.["application/json"]?.schema?.properties?.intent?.enum, [
+      "lead_submit",
+      "listing_published",
+    ]);
     assert.match(
       confirm.requestBody?.content?.["application/json"]?.schema?.properties?.intent?.description ?? "",
       /claim\.title\/sku\/id optional/,
     );
-    assert.match(confirm.responses?.["402"]?.description ?? "", /payment_amount_insufficient/);
+    assert.match(confirm.responses?.["402"]?.description ?? "", /\$0\.10/);
+    const order = (doc.paths as Record<string, { post?: typeof confirm }>)?.["/v1/confirm/order"]?.post;
+    assert.ok(order, "expected POST /v1/confirm/order");
+    assert.equal(order["x-payment-info"]?.price?.amount, "0.25");
+    assert.equal(order["x-payment-info"]?.intent_prices, undefined);
+    assert.deepEqual(order.requestBody?.content?.["application/json"]?.schema?.properties?.intent?.enum, [
+      "order_placed",
+    ]);
   });
 
   it("GET /.well-known/x402 is free 200 JSON listing the verify URL", async () => {
@@ -158,6 +171,7 @@ describe("discovery documents (mock gate)", () => {
     assert.deepEqual(body.resources, [
       "https://livecheck.fly.dev/v1/verify",
       "https://livecheck.fly.dev/v1/confirm",
+      "https://livecheck.fly.dev/v1/confirm/order",
     ]);
     assert.ok(Array.isArray(body.resources));
     assert.equal(typeof body.resources[0], "string");

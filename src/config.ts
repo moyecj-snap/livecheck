@@ -15,27 +15,36 @@ export const ORDER_PLACED_PRICE_ATOMIC_USDC = "250000";
 export function confirmIntentPriceUsd(intent: string): number {
   return intent === "order_placed" ? ORDER_PLACED_PRICE_USD : CONFIRM_PRICE_USD;
 }
-/** Bazaar 402 / health confirm_description — GA for lead_submit, listing_published, and order_placed. */
+/** Bazaar 402 / health confirm_description — rich copy; 402 headers stay ASCII. */
 export const CONFIRM_DESCRIPTION =
-  "Livecheck Confirm — independent side-effect verification (actor ≠ verifier). POST /v1/confirm with {url, intent} (+ optional claim). Returns confirmed|failed|unknown; thank-you fluff alone never confirmed — durable ref/id required. Intents: lead_submit $0.10 (lead/contact thank-you), listing_published $0.10 (listing go-live; claim title/sku/id optional), order_placed $0.25 (order confirm/status; claim optional; underpay rejected). Signed receipts + GET /stats. Same origin as Livecheck verify ($0.01). Not Trust Oracle / L3. Budget from intent_prices in OpenAPI.";
-/** OpenAPI POST /v1/confirm summary — machine-accurate for all payable intents. */
+  "Livecheck Confirm — independent side-effect verification (actor ≠ verifier). POST /v1/confirm with {url, intent} (+ optional claim). Returns confirmed|failed|unknown; thank-you fluff alone never confirmed — durable ref/id required. Intents: lead_submit $0.10 (lead/contact thank-you), listing_published $0.10 (listing go-live; claim title/sku/id optional) on /v1/confirm; order_placed $0.25 on POST /v1/confirm/order (order confirm/status; claim optional). Signed receipts + GET /stats. Same origin as Livecheck verify ($0.01). Not Trust Oracle / L3.";
 /** ASCII-only copy for x402 payment-required (purl/CDP). Keep CONFIRM_DESCRIPTION for /health. */
 export const CONFIRM_PAYMENT_DESCRIPTION =
-  "Livecheck Confirm - independent side-effect verification (actor != verifier). POST /v1/confirm with {url, intent} (+ optional claim). Returns confirmed|failed|unknown; thank-you fluff alone never confirmed - durable ref/id required. Intents: lead_submit $0.10, listing_published $0.10, order_placed $0.25 (claim optional; underpay rejected). Signed receipts + GET /stats. Same origin as Livecheck verify ($0.01). Not Trust Oracle / L3. Budget from intent_prices in OpenAPI.";
-
+  "Livecheck Confirm - independent side-effect verification (actor != verifier). POST /v1/confirm with {url, intent} (+ optional claim). Returns confirmed|failed|unknown; thank-you fluff alone never confirmed - durable ref/id required. Intents: lead_submit $0.10, listing_published $0.10. order_placed is POST /v1/confirm/order ($0.25). Signed receipts + GET /stats. Same origin as Livecheck verify ($0.01). Not Trust Oracle / L3.";
+/** ASCII-only 402 copy for POST /v1/confirm/order (fixed $0.25). */
+export const ORDER_PAYMENT_DESCRIPTION =
+  "Livecheck Confirm order_placed - independent side-effect verification (actor != verifier). POST /v1/confirm/order with {url, intent: order_placed} (+ optional claim). Returns confirmed|failed|unknown; thank-you fluff alone never confirmed - durable order/ref/ticket id required. Fixed $0.25 USDC. lead_submit and listing_published stay on POST /v1/confirm ($0.10). Signed receipts + GET /stats. Not Trust Oracle / L3.";
 
 export const OPENAPI_CONFIRM_SUMMARY =
-  "Independently confirm lead_submit ($0.10), listing_published ($0.10), or order_placed ($0.25)";
+  "Independently confirm lead_submit ($0.10) or listing_published ($0.10)";
 /**
  * OpenAPI POST /v1/confirm description + x-guidance.
- * Machine-accurate for all three payable intents. Bazaar/health still use CONFIRM_DESCRIPTION.
+ * This route is fixed $0.10. order_placed lives on POST /v1/confirm/order.
  */
 export const OPENAPI_CONFIRM_DESCRIPTION =
-  "POST {url, intent, claim?} after a side-effect. Payable intents: lead_submit ($0.10) — thank-you/result page; confirmed only with a confirmation/ref/ticket/lead id (thank-you fluff alone is never confirmed). listing_published ($0.10) — specific job/product/eBay listing URL; claim.title/sku/id optional (match or veto; not required for L2). order_placed ($0.25) — thank-you/confirmation/order-status page; claim.order_id/total/etc optional (match or veto); thank-you fluff alone never confirmed; a durable order/confirmation/ref/ticket id is required for confirmed. Returns confirmed|failed|unknown with Level-2+ evidence. Independent cookieless verifier (actor ≠ verifier). Signed receipts: GET /v1/receipt/{id}. Keys: GET /.well-known/livecheck-keys.json. GET /stats publishes rolling counts; accuracy benches are not published; missing ≠ false-confirmed rate of 0. Not URL/stock liveness (use /v1/verify). Not Trust Oracle / L3. Unsupported intents → 400 unsupported_intent.";
+  "POST {url, intent, claim?} after a side-effect. Payable intents on this route: lead_submit ($0.10) — thank-you/result page; confirmed only with a confirmation/ref/ticket/lead id (thank-you fluff alone is never confirmed). listing_published ($0.10) — specific job/product/eBay listing URL; claim.title/sku/id optional (match or veto; not required for L2). order_placed is not payable here — POST /v1/confirm/order ($0.25). Returns confirmed|failed|unknown with Level-2+ evidence. Independent cookieless verifier (actor ≠ verifier). Signed receipts: GET /v1/receipt/{id}. Keys: GET /.well-known/livecheck-keys.json. GET /stats publishes rolling counts; accuracy benches are not published; missing ≠ false-confirmed rate of 0. Not URL/stock liveness (use /v1/verify). Not Trust Oracle / L3. Unsupported intents → 400 unsupported_intent.";
 export const OPENAPI_CONFIRM_INTENT_DESCRIPTION =
-  "Payable: lead_submit ($0.10), listing_published ($0.10), order_placed ($0.25). listing_published claim.title/sku/id optional (match or veto; not required for L2). order_placed claim.order_id/total/etc optional; thank-you fluff alone never confirmed; durable order/confirmation/ref/ticket id required for confirmed. Other values → 400 unsupported_intent.";
+  "Payable on this route: lead_submit ($0.10), listing_published ($0.10). listing_published claim.title/sku/id optional (match or veto; not required for L2). order_placed → 400 unsupported_intent (use POST /v1/confirm/order). Other values → 400 unsupported_intent.";
 export const OPENAPI_CONFIRM_CLAIM_DESCRIPTION =
-  "Optional. Not required. lead_submit ignores claim. listing_published: title/sku/id may match or veto; not required for L2. order_placed: order_id/total/email_domain may match or veto; never invents ids; fluff-only pages stay unknown.";
+  "Optional. Not required. lead_submit ignores claim. listing_published: title/sku/id may match or veto; not required for L2.";
+export const OPENAPI_ORDER_CONFIRM_SUMMARY =
+  "Independently confirm order_placed ($0.25)";
+export const OPENAPI_ORDER_CONFIRM_DESCRIPTION =
+  "POST {url, intent: order_placed, claim?} after checkout. url is a thank-you/confirmation/order-status page; claim.order_id/total/email_domain optional (match or veto); thank-you fluff alone never confirmed; a durable order/confirmation/ref/ticket id is required for confirmed. Fixed $0.25 USDC. Returns confirmed|failed|unknown with Level-2+ evidence. Independent cookieless verifier (actor ≠ verifier). Signed receipts: GET /v1/receipt/{id}. lead_submit and listing_published stay on POST /v1/confirm ($0.10). Not Trust Oracle / L3. Other intents → 400 unsupported_intent.";
+export const OPENAPI_ORDER_CONFIRM_INTENT_DESCRIPTION =
+  "Payable on this route: order_placed ($0.25). claim.order_id/total/etc optional; thank-you fluff alone never confirmed; durable order/confirmation/ref/ticket id required for confirmed. Other values → 400 unsupported_intent (lead_submit / listing_published use POST /v1/confirm).";
+export const OPENAPI_ORDER_CONFIRM_CLAIM_DESCRIPTION =
+  "Optional. Not required. order_id/total/email_domain may match or veto; never invents ids; fluff-only pages stay unknown.";
 /** x402 ResourceInfo / RouteConfig — Confirm only, so CDP can find Confirm under Livecheck. */
 export const CONFIRM_SERVICE_NAME = "Livecheck";
 export const CONFIRM_RESOURCE_TAGS = ["livecheck", "confirm"] as const;

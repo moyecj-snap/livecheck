@@ -8,6 +8,7 @@ import {
   ORDER_PLACED_PRICE_USD,
 } from "./config.js";
 import { ORDER_PLACED_INTENT } from "./order-placed.js";
+import { isPaidPostPath } from "./public-url.js";
 import { VerifyError } from "./verify.js";
 
 type VerifyArgs = Parameters<FacilitatorClient["verify"]>;
@@ -120,9 +121,9 @@ export function resolveConfirmPayment(headers: {
 }
 
 /**
- * order_placed must have verified/settled ≥ $0.25 (250000 atomic).
- * lead_submit / listing_published stay $0.10 and are not re-checked here.
- * Mock pay bypasses the amount check (same as the unpaid 402 gate).
+ * Unused after the confirm/order split: each route has one fixed accept.
+ * Kept so a $0.10 payment cannot settle order_placed if someone rewires the
+ * old shared route. Mock pay bypasses the amount check.
  *
  * @x402/hono 2.24.0 verifies, then runs the handler, then settles only when
  * the handler returns status below 400. Throwing 402 here cancels settle.
@@ -176,8 +177,7 @@ export function wrapFacilitatorForVerifiedAmount(inner: FacilitatorClient): Faci
 /** Test helper: treat the request as already paid at `atomic` (or mock). */
 export function settledAmountGate(atomic: string | "mock"): MiddlewareHandler {
   return async (c, next) => {
-    const paidPath = c.req.path === "/v1/verify" || c.req.path === "/v1/confirm";
-    if (c.req.method !== "POST" || !paidPath) return next();
+    if (c.req.method !== "POST" || !isPaidPostPath(c.req.path)) return next();
     if (atomic === "mock") rememberMockConfirmPayment();
     else rememberVerifiedAtomic(atomic);
     return next();

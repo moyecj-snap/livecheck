@@ -11,7 +11,14 @@ import {
   PRICE_USD,
   VERIFY_DESCRIPTION,
 } from "../src/config.js";
-import { classifyLeadSubmit, confirmUrl, parseConfirmRequest, UnsupportedIntentError } from "../src/confirm.js";
+import {
+  classifyLeadSubmit,
+  confirmUrl,
+  parseConfirmRequest,
+  parseConfirmRouteRequest,
+  parseOrderConfirmRequest,
+  UnsupportedIntentError,
+} from "../src/confirm.js";
 import { FIXTURES } from "../src/fixtures.js";
 import type { FetchedPage } from "../src/types.js";
 
@@ -119,6 +126,26 @@ describe("parseConfirmRequest", () => {
   it("accepts order_placed", () => {
     const parsed = parseConfirmRequest({ url: "https://example.com/order/1", intent: "order_placed" });
     assert.equal(parsed.intent, "order_placed");
+  });
+
+  it("parseConfirmRouteRequest rejects order_placed with /v1/confirm/order hint", () => {
+    assert.throws(
+      () => parseConfirmRouteRequest({ url: "https://example.com/order/1", intent: "order_placed" }),
+      (error: unknown) =>
+        error instanceof UnsupportedIntentError &&
+        error.intent === "order_placed" &&
+        error.use === "/v1/confirm/order",
+    );
+  });
+
+  it("parseOrderConfirmRequest rejects lead_submit with /v1/confirm hint", () => {
+    assert.throws(
+      () => parseOrderConfirmRequest({ url: "https://example.com/thanks", intent: "lead_submit" }),
+      (error: unknown) =>
+        error instanceof UnsupportedIntentError &&
+        error.intent === "lead_submit" &&
+        error.use === "/v1/confirm",
+    );
   });
 
   it("accepts listing_published without a claim", () => {
@@ -250,17 +277,17 @@ describe("confirmUrl + HTTP", () => {
     assert.equal(body.intent, "booking");
   });
 
-  it("POST /v1/confirm order_placed is payable after mock pay", async () => {
+  it("POST /v1/confirm order_placed is 400 unsupported_intent with confirm/order hint", async () => {
     const res = await fetch(`${origin}/v1/confirm`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
       body: JSON.stringify({ url: `${origin}/fixtures/confirm/order-thank-you-id`, intent: "order_placed" }),
     });
-    assert.equal(res.status, 200);
-    const body = (await res.json()) as { verdict?: string; effect?: { type?: string }; price_usd?: number };
-    assert.equal(body.verdict, "confirmed");
-    assert.equal(body.effect?.type, "order_placed");
-    assert.equal(body.price_usd, 0.25);
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error?: string; intent?: unknown; use?: string };
+    assert.equal(body.error, "unsupported_intent");
+    assert.equal(body.intent, "order_placed");
+    assert.equal(body.use, "/v1/confirm/order");
   });
 
   it("unpaid POST /v1/confirm is 402 at $0.10 and does not use verify copy", async () => {
@@ -271,15 +298,35 @@ describe("confirmUrl + HTTP", () => {
     });
     assert.equal(res.status, 402);
     const decoded = JSON.parse(Buffer.from(res.headers.get("payment-required") ?? "", "base64").toString("utf8")) as {
-      accepts?: Array<{ amount?: string }>;
+      accepts?: Array<{ amount?: string; extra?: { name?: string; version?: string } }>;
       resource?: { description?: string; url?: string; serviceName?: string; tags?: string[] };
     };
     assert.equal(decoded.accepts?.[0]?.amount, CONFIRM_PRICE_ATOMIC_USDC);
     assert.equal(decoded.accepts?.[0]?.amount, "100000");
+    assert.equal(decoded.accepts?.length, 1);
+    assert.deepEqual(decoded.accepts?.[0]?.extra, { name: "USD Coin", version: "2" });
     assert.equal(decoded.resource?.description, CONFIRM_PAYMENT_DESCRIPTION);
     assert.match(decoded.resource?.description ?? "", /Livecheck/);
     assert.notEqual(decoded.resource?.description, VERIFY_DESCRIPTION);
     assert.match(decoded.resource?.url ?? "", /\/v1\/confirm$/);
+  });
+
+  it("unpaid POST /v1/confirm/order is 402 at $0.25 with one accept", async () => {
+    const res = await fetch(`${origin}/v1/confirm/order`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: "https://shop.example.com/thank-you", intent: "order_placed" }),
+    });
+    assert.equal(res.status, 402);
+    const decoded = JSON.parse(Buffer.from(res.headers.get("payment-required") ?? "", "base64").toString("utf8")) as {
+      accepts?: Array<{ amount?: string; extra?: { name?: string; version?: string } }>;
+      resource?: { description?: string; url?: string };
+    };
+    assert.equal(decoded.accepts?.length, 1);
+    assert.equal(decoded.accepts?.[0]?.amount, "250000");
+    assert.deepEqual(decoded.accepts?.[0]?.extra, { name: "USD Coin", version: "2" });
+    assert.match(decoded.resource?.url ?? "", /\/v1\/confirm\/order$/);
+    assert.match(decoded.resource?.description ?? "", /order_placed/);
   });
 
   it("POST /v1/verify is still $0.01", async () => {

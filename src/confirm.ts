@@ -21,14 +21,16 @@ export const LEAD_SUBMIT_L2_CONFIDENCE = 0.92;
 export class UnsupportedIntentError extends VerifyError {
   readonly code = "unsupported_intent" as const;
   readonly intent: unknown;
+  readonly use?: string;
 
-  constructor(intent: unknown) {
+  constructor(intent: unknown, options?: { use?: string }) {
     super(
       'unsupported_intent: only "lead_submit", "listing_published", and "order_placed" are accepted.',
       400,
     );
     this.name = "UnsupportedIntentError";
     this.intent = intent;
+    this.use = options?.use;
   }
 }
 
@@ -38,7 +40,12 @@ export const PAYABLE_CONFIRM_INTENTS = [
   LISTING_PUBLISHED_INTENT,
   ORDER_PLACED_INTENT,
 ] as const;
+/** POST /v1/confirm — fixed $0.10. order_placed is POST /v1/confirm/order. */
+export const CONFIRM_ROUTE_INTENTS = [LEAD_SUBMIT_INTENT, LISTING_PUBLISHED_INTENT] as const;
+export const ORDER_CONFIRM_ROUTE_INTENTS = [ORDER_PLACED_INTENT] as const;
 export type PayableConfirmIntent = (typeof PAYABLE_CONFIRM_INTENTS)[number];
+export type ConfirmRouteIntent = (typeof CONFIRM_ROUTE_INTENTS)[number];
+export type OrderConfirmRouteIntent = (typeof ORDER_CONFIRM_ROUTE_INTENTS)[number];
 
 function isPayableConfirmIntent(value: unknown): value is PayableConfirmIntent {
   return (
@@ -181,7 +188,23 @@ export type ConfirmRequest = {
   claim?: Record<string, unknown>;
 };
 
-export function parseConfirmRequest(body: unknown): ConfirmRequest {
+function hintForUnsupportedIntent(intent: unknown, allowed: readonly string[]): string | undefined {
+  if (intent === ORDER_PLACED_INTENT && !allowed.includes(ORDER_PLACED_INTENT)) {
+    return "/v1/confirm/order";
+  }
+  if (
+    (intent === LEAD_SUBMIT_INTENT || intent === LISTING_PUBLISHED_INTENT) &&
+    !allowed.includes(intent)
+  ) {
+    return "/v1/confirm";
+  }
+  return undefined;
+}
+
+export function parseConfirmRequest(
+  body: unknown,
+  options: { allowedIntents?: readonly string[] } = {},
+): ConfirmRequest {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new VerifyError(
       'JSON body must include { "url": "https://...", "intent": "lead_submit" | "listing_published" | "order_placed" }.',
@@ -191,6 +214,12 @@ export function parseConfirmRequest(body: unknown): ConfirmRequest {
   const url = parseTargetUrl(record.url);
   if (!isPayableConfirmIntent(record.intent)) {
     throw new UnsupportedIntentError(record.intent);
+  }
+  const allowed = options.allowedIntents;
+  if (allowed && !allowed.includes(record.intent)) {
+    throw new UnsupportedIntentError(record.intent, {
+      use: hintForUnsupportedIntent(record.intent, allowed),
+    });
   }
   if (record.claim !== undefined) {
     if (!record.claim || typeof record.claim !== "object" || Array.isArray(record.claim)) {
@@ -202,6 +231,14 @@ export function parseConfirmRequest(body: unknown): ConfirmRequest {
     parsed.claim = record.claim as Record<string, unknown>;
   }
   return parsed;
+}
+
+export function parseConfirmRouteRequest(body: unknown): ConfirmRequest {
+  return parseConfirmRequest(body, { allowedIntents: CONFIRM_ROUTE_INTENTS });
+}
+
+export function parseOrderConfirmRequest(body: unknown): ConfirmRequest {
+  return parseConfirmRequest(body, { allowedIntents: ORDER_CONFIRM_ROUTE_INTENTS });
 }
 
 export function evidenceLevelFor(input: {

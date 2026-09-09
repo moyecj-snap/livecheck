@@ -35,6 +35,7 @@ describe("HTTP surface", () => {
                       receipt_signing?: boolean;
       public_verify_url?: string;
       public_confirm_url?: string;
+      public_confirm_order_url?: string;
       description?: string;
       confirm_description?: string;
     };
@@ -50,6 +51,7 @@ describe("HTTP surface", () => {
     assert.equal(typeof body.receipt_signing, "boolean");
     assert.ok(body.public_verify_url?.endsWith("/v1/verify"));
     assert.ok(body.public_confirm_url?.endsWith("/v1/confirm"));
+    assert.ok(body.public_confirm_order_url?.endsWith("/v1/confirm/order"));
   });
 
   it("GET / is a human demo page", async () => {

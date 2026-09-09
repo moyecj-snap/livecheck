@@ -133,7 +133,7 @@ describe("underpaid order_placed HTTP", () => {
     closePaid();
   });
 
-  it("rejects $0.10 settle + intent=order_placed with 402 payment_amount_insufficient", async () => {
+  it("rejects order_placed on /v1/confirm with 400 unsupported_intent (underpay gate unused)", async () => {
     const res = await fetch(`${underOrigin}/v1/confirm`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -142,26 +142,11 @@ describe("underpaid order_placed HTTP", () => {
         intent: "order_placed",
       }),
     });
-    assert.equal(res.status, 402);
-    const body = (await res.json()) as {
-      error?: string;
-      intent?: string;
-      required_atomic?: string;
-      paid_atomic?: string;
-    };
-    assert.equal(body.error, "payment_amount_insufficient");
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error?: string; intent?: string; use?: string };
+    assert.equal(body.error, "unsupported_intent");
     assert.equal(body.intent, "order_placed");
-    assert.equal(body.required_atomic, "250000");
-    assert.equal(body.paid_atomic, "100000");
-    const header = res.headers.get("payment-required");
-    assert.ok(header, "re-402 includes payment-required");
-    const decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8")) as {
-      error?: string;
-      accepts?: Array<{ amount?: string }>;
-    };
-    assert.equal(decoded.error, "payment_amount_insufficient");
-    assert.equal(decoded.accepts?.[0]?.amount, "100000");
-    assert.equal(decoded.accepts?.length, 1);
+    assert.equal(body.use, "/v1/confirm/order");
   });
 
   it("still runs lead_submit and listing_published after a $0.10 settle", async () => {
@@ -188,8 +173,8 @@ describe("underpaid order_placed HTTP", () => {
     assert.equal(((await listing.json()) as { effect: { type: string } }).effect.type, "listing_published");
   });
 
-  it("accepts order_placed after a $0.25 settle", async () => {
-    const res = await fetch(`${paidOrigin}/v1/confirm`, {
+  it("accepts order_placed on /v1/confirm/order after a $0.25 settle", async () => {
+    const res = await fetch(`${paidOrigin}/v1/confirm/order`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({

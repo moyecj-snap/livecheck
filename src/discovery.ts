@@ -4,9 +4,13 @@ import {
   OPENAPI_CONFIRM_DESCRIPTION,
   OPENAPI_CONFIRM_INTENT_DESCRIPTION,
   OPENAPI_CONFIRM_SUMMARY,
+  OPENAPI_ORDER_CONFIRM_CLAIM_DESCRIPTION,
+  OPENAPI_ORDER_CONFIRM_DESCRIPTION,
+  OPENAPI_ORDER_CONFIRM_INTENT_DESCRIPTION,
+  OPENAPI_ORDER_CONFIRM_SUMMARY,
   VERIFY_DESCRIPTION,
 } from "./config.js";
-import { publicConfirmUrl, publicOrigin, publicVerifyUrl } from "./public-url.js";
+import { publicConfirmOrderUrl, publicConfirmUrl, publicOrigin, publicVerifyUrl } from "./public-url.js";
 
 const OPENAPI_VERSION = "1.0.0";
 const OPENAPI_PRICE_AMOUNT = "0.01";
@@ -94,11 +98,6 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
               currency: "USD",
               amount: OPENAPI_CONFIRM_PRICE_AMOUNT,
             },
-            intent_prices: {
-              lead_submit: OPENAPI_CONFIRM_PRICE_AMOUNT,
-              listing_published: OPENAPI_CONFIRM_PRICE_AMOUNT,
-              order_placed: OPENAPI_ORDER_PLACED_PRICE_AMOUNT,
-            },
             protocols: [{ x402: {} }],
           },
           requestBody: {
@@ -112,11 +111,11 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
                       type: "string",
                       format: "uri",
                       description:
-                        "Absolute http(s) URL. lead_submit: thank-you or result page. listing_published: the specific job, product, or eBay item URL claimed to be live. order_placed: thank-you / confirmation / order-status page after checkout.",
+                        "Absolute http(s) URL. lead_submit: thank-you or result page. listing_published: the specific job, product, or eBay item URL claimed to be live.",
                     },
                     intent: {
                       type: "string",
-                      enum: ["lead_submit", "listing_published", "order_placed"],
+                      enum: ["lead_submit", "listing_published"],
                       description: OPENAPI_CONFIRM_INTENT_DESCRIPTION,
                     },
                     claim: {
@@ -140,11 +139,72 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
             },
             "400": {
               description:
-                "unsupported_intent or invalid body. Payable intents: lead_submit, listing_published, order_placed.",
+                "unsupported_intent or invalid body. Payable intents: lead_submit, listing_published. order_placed → POST /v1/confirm/order.",
             },
             "402": {
+              description: "Payment required. Fixed $0.10 USDC (100000 atomic).",
+            },
+          },
+        },
+      },
+      "/v1/confirm/order": {
+        post: {
+          operationId: "confirmOrderPlaced",
+          summary: OPENAPI_ORDER_CONFIRM_SUMMARY,
+          description: OPENAPI_ORDER_CONFIRM_DESCRIPTION,
+          "x-guidance": OPENAPI_ORDER_CONFIRM_DESCRIPTION,
+          tags: ["Confirm", "order_placed", "side-effect"],
+          "x-payment-info": {
+            price: {
+              mode: "fixed",
+              currency: "USD",
+              amount: OPENAPI_ORDER_PLACED_PRICE_AMOUNT,
+            },
+            protocols: [{ x402: {} }],
+          },
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    url: {
+                      type: "string",
+                      format: "uri",
+                      description:
+                        "Absolute http(s) URL of the thank-you / confirmation / order-status page after checkout.",
+                    },
+                    intent: {
+                      type: "string",
+                      enum: ["order_placed"],
+                      description: OPENAPI_ORDER_CONFIRM_INTENT_DESCRIPTION,
+                    },
+                    claim: {
+                      type: "object",
+                      description: OPENAPI_ORDER_CONFIRM_CLAIM_DESCRIPTION,
+                    },
+                  },
+                  required: ["url", "intent"],
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description: "Independent confirmed, failed, or unknown verdict",
+              content: {
+                "application/json": {
+                  schema: CONFIRM_OUTPUT_SCHEMA,
+                },
+              },
+            },
+            "400": {
               description:
-                "Payment required, or payment_amount_insufficient when a $0.10 payment is reused for order_placed ($0.25).",
+                "unsupported_intent or invalid body. Payable intent: order_placed. lead_submit / listing_published → POST /v1/confirm.",
+            },
+            "402": {
+              description: "Payment required. Fixed $0.25 USDC (250000 atomic).",
             },
           },
         },
@@ -219,7 +279,11 @@ export function wellKnownX402(requestUrl?: string, host?: string): Record<string
   return {
     version: 1,
     x402Version: 2,
-    resources: [publicVerifyUrl(requestUrl, host), publicConfirmUrl(requestUrl, host)],
+    resources: [
+      publicVerifyUrl(requestUrl, host),
+      publicConfirmUrl(requestUrl, host),
+      publicConfirmOrderUrl(requestUrl, host),
+    ],
   };
 }
 

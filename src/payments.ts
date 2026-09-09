@@ -6,24 +6,27 @@ import { bazaarResourceServerExtension } from "@x402/extensions/bazaar";
 import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import type { RoutesConfig } from "@x402/core/server";
 import type { MiddlewareHandler } from "hono";
-import { confirmBazaarExtensions, verifyBazaarExtensions } from "./bazaar.js";
+import { confirmBazaarExtensions, orderConfirmBazaarExtensions, verifyBazaarExtensions } from "./bazaar.js";
 import {
   CONFIRM_PAYMENT_DESCRIPTION,
   CONFIRM_PRICE_LABEL,
   MOCK_PAYMENT_HEADER,
   NETWORK,
+  ORDER_PAYMENT_DESCRIPTION,
+  ORDER_PLACED_PRICE_LABEL,
   PRICE_LABEL,
   VERIFY_DESCRIPTION,
   isLiveSettlement,
   missingLiveKeyNames,
   readLiveKeys,
 } from "./config.js";
-import { publicConfirmUrl, publicVerifyUrl } from "./public-url.js";
+import { isPaidPostPath, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl } from "./public-url.js";
 import {
   advertisePaymentRequired,
   confirmPaymentRequiredBody,
   decodePaymentRequired,
   encodePaymentRequired,
+  orderConfirmPaymentRequiredBody,
   paymentRequiredBody,
 } from "./x402-payload.js";
 import { rememberMockConfirmPayment, wrapFacilitatorForVerifiedAmount } from "./confirm-payment.js";
@@ -57,9 +60,6 @@ export function verifyPaymentRoutes(payTo: string): RoutesConfig {
     },
     "POST /v1/confirm": {
       accepts: [
-        // Hotfix 2026-09-09: dual accepts ($0.10 + $0.25) break CDP facilitator
-        // verify (paymentPayload invalid) with purl 0.2.8. Single $0.10 until
-        // order_placed has its own route / fixed multi-price accepts.
         {
           scheme: "exact" as const,
           price: CONFIRM_PRICE_LABEL,
@@ -69,11 +69,24 @@ export function verifyPaymentRoutes(payTo: string): RoutesConfig {
       ],
       description: CONFIRM_PAYMENT_DESCRIPTION,
       mimeType: "application/json",
-      // Hotfix: omit serviceName/tags — verify settles; confirm with these
-      // fields still got CDP facilitator paymentPayload 400 with purl 0.2.8.
+      // Public URL + ASCII description pinned here so advertisePaymentRequired
+      // is a no-op for signing fields (amount/asset/payTo/network/scheme/extra).
       resource: publicConfirmUrl(),
-      // Hotfix: omit confirm bazaar on 402 — fat schema suspected in CDP paymentPayload 400.
-      // extensions: confirmBazaarExtensions(),
+      extensions: confirmBazaarExtensions(),
+    },
+    "POST /v1/confirm/order": {
+      accepts: [
+        {
+          scheme: "exact" as const,
+          price: ORDER_PLACED_PRICE_LABEL,
+          network: NETWORK as `${string}:${string}`,
+          payTo,
+        },
+      ],
+      description: ORDER_PAYMENT_DESCRIPTION,
+      mimeType: "application/json",
+      resource: publicConfirmOrderUrl(),
+      extensions: orderConfirmBazaarExtensions(),
     },
   };
 }
@@ -161,8 +174,7 @@ function livePaymentMiddleware(): MiddlewareHandler {
 
 function mockPaymentMiddleware(): MiddlewareHandler {
   return async (c, next) => {
-    const paidPath = c.req.path === "/v1/verify" || c.req.path === "/v1/confirm";
-    if (c.req.method !== "POST" || !paidPath) {
+    if (c.req.method !== "POST" || !isPaidPostPath(c.req.path)) {
       return next();
     }
 
@@ -178,9 +190,11 @@ function mockPaymentMiddleware(): MiddlewareHandler {
     }
 
     const body =
-      c.req.path === "/v1/confirm"
-        ? confirmPaymentRequiredBody(publicConfirmUrl(c.req.url))
-        : paymentRequiredBody(publicVerifyUrl(c.req.url));
+      c.req.path === "/v1/confirm/order"
+        ? orderConfirmPaymentRequiredBody(publicConfirmOrderUrl(c.req.url))
+        : c.req.path === "/v1/confirm"
+          ? confirmPaymentRequiredBody(publicConfirmUrl(c.req.url))
+          : paymentRequiredBody(publicVerifyUrl(c.req.url));
     const encoded = encodePaymentRequired(body);
     c.header("payment-required", encoded);
     c.header("cache-control", "no-store");
