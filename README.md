@@ -72,7 +72,7 @@ curl -sS -D - -o /dev/null https://livecheck.fly.dev/v1/verify \
 
 Livecheck Confirm — use after your agent submits a lead/contact form (intent=lead_submit): POST {url, intent} where url is the thank-you or result page. Returns confirmed|failed|unknown with Level-2+ evidence (confirmation/ref/ticket id required for confirmed). Independent cookieless verifier — actor ≠ verifier — so you do not grade your own homework before the next paid or irreversible step. Not URL/stock liveness (use /v1/verify), not payment/tx settlement, not a thank-you-page classifier.
 
-Day-1 intent is **`lead_submit` only**. Price is **$0.10 USDC** (`100000` atomic). `/v1/verify` stays **$0.01**.
+Payable Confirm intents are **`lead_submit`** and **`listing_published`**. Price is **$0.10 USDC** (`100000` atomic) for either. `/v1/verify` stays **$0.01**. `order_placed` is still **400 `unsupported_intent`**. Bazaar 402 copy stays lead_submit-primary until CoS publishes a false-confirmed rate.
 
 ```http
 POST /v1/confirm
@@ -81,23 +81,28 @@ Content-Type: application/json
 { "url": "https://example.com/thank-you", "intent": "lead_submit", "claim": {} }
 ```
 
-`claim` is optional for `lead_submit` (not required). After payment:
+`claim` is optional (not required). After payment:
 
-- **confirmed** — Level 2 only: extractable confirmation/ref/ticket/lead id, or a unique token in the confirmation URL. Thank-you copy alone is never confirmed. `evidence_level` is 2 and `confidence` is ≥ 0.90 (lead_submit L2 uses 0.92).
-- **unknown** — Level 1 only (thank-you copy, no id). May include `next_step: { action: "human_review", endpoint: "/v1/judge", est_price_usd: 1.00 }` (`GET /v1/judge` is a 501 stub, not payable).
-- **failed** — clear error/reject banner.
+- **lead_submit confirmed** — Level 2 only: extractable confirmation/ref/ticket/lead id, or a unique token in the confirmation URL. Thank-you copy alone is never confirmed. `evidence_level` is 2 and `confidence` is ≥ 0.90 (lead_submit L2 uses 0.92).
+- **listing_published** — caller claims a specific job, product, or eBay item URL is still published/live. Reuses the Verify pipeline (cookieless HTML / Shopify-class stock / ATS / eBay Browse). Mapping:
+  - Verify `live` with a strong independent signal (`in-stock`, `apply form present`, or `ebay-in-stock`) on a specific listing URL → `confirmed` only if `evidence_level≥2` and `confidence≥0.90`
+  - Explicitly closed / sold-out / ATS empty / 404 → `failed`
+  - Ambiguous / unknown / soft signals → `unknown` (may include `next_step` → `/v1/judge` stub)
+  - Honesty: never confirm from thank-you-page fluff alone; never invent listing ids. Prefer unknown over a false confirmed. Optional `claim.title` / `claim.sku` / `claim.id` can match or veto; they are not required if Verify alone reaches L2.
+- **unknown** — Level 1 only (thank-you copy, no id; or soft/ambiguous listing signals). May include `next_step: { action: "human_review", endpoint: "/v1/judge", est_price_usd: 1.00 }` (`GET /v1/judge` is a 501 stub, not payable).
+- **failed** — clear error/reject banner, or Verify closed for `listing_published`.
 - Fetch is cookieless. `independent_evidence` is true only then; cookies never produce `confirmed`.
 
 Successful JSON is additive on the v0 fields (`verdict`, `effect`, `signals`, `evidence_strength`, `evidence_id`, …):
 
 - `id` — stable `cfm_` + ULID
-- `evidence_level` — 0–4 (lead_submit confirmed stays L2)
+- `evidence_level` — 0–4 (lead_submit and listing_published confirmed stay L2)
 - `confidence` — 0–1
 - `receipt` — `{ hash, verify_url }` always; `signature` + `signer` when `CONFIRM_RECEIPT_PRIVATE_KEY` is set
 
-Unknown intents return HTTP **400** `{ "error": "unsupported_intent" }`. `listing_published` and `order_placed` are **not** payable in this phase (no Bazaar price).
+Unknown intents (including `order_placed`) return HTTP **400** `{ "error": "unsupported_intent" }`. OpenAPI / x402 document `listing_published` as payable once the handler is live. Do not treat Bazaar marketing copy as a GA listing_published ad.
 
-Free Confirm extras: `GET /v1/receipt/{id}`, `GET /.well-known/livecheck-keys.json`, `GET /stats` (JSON; HTML if `Accept: text/html`). `GET /stats` publishes lead_submit rolling counts and explicitly **null** false-confirmed rate (no fake benches).
+Free Confirm extras: `GET /v1/receipt/{id}`, `GET /.well-known/livecheck-keys.json`, `GET /stats` (JSON; HTML if `Accept: text/html`). `GET /stats` publishes lead_submit and listing_published rolling counts and explicitly **null** false-confirmed rate (no published bench number on the live route). Local honesty bench: `npm run bench:listing-published` (gate: `false_confirmed = 0`).
 
 ### Signed receipts
 
@@ -346,7 +351,7 @@ Each successful paid `POST /v1/verify` and `POST /v1/confirm` writes **one** str
 {"event":"livecheck.paid_call","route":"verify","status":"live","host":"boards.greenhouse.io","url_hash":"…","payer":"0x…","tx":"0x…","payment_intent":"pi_…","ts":"2026-09-06T20:34:00Z"}
 ```
 
-Confirm lines add `intent` (`lead_submit`) and `verdict` instead of `status`. Privacy rule: **never** log or store raw query strings, emails, or full URLs — hostname + SHA-256 of the full URL only. `payer` / `tx` / `payment_intent` are omitted when missing (mock/dev).
+Confirm lines add `intent` (`lead_submit` or `listing_published`) and `verdict` instead of `status`. Privacy rule: **never** log or store raw query strings, emails, or full URLs — hostname + SHA-256 of the full URL only. `payer` / `tx` / `payment_intent` are omitted when missing (mock/dev).
 
 Retained columns (SQLite `paid_calls` at `PAID_CALL_DB_PATH`, default `/data/paid-calls.sqlite` on Fly): `ts`, `route` (`verify` | `confirm`), `payer`, `tx`, `payment_intent`, `host`, `url_sha256` (same digest as log `url_hash`).
 

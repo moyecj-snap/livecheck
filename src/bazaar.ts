@@ -159,7 +159,7 @@ export const CONFIRM_OUTPUT_SCHEMA = {
     effect: {
       type: "object",
       properties: {
-        type: { type: "string", enum: ["lead_submit"] },
+        type: { type: "string", enum: ["lead_submit", "listing_published"] },
         id: { type: "string" },
       },
       required: ["type"],
@@ -220,16 +220,19 @@ export const CONFIRM_INPUT_SCHEMA = {
   properties: {
     url: {
       type: "string",
-      description: "Absolute http(s) URL of the thank-you or result page to confirm independently.",
+      description:
+        "Absolute http(s) URL. lead_submit: thank-you or result page. listing_published: specific job, product, or eBay item URL.",
     },
     intent: {
       type: "string",
-      enum: ["lead_submit"],
-      description: "Day-1 Confirm intent. Only lead_submit is a payable intent.",
+      enum: ["lead_submit", "listing_published"],
+      description:
+        "Payable Confirm intents: lead_submit and listing_published. order_placed returns 400 unsupported_intent.",
     },
     claim: {
       type: "object",
-      description: "Optional for lead_submit. Not required. Ignored by the lead_submit classifier in this phase.",
+      description:
+        "Optional. Not required. listing_published may match claim.title / sku / id; Verify alone can reach L2.",
     },
   },
   required: ["url", "intent"],

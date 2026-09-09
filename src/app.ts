@@ -144,7 +144,7 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
     }
     try {
       const { url, intent, claim } = parseConfirmRequest(body);
-      const classified = await confirmUrl(url);
+      const classified = await confirmUrl(url, fetch, new Date(), { intent, claim });
       const result = sealConfirmResult(classified, {
         intent,
         url,

@@ -1,31 +1,40 @@
 import { randomUUID } from "node:crypto";
 import { CONFIRM_PRICE_USD } from "./config.js";
-import type { ConfirmNextStep, ConfirmResult, ConfirmVerdictStatus, EvidenceLevel, FetchedPage } from "./types.js";
+import { HUMAN_REVIEW_NEXT_STEP, applyConfirmedGate } from "./confirm-shared.js";
+import { classifyListingPublished, LISTING_PUBLISHED_INTENT } from "./listing-published.js";
+import type { ConfirmIntent, ConfirmResult, ConfirmVerdictStatus, EvidenceLevel, FetchedPage } from "./types.js";
+import { classify } from "./classify.js";
+import { isEbayAdapterEnabled, parseEbayItemUrl, verifyEbayItem } from "./ebay.js";
 import { VerifyError, fetchPage, parseTargetUrl } from "./verify.js";
 
-export const CONFIRMED_MIN_CONFIDENCE = 0.9;
-export const CONFIRMED_MIN_EVIDENCE_LEVEL = 2;
+export {
+  CONFIRMED_MIN_CONFIDENCE,
+  CONFIRMED_MIN_EVIDENCE_LEVEL,
+  HUMAN_REVIEW_NEXT_STEP,
+  applyConfirmedGate,
+} from "./confirm-shared.js";
+
 /** lead_submit L2 confirmed — at/above the confirmed gate; do not downgrade existing L2. */
 export const LEAD_SUBMIT_L2_CONFIDENCE = 0.92;
-
-export const HUMAN_REVIEW_NEXT_STEP: ConfirmNextStep = {
-  action: "human_review",
-  endpoint: "/v1/judge",
-  est_price_usd: 1.0,
-};
 
 export class UnsupportedIntentError extends VerifyError {
   readonly code = "unsupported_intent" as const;
   readonly intent: unknown;
 
   constructor(intent: unknown) {
-    super('unsupported_intent: only "lead_submit" is accepted.', 400);
+    super('unsupported_intent: only "lead_submit" and "listing_published" are accepted.', 400);
     this.name = "UnsupportedIntentError";
     this.intent = intent;
   }
 }
 
 export const LEAD_SUBMIT_INTENT = "lead_submit" as const;
+export const PAYABLE_CONFIRM_INTENTS = [LEAD_SUBMIT_INTENT, LISTING_PUBLISHED_INTENT] as const;
+export type PayableConfirmIntent = (typeof PAYABLE_CONFIRM_INTENTS)[number];
+
+function isPayableConfirmIntent(value: unknown): value is PayableConfirmIntent {
+  return value === LEAD_SUBMIT_INTENT || value === LISTING_PUBLISHED_INTENT;
+}
 
 const FAILED_PHRASES = [
   "submission failed",
@@ -156,17 +165,19 @@ export function extractLabeledConfirmationId(text: string): string | undefined {
 
 export type ConfirmRequest = {
   url: string;
-  intent: typeof LEAD_SUBMIT_INTENT;
+  intent: PayableConfirmIntent;
   claim?: Record<string, unknown>;
 };
 
 export function parseConfirmRequest(body: unknown): ConfirmRequest {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
-    throw new VerifyError('JSON body must include { "url": "https://...", "intent": "lead_submit" }.');
+    throw new VerifyError(
+      'JSON body must include { "url": "https://...", "intent": "lead_submit" | "listing_published" }.',
+    );
   }
   const record = body as { url?: unknown; intent?: unknown; claim?: unknown };
   const url = parseTargetUrl(record.url);
-  if (record.intent !== LEAD_SUBMIT_INTENT) {
+  if (!isPayableConfirmIntent(record.intent)) {
     throw new UnsupportedIntentError(record.intent);
   }
   if (record.claim !== undefined) {
@@ -174,7 +185,7 @@ export function parseConfirmRequest(body: unknown): ConfirmRequest {
       throw new VerifyError("claim must be a JSON object when provided.");
     }
   }
-  const parsed: ConfirmRequest = { url, intent: LEAD_SUBMIT_INTENT };
+  const parsed: ConfirmRequest = { url, intent: record.intent };
   if (record.claim && typeof record.claim === "object" && !Array.isArray(record.claim)) {
     parsed.claim = record.claim as Record<string, unknown>;
   }
@@ -215,19 +226,6 @@ export function confidenceFor(verdict: ConfirmVerdictStatus, evidenceLevel: Evid
   if (verdict === "failed") return 0.8;
   if (evidenceLevel >= 1) return 0.48;
   return 0.22;
-}
-
-/** New Confirm logic: confirmed requires confidence ≥ 0.90 and evidence_level ≥ 2. */
-export function applyConfirmedGate(
-  verdict: ConfirmVerdictStatus,
-  confidence: number,
-  evidenceLevel: EvidenceLevel,
-): ConfirmVerdictStatus {
-  if (verdict !== "confirmed") return verdict;
-  if (confidence >= CONFIRMED_MIN_CONFIDENCE && evidenceLevel >= CONFIRMED_MIN_EVIDENCE_LEVEL) {
-    return "confirmed";
-  }
-  return "unknown";
 }
 
 function finishResult(
@@ -338,11 +336,33 @@ export function classifyLeadSubmit(
   });
 }
 
+export async function confirmListingPublishedUrl(
+  url: string,
+  fetcher: typeof fetch = fetch,
+  now = new Date(),
+  claim?: Record<string, unknown>,
+): Promise<ConfirmResult> {
+  const { fetchImpl, cookiesUsed } = cookielessFetch(fetcher);
+  const ebay = parseEbayItemUrl(url);
+  if (ebay && isEbayAdapterEnabled()) {
+    const verify = await verifyEbayItem(ebay, fetchImpl, now);
+    return classifyListingPublished(verify, { cookiesUsed: cookiesUsed(), now, claim });
+  }
+  const page = await fetchPage(url, fetchImpl);
+  const verify = classify(page, now);
+  return classifyListingPublished(verify, { cookiesUsed: cookiesUsed(), now, claim, page });
+}
+
 export async function confirmUrl(
   url: string,
   fetcher: typeof fetch = fetch,
   now = new Date(),
+  options: { intent?: ConfirmIntent; claim?: Record<string, unknown> } = {},
 ): Promise<ConfirmResult> {
+  const intent = options.intent ?? LEAD_SUBMIT_INTENT;
+  if (intent === LISTING_PUBLISHED_INTENT) {
+    return confirmListingPublishedUrl(url, fetcher, now, options.claim);
+  }
   const { fetchImpl, cookiesUsed } = cookielessFetch(fetcher);
   const page = await fetchPage(url, fetchImpl);
   return classifyLeadSubmit(page, { cookiesUsed: cookiesUsed(), now });

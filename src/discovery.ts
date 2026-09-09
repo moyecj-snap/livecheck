@@ -99,17 +99,19 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
                     url: {
                       type: "string",
                       format: "uri",
-                      description: "Absolute http(s) URL of the thank-you or result page.",
+                      description:
+                        "Absolute http(s) URL. lead_submit: thank-you or result page. listing_published: the specific job, product, or eBay item URL claimed to be live.",
                     },
                     intent: {
                       type: "string",
-                      enum: ["lead_submit"],
-                      description: "Confirm intent. Only lead_submit is payable; other values return 400 unsupported_intent.",
+                      enum: ["lead_submit", "listing_published"],
+                      description:
+                        "Confirm intent. lead_submit and listing_published are payable at $0.10. order_placed and other values return 400 unsupported_intent.",
                     },
                     claim: {
                       type: "object",
                       description:
-                        "Optional for lead_submit. Not required. Ignored by the lead_submit classifier in this phase.",
+                        "Optional. lead_submit ignores claim. listing_published may use claim.title / claim.sku / claim.id; claim is not required if Verify alone reaches L2.",
                     },
                   },
                   required: ["url", "intent"],
@@ -128,7 +130,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
             },
             "400": {
               description:
-                "unsupported_intent or invalid body. Only lead_submit is a payable Confirm intent.",
+                "unsupported_intent or invalid body. order_placed is not a payable Confirm intent.",
             },
             "402": {
               description: "Payment Required",
@@ -174,7 +176,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
           operationId: "confirmStats",
           summary: "Confirm rolling counts",
           description:
-            "Free. lead_submit paid-call and receipt counts. No published false-confirmed rate. Not a payable route.",
+            "Free. lead_submit and listing_published rolling counts. No published false-confirmed rate. Not a payable route.",
           tags: ["Confirm"],
           responses: {
             "200": { description: "JSON stats (HTML when Accept: text/html)" },

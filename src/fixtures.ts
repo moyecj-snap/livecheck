@@ -371,6 +371,12 @@ export const FIXTURES: Record<FixtureId, FixtureSpec> = {
     body: GREENHOUSE_BOARD,
     label: "Careers homepage / ATS board",
   },
+  "jobs/1842": {
+    id: "jobs/1842",
+    status: 200,
+    body: LIVE_APPLY_NOW,
+    label: "Numeric job path with Apply Now",
+  },
   "jobs/9901": {
     id: "jobs/9901",
     status: 302,

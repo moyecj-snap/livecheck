@@ -1,0 +1,15 @@
+{
+  "n": 102,
+  "true_live": 34,
+  "true_closed": 30,
+  "trap": 38,
+  "confirmed": 34,
+  "failed": 30,
+  "unknown": 38,
+  "false_confirmed": 0,
+  "expect_mismatches": 0,
+  "false_confirmed_ids": [],
+  "failures": [],
+  "fc_zero": true,
+  "path": "scripts/listing-published-bench.ts"
+}

@@ -2,18 +2,21 @@ import { CONFIRM_PRICE_USD } from "./config.js";
 import { isoCutoff, queryRetentionWindowsFromStore } from "./paid-call-store.js";
 import { countReceiptsSince, emptyReceiptVerdictCounts } from "./receipt-store.js";
 
+export type ConfirmIntentStats = {
+  payable: true;
+  price_usd: number;
+  status: "ga" | "payable";
+  l7d: IntentWindow;
+  l30d: IntentWindow;
+};
+
 export type StatsDocument = {
   ok: true;
   service: "livecheck";
   generated_at: string;
   intents: {
-    lead_submit: {
-      payable: true;
-      price_usd: number;
-      status: "ga";
-      l7d: IntentWindow;
-      l30d: IntentWindow;
-    };
+    lead_submit: ConfirmIntentStats;
+    listing_published: ConfirmIntentStats;
   };
   benches: {
     false_confirmed_rate: null;
@@ -43,10 +46,23 @@ export function emptyIntentWindow(): IntentWindow {
   };
 }
 
+function windowFromReceipts(
+  receipts: { receipts: number; by_verdict: IntentWindow["by_verdict"] },
+  paidCallsFallback?: number,
+): IntentWindow {
+  return {
+    paid_calls: paidCallsFallback ?? receipts.receipts,
+    receipts: receipts.receipts,
+    by_verdict: receipts.by_verdict,
+  };
+}
+
 export function buildStatsDocument(now = new Date()): StatsDocument {
   const windows = queryRetentionWindowsFromStore(now);
-  const l7dReceipts = countReceiptsSince(isoCutoff(now, 7), "lead_submit");
-  const l30dReceipts = countReceiptsSince(isoCutoff(now, 30), "lead_submit");
+  const lead7 = countReceiptsSince(isoCutoff(now, 7), "lead_submit");
+  const lead30 = countReceiptsSince(isoCutoff(now, 30), "lead_submit");
+  const listing7 = countReceiptsSince(isoCutoff(now, 7), "listing_published");
+  const listing30 = countReceiptsSince(isoCutoff(now, 30), "listing_published");
   return {
     ok: true,
     service: "livecheck",
@@ -56,16 +72,15 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
         payable: true,
         price_usd: CONFIRM_PRICE_USD,
         status: "ga",
-        l7d: {
-          paid_calls: windows?.l7d.confirm.calls ?? 0,
-          receipts: l7dReceipts.receipts,
-          by_verdict: l7dReceipts.by_verdict,
-        },
-        l30d: {
-          paid_calls: windows?.l30d.confirm.calls ?? 0,
-          receipts: l30dReceipts.receipts,
-          by_verdict: l30dReceipts.by_verdict,
-        },
+        l7d: windowFromReceipts(lead7, windows?.l7d.confirm.calls ?? 0),
+        l30d: windowFromReceipts(lead30, windows?.l30d.confirm.calls ?? 0),
+      },
+      listing_published: {
+        payable: true,
+        price_usd: CONFIRM_PRICE_USD,
+        status: "payable",
+        l7d: windowFromReceipts(listing7),
+        l30d: windowFromReceipts(listing30),
       },
     },
     benches: {
@@ -73,17 +88,18 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
       note: BENCH_NOTE,
     },
     notes: [
-      "Only lead_submit is a payable Confirm intent in this phase.",
-      "Unknown intents return HTTP 400 unsupported_intent and are not listed on Bazaar.",
-      "paid_calls are confirm-route volume (day-1 = lead_submit). Verdict breakdown is from receipt records when present.",
+      "Payable Confirm intents: lead_submit (GA) and listing_published (payable). order_placed remains unsupported_intent.",
+      "Bazaar 402 copy stays lead_submit-primary. listing_published is documented on OpenAPI/x402, not advertised as the Confirm hero.",
+      "lead_submit paid_calls are confirm-route volume. listing_published paid_calls placeholders are receipt-backed until paid_calls rows store intent.",
     ],
   };
 }
 
 export function statsHtml(doc: StatsDocument): string {
   const lead = doc.intents.lead_submit;
-  const row = (label: string, w: IntentWindow) =>
-    `<tr><td>${label}</td><td>${w.paid_calls}</td><td>${w.receipts}</td><td>${w.by_verdict.confirmed}</td><td>${w.by_verdict.failed}</td><td>${w.by_verdict.unknown}</td></tr>`;
+  const listing = doc.intents.listing_published;
+  const row = (intent: string, label: string, w: IntentWindow) =>
+    `<tr><td>${intent}</td><td>${label}</td><td>${w.paid_calls}</td><td>${w.receipts}</td><td>${w.by_verdict.confirmed}</td><td>${w.by_verdict.failed}</td><td>${w.by_verdict.unknown}</td></tr>`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -100,14 +116,16 @@ export function statsHtml(doc: StatsDocument): string {
 </head>
 <body>
   <h1>Livecheck Confirm stats</h1>
-  <p>Generated ${doc.generated_at}. Payable intent: <code>lead_submit</code> at $${lead.price_usd.toFixed(2)} USDC.</p>
+  <p>Generated ${doc.generated_at}. Payable intents: <code>lead_submit</code> (GA) and <code>listing_published</code> at $${lead.price_usd.toFixed(2)} USDC. <code>order_placed</code> is not payable.</p>
   <table>
     <thead>
-      <tr><th>Window</th><th>Paid calls</th><th>Receipts</th><th>confirmed</th><th>failed</th><th>unknown</th></tr>
+      <tr><th>Intent</th><th>Window</th><th>Paid calls</th><th>Receipts</th><th>confirmed</th><th>failed</th><th>unknown</th></tr>
     </thead>
     <tbody>
-      ${row("L7d", lead.l7d)}
-      ${row("L30d", lead.l30d)}
+      ${row("lead_submit", "L7d", lead.l7d)}
+      ${row("lead_submit", "L30d", lead.l30d)}
+      ${row("listing_published", "L7d", listing.l7d)}
+      ${row("listing_published", "L30d", listing.l30d)}
     </tbody>
   </table>
   <p class="muted">${doc.benches.note}</p>
