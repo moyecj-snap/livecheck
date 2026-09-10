@@ -13,6 +13,7 @@ import {
   PRICE_USD,
   VERIFY_DESCRIPTION,
 } from "../src/config.js";
+import { PAID_DISCOVERY_ROUTES } from "../src/discovery.js";
 import { livePaymentMiddlewareFromServer, resourceServerFromFacilitator } from "../src/payments.js";
 
 function stubFacilitator(): FacilitatorClient {
@@ -173,6 +174,29 @@ describe("discovery documents (mock gate)", () => {
     assert.deepEqual(order.requestBody?.content?.["application/json"]?.schema?.properties?.intent?.enum, [
       "order_placed",
     ]);
+    const paid = PAID_DISCOVERY_ROUTES;
+    const paths = doc.paths as Record<
+      string,
+      {
+        post?: {
+          "x-payment-info"?: {
+            price?: { mode?: string; currency?: string; amount?: string };
+            intent_prices?: unknown;
+          };
+        };
+      }
+    >;
+    for (const route of paid) {
+      const op = paths[route.path]?.post;
+      assert.ok(op, `expected POST ${route.path}`);
+      assert.equal(op["x-payment-info"]?.price?.mode, "fixed", `${route.path} must be fixed`);
+      assert.equal(op["x-payment-info"]?.price?.currency, "USD");
+      assert.equal(op["x-payment-info"]?.price?.amount, route.amount);
+      assert.equal(op["x-payment-info"]?.intent_prices, undefined, `${route.path} must have one price, no intent_prices`);
+    }
+    const stats = paths["/stats"] as { get?: { description?: string; tags?: string[] } } | undefined;
+    assert.match(stats?.get?.description ?? "", /Sentinel/);
+    assert.ok(stats?.get?.tags?.includes("Sentinel"));
   });
 
   it("GET /.well-known/x402 is free 200 JSON listing the verify URL", async () => {

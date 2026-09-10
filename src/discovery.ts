@@ -26,6 +26,16 @@ const OPENAPI_CHECK_PRICE_AMOUNT = "0.02";
 const OPENAPI_WATCH_PRICE_AMOUNT = "2.50";
 const OPENAPI_CHAIN_TOPUP_PRICE_AMOUNT = "0.50";
 
+/** Paid routes advertised on OpenAPI + /.well-known/x402. One fixed price each. */
+export const PAID_DISCOVERY_ROUTES = [
+  { path: "/v1/verify", amount: OPENAPI_PRICE_AMOUNT },
+  { path: "/v1/check", amount: OPENAPI_CHECK_PRICE_AMOUNT },
+  { path: "/v1/watch", amount: OPENAPI_WATCH_PRICE_AMOUNT },
+  { path: "/v1/watch/{id}/chain/topup", amount: OPENAPI_CHAIN_TOPUP_PRICE_AMOUNT },
+  { path: "/v1/confirm", amount: OPENAPI_CONFIRM_PRICE_AMOUNT },
+  { path: "/v1/confirm/order", amount: OPENAPI_ORDER_PLACED_PRICE_AMOUNT },
+] as const;
+
 export function discoveryHeaders(): Record<string, string> {
   return {
     "content-type": "application/json; charset=utf-8",
@@ -592,11 +602,11 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
       },
       "/stats": {
         get: {
-          operationId: "confirmStats",
-          summary: "Confirm rolling counts",
+          operationId: "livecheckStats",
+          summary: "Confirm and Sentinel counts",
           description:
-            "Free. lead_submit, listing_published, and order_placed rolling counts. No published false-confirmed rate. Not a payable route.",
-          tags: ["Confirm"],
+            "Free. Confirm: lead_submit, listing_published, and order_placed rolling counts (false_confirmed_rate is a structured null). Sentinel: active_watchers, checks_run, change_events, by_detector from SQLite; false_positive_rate and median_latency_ms are structured nulls until dispute + benches land. Not a payable route.",
+          tags: ["Confirm", "Sentinel"],
           responses: {
             "200": { description: "JSON stats (HTML when Accept: text/html)" },
           },
@@ -622,6 +632,8 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
  * x402scan DISCOVERY.md compatibility fan-out.
  * resources must be absolute URL strings (not objects) — @agentcash/discovery
  * WellKnownDocSchema is z.array(z.string()).
+ * Six paid routes, one fixed accept each: verify $0.01, check $0.02, watch $2.50,
+ * watch/{id}/chain/topup $0.50, confirm $0.10, confirm/order $0.25.
  */
 export function wellKnownX402(requestUrl?: string, host?: string): Record<string, unknown> {
   return {
