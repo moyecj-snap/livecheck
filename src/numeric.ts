@@ -31,7 +31,12 @@ export function parseLooseNumber(raw: string): number | null {
   const lastComma = token.lastIndexOf(",");
   const lastDot = token.lastIndexOf(".");
   if (lastComma > lastDot) {
-    token = token.replace(/\./g, "").replace(",", ".");
+    const afterComma = token.length - lastComma - 1;
+    if (afterComma === 3 && lastDot < 0) {
+      token = token.replace(/,/g, "");
+    } else {
+      token = token.replace(/\./g, "").replace(",", ".");
+    }
   } else if (lastDot > lastComma) {
     token = token.replace(/,/g, "");
   } else if (lastComma >= 0) {

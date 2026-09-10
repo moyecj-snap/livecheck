@@ -124,19 +124,28 @@ export function extractBySelector(html: string, selector: string): string {
   if (!sel) return "";
   const parsed = sel.match(/^([a-zA-Z][a-zA-Z0-9]*)?(?:#([a-zA-Z0-9_-]+)|\.([a-zA-Z0-9_-]+))?$/);
   if (!parsed || (!parsed[1] && !parsed[2] && !parsed[3])) return "";
-  const tag = parsed[1] ?? "[a-zA-Z][a-zA-Z0-9]*";
+  const wantTag = parsed[1]?.toLowerCase() ?? null;
   const id = parsed[2];
   const className = parsed[3];
-  const tagRe = new RegExp(`<(${tag})(\\s[^>]*)?>([\\s\\S]*?)</\\1>`, "gi");
+  const openRe = /<([a-zA-Z][a-zA-Z0-9]*)(\s[^>]*)?>/g;
   const parts: string[] = [];
   let match: RegExpExecArray | null;
-  while ((match = tagRe.exec(html))) {
+  while ((match = openRe.exec(html))) {
+    const tagName = match[1];
+    if (wantTag && tagName.toLowerCase() !== wantTag) continue;
     const attrs = match[2] ?? "";
     if (id && !new RegExp(`\\sid=["']${escapeRegExp(id)}["']`, "i").test(attrs)) continue;
-    if (className && !new RegExp(`\\sclass=["'][^"']*\\b${escapeRegExp(className)}\\b`, "i").test(attrs)) {
+    if (className) {
+      const classAttr = attrs.match(/\sclass=["']([^"']+)["']/i);
+      const classes = classAttr?.[1]?.split(/\s+/).filter(Boolean) ?? [];
+      if (!classes.includes(className)) continue;
+    } else if (!wantTag && !id) {
       continue;
     }
-    parts.push(match[3]);
+    const start = match.index + match[0].length;
+    const close = html.slice(start).match(new RegExp(`</${escapeRegExp(tagName)}>`, "i"));
+    if (!close || close.index == null) continue;
+    parts.push(html.slice(start, start + close.index));
   }
   return stripTags(parts.join(" "));
 }

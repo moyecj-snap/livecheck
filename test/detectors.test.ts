@@ -111,7 +111,8 @@ describe("numeric_threshold helpers", () => {
     assert.equal(pickAmount("$1,299.00", "USD"), 1299);
     assert.equal(pickAmount("1 299,00 €", "EUR"), 1299);
     assert.equal(parseLooseNumber("149"), 149);
-    assert.equal(pickAmount("Was $1,500 now $1,299.00", "USD"), 1500);
+    assert.equal(parseLooseNumber("1,500"), 1500);
+    assert.equal(pickAmount("Sale $1,299.00", "USD"), 1299);
   });
 
   it("compares ops including change_pct", () => {

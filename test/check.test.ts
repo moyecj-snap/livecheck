@@ -113,9 +113,10 @@ describe("check parsers and detectors", () => {
   });
 
   it("extracts text from a simple CSS selector", () => {
-    const html = `<html><body><h1>Staff Backend Engineer</h1><button>Apply Now</button></body></html>`;
+    const html = `<html><body><h1>Staff Backend Engineer</h1><p class="price">$1,299.00</p><button>Apply Now</button></body></html>`;
     assert.match(extractBySelector(html, "h1"), /Staff Backend Engineer/);
     assert.equal(extractBySelector(html, "h1").includes("Apply Now"), false);
+    assert.equal(extractBySelector(html, ".price"), "$1,299.00");
   });
 
   it("rejects invalid target and condition", () => {
