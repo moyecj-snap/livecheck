@@ -184,9 +184,11 @@ describe("POST /v1/check text_diff and numeric_threshold", () => {
       observation: { hash: string };
       fired: boolean | null;
       confidence: number;
+      content?: string;
     };
     assert.equal(firstBody.fired, null);
     assert.ok(firstBody.confidence > 0.6);
+    assert.equal(firstBody.content, undefined);
 
     const stampBaseline = await fetch(`${origin}/v1/check`, {
       method: "POST",

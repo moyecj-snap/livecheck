@@ -186,7 +186,8 @@ async function handlePaidCheck(c: Context) {
   try {
     const parsed = parseCheckRequest(body);
     const classified = await runCheck(parsed);
-    const result = sealCheckResult(classified, {
+    const { content: _content, ...publicCheck } = classified;
+    const result = sealCheckResult(publicCheck, {
       url: parsed.target.url,
       requestUrl: c.req.url,
       host: c.req.header("host"),
