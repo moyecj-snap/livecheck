@@ -8,10 +8,16 @@ import {
 import { isoCutoff, queryRetentionWindowsFromStore } from "./paid-call-store.js";
 import { countReceiptsSince, emptyReceiptVerdictCounts } from "./receipt-store.js";
 import {
+  loadSentinelBenches,
+  type SentinelBenches,
+} from "./sentinel-stats-benches.js";
+import {
   emptySentinelWatchStats,
   querySentinelWatchStats,
   type SentinelDetectorCounts,
 } from "./watch-store.js";
+
+export type { SentinelBenches } from "./sentinel-stats-benches.js";
 
 export type ConfirmIntentStats = {
   payable: true;
@@ -19,12 +25,6 @@ export type ConfirmIntentStats = {
   status: "ga" | "payable";
   l7d: IntentWindow;
   l30d: IntentWindow;
-};
-
-export type SentinelBenches = {
-  false_positive_rate: null;
-  median_latency_ms: null;
-  note: string;
 };
 
 export type SentinelStats = {
@@ -72,9 +72,6 @@ export type IntentWindow = {
 const BENCH_NOTE =
   "Accuracy benches are not published. Do not infer a false-confirmed rate from these counts; missing is not zero.";
 
-const SENTINEL_BENCH_NOTE =
-  "Sentinel false-positive rate and median latency are not published on this route (no dispute endpoint). Local/CI benches: docs/sentinel-benches.md. Missing is not zero.";
-
 export function emptyIntentWindow(): IntentWindow {
   return {
     paid_calls: 0,
@@ -115,11 +112,7 @@ export function buildSentinelStats(): SentinelStats {
     checks_run: oneShot + watch.checks_run_scheduled,
     change_events: watch.change_events,
     by_detector: watch.by_detector,
-    benches: {
-      false_positive_rate: null,
-      median_latency_ms: null,
-      note: SENTINEL_BENCH_NOTE,
-    },
+    benches: loadSentinelBenches(),
   };
 }
 
@@ -167,7 +160,7 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
       "Payable Confirm intents: lead_submit (GA, $0.10) and listing_published ($0.10) on POST /v1/confirm; order_placed ($0.25) on POST /v1/confirm/order.",
       "Bazaar 402 copy stays lead_submit-primary on /v1/confirm. order_placed is a separate fixed-price resource. Sentinel Bazaar GA is held.",
       "lead_submit paid_calls are confirm-route volume. listing_published and order_placed paid_calls placeholders are receipt-backed until paid_calls rows store intent.",
-      "Sentinel checks_run is one-shot POST /v1/check receipts plus scheduled watcher observations (term quota minus checks_remaining). by_detector is SQLite watchers + change events.",
+      "Sentinel checks_run is one-shot POST /v1/check receipts plus scheduled watcher observations (term quota minus checks_remaining). by_detector is SQLite watchers + change events. sentinel.benches are CI/local gate results from bench/sentinel-report.json (fallback: main 590627c), not a live dispute rate.",
     ],
   };
 }
@@ -181,6 +174,9 @@ export function statsHtml(doc: StatsDocument): string {
     `<tr><td>${intent}</td><td>${label}</td><td>${w.paid_calls}</td><td>${w.receipts}</td><td>${w.by_verdict.confirmed}</td><td>${w.by_verdict.failed}</td><td>${w.by_verdict.unknown}</td></tr>`;
   const detectorRow = (name: string, counts: { watchers: number; change_events: number }) =>
     `<tr><td>${name}</td><td>${counts.watchers}</td><td>${counts.change_events}</td></tr>`;
+  const fp = sentinel.benches.false_positive_rate;
+  const hmac = sentinel.benches.hmac;
+  const fires = (rate: number, n: number) => `${Math.round(rate * n)}/${n}`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -224,8 +220,8 @@ export function statsHtml(doc: StatsDocument): string {
         <td>${sentinel.active_watchers}</td>
         <td>${sentinel.checks_run}</td>
         <td>${sentinel.change_events}</td>
-        <td>${sentinel.benches.false_positive_rate === null ? "null" : sentinel.benches.false_positive_rate}</td>
-        <td>${sentinel.benches.median_latency_ms === null ? "null" : `${sentinel.benches.median_latency_ms} ms`}</td>
+        <td>status_change ${fires(fp.status_change, fp.n_checks)} (rate ${fp.status_change}); text_diff ${fires(fp.text_diff, fp.n_checks)} (rate ${fp.text_diff})</td>
+        <td>${sentinel.benches.median_latency_ms} ms (p95 ${sentinel.benches.latency_p95_ms} ms)</td>
       </tr>
     </tbody>
   </table>
@@ -240,7 +236,25 @@ export function statsHtml(doc: StatsDocument): string {
       ${detectorRow("numeric_threshold", sentinel.by_detector.numeric_threshold)}
     </tbody>
   </table>
-  <p class="muted">${sentinel.benches.note}</p>
+  <h3>Sentinel benches</h3>
+  <table>
+    <thead>
+      <tr><th>status_change FP</th><th>text_diff FP</th><th>Median latency</th><th>p95 latency</th><th>interval_s</th><th>HMAC</th><th>Chain Verify</th><th>commit</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>${fires(fp.status_change, fp.n_checks)} (rate ${fp.status_change})</td>
+        <td>${fires(fp.text_diff, fp.n_checks)} (rate ${fp.text_diff})</td>
+        <td>${sentinel.benches.median_latency_ms} ms</td>
+        <td>${sentinel.benches.latency_p95_ms} ms</td>
+        <td>${sentinel.benches.interval_s}</td>
+        <td>${hmac.verified}/${hmac.delivered}${hmac.pass ? " pass" : " fail"}</td>
+        <td>${sentinel.benches.chain_verify}</td>
+        <td><code>${sentinel.benches.commit}</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="muted">${sentinel.benches.note} Gate: ${fp.gate}. Report: <code>${sentinel.benches.report}</code>.</p>
   <p class="muted">${doc.notes.join(" ")}</p>
   <p><a href="/stats?format=json">JSON</a> · <a href="/health">health</a></p>
 </body>

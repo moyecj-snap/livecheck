@@ -12,6 +12,11 @@ import {
   WATCH_PRICE_USD,
 } from "../src/config.js";
 import { openApiDocument } from "../src/discovery.js";
+import {
+  FALLBACK_SENTINEL_BENCHES,
+  benchesFromSentinelReport,
+  resetSentinelBenches,
+} from "../src/sentinel-stats-benches.js";
 import { buildStatsDocument } from "../src/stats.js";
 import {
   closeWatchStore,
@@ -118,7 +123,22 @@ describe("GET /stats", () => {
           text_diff?: { watchers?: number; change_events?: number };
           numeric_threshold?: { watchers?: number; change_events?: number };
         };
-        benches?: { false_positive_rate?: unknown; median_latency_ms?: unknown; note?: string };
+        benches?: {
+          false_positive_rate?: {
+            status_change?: number;
+            text_diff?: number;
+            n_checks?: number;
+            gate?: string;
+          };
+          median_latency_ms?: number;
+          latency_p95_ms?: number;
+          interval_s?: number;
+          hmac?: { verified?: number; delivered?: number; pass?: boolean };
+          chain_verify?: string;
+          report?: string;
+          commit?: string;
+          note?: string;
+        };
       };
       benches?: { false_confirmed_rate?: unknown; note?: string };
     };
@@ -148,9 +168,20 @@ describe("GET /stats", () => {
     assert.equal(typeof body.sentinel?.by_detector?.keyword?.watchers, "number");
     assert.equal(typeof body.sentinel?.by_detector?.text_diff?.watchers, "number");
     assert.equal(typeof body.sentinel?.by_detector?.numeric_threshold?.watchers, "number");
-    assert.equal(body.sentinel?.benches?.false_positive_rate, null);
-    assert.equal(body.sentinel?.benches?.median_latency_ms, null);
-    assert.match(body.sentinel?.benches?.note ?? "", /not published/i);
+    assert.deepEqual(body.sentinel?.benches?.false_positive_rate, {
+      status_change: 0,
+      text_diff: 0,
+      n_checks: 198,
+      gate: "status_change=0; text_diff<=0.02",
+    });
+    assert.equal(body.sentinel?.benches?.median_latency_ms, 162500);
+    assert.equal(body.sentinel?.benches?.latency_p95_ms, 315250);
+    assert.equal(body.sentinel?.benches?.interval_s, 300);
+    assert.deepEqual(body.sentinel?.benches?.hmac, { verified: 20, delivered: 20, pass: true });
+    assert.equal(body.sentinel?.benches?.chain_verify, "pass");
+    assert.equal(body.sentinel?.benches?.report, "docs/sentinel-benches.md");
+    assert.equal(body.sentinel?.benches?.commit, "590627c");
+    assert.match(body.sentinel?.benches?.note ?? "", /not a 1000-watcher/i);
   });
 
   it("returns HTML Sentinel section when Accept: text/html", async () => {
@@ -162,6 +193,13 @@ describe("GET /stats", () => {
     assert.match(html, /Active watchers/);
     assert.match(html, /False-positive rate/);
     assert.match(html, /Median latency/);
+    assert.match(html, /status_change 0\/198/);
+    assert.match(html, /text_diff 0\/198/);
+    assert.match(html, /162500 ms/);
+    assert.match(html, /315250 ms/);
+    assert.match(html, /20\/20 pass/);
+    assert.match(html, /590627c/);
+    assert.doesNotMatch(html, />null</);
     assert.match(html, /status_change/);
     assert.match(html, /numeric_threshold/);
   });
@@ -249,8 +287,11 @@ describe("Sentinel /stats from SQLite", () => {
     assert.equal(doc.sentinel.by_detector.text_diff.watchers, 1);
     assert.equal(doc.sentinel.by_detector.text_diff.change_events, 0);
     assert.equal(doc.sentinel.by_detector.numeric_threshold.watchers, 0);
-    assert.equal(doc.sentinel.benches.false_positive_rate, null);
-    assert.equal(doc.sentinel.benches.median_latency_ms, null);
+    assert.equal(doc.sentinel.benches.false_positive_rate.status_change, 0);
+    assert.equal(doc.sentinel.benches.false_positive_rate.text_diff, 0);
+    assert.equal(doc.sentinel.benches.false_positive_rate.n_checks, 198);
+    assert.equal(doc.sentinel.benches.median_latency_ms, 162500);
+    assert.equal(doc.sentinel.benches.latency_p95_ms, 315250);
   });
 });
 
@@ -315,6 +356,27 @@ describe("OpenAPI Confirm v1.0 spine", () => {
     assert.ok(doc.paths?.["/v1/receipt/{id}"]);
     assert.ok(doc.paths?.["/stats"]);
     assert.match(doc.paths?.["/stats"]?.get?.description ?? "", /Sentinel/);
+    assert.match(doc.paths?.["/stats"]?.get?.description ?? "", /sentinel-report\.json/);
+    assert.doesNotMatch(doc.paths?.["/stats"]?.get?.description ?? "", /structured nulls/);
     assert.ok(doc.paths?.["/stats"]?.get?.tags?.includes("Sentinel"));
+  });
+});
+
+describe("Sentinel benches loader", () => {
+  after(() => {
+    resetSentinelBenches();
+  });
+
+  it("falls back to the landed 590627c numbers when the report is missing", () => {
+    const load = resetSentinelBenches(null);
+    assert.equal(load.source, "fallback");
+    assert.deepEqual(load.benches, FALLBACK_SENTINEL_BENCHES);
+    assert.equal(load.benches.commit, "590627c");
+    assert.equal(load.benches.median_latency_ms, 162500);
+    assert.equal(load.benches.latency_p95_ms, 315250);
+  });
+
+  it("rejects a report missing latency so Fly still uses the fallback", () => {
+    assert.equal(benchesFromSentinelReport({ honesty: { status_change: { false_positive_rate: 0, checks: 198 } } }), null);
   });
 });

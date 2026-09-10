@@ -6,6 +6,7 @@ import { loadDotEnvIfPresent } from "./env.js";
 import { initPaidCallStore } from "./paid-call-store.js";
 import { initReceiptStore } from "./receipt-store.js";
 import { startWatchScheduler } from "./watch-scheduler.js";
+import { sentinelBenchesLoadInfo } from "./sentinel-stats-benches.js";
 import { initWatchStore } from "./watch-store.js";
 
 loadDotEnvIfPresent();
@@ -35,6 +36,11 @@ if (watchStore.ok) {
   console.warn(`watch persistence failed (${watchStore.reason}). Watchers will not survive this process.`);
 }
 startWatchScheduler();
+
+const sentinelBenches = sentinelBenchesLoadInfo();
+console.log(
+  `sentinel benches: source=${sentinelBenches.source}${sentinelBenches.path ? ` path=${sentinelBenches.path}` : ""} p50=${sentinelBenches.benches.median_latency_ms}ms p95=${sentinelBenches.benches.latency_p95_ms}ms commit=${sentinelBenches.benches.commit}`,
+);
 
 const listenPort = port();
 const app = createApp();

@@ -392,8 +392,8 @@ JSON and HTML include `sentinel` next to Confirm intents. Counts come from `watc
 | `checks_run` | one-shot `POST /v1/check` receipts + scheduled observations (`term quota − checks_remaining`) |
 | `change_events` | `watch_events` rows with `kind=change` |
 | `by_detector.{status_change,keyword,text_diff,numeric_threshold}` | watcher counts and change-event counts per detector |
-| `benches.false_positive_rate` | structured **null** on the live route (no dispute endpoint). Local/CI: `docs/sentinel-benches.md` |
-| `benches.median_latency_ms` | structured **null** on the live route. Local/CI: `docs/sentinel-benches.md` |
+| `benches.false_positive_rate` | CI/local gate rates from `bench/sentinel-report.json` (fallback: main `590627c`). `status_change` 0/198, `text_diff` 0/198, `n_checks` 198, gate `status_change=0; text_diff<=0.02`. Not a live dispute rate. |
+| `benches.median_latency_ms` | 162500 (p50). Also `latency_p95_ms` 315250, `interval_s` 300, HMAC 20/20, chain Verify pass. Report: `docs/sentinel-benches.md`. |
 
 Prices on that object stay `$0.02` / `$2.50` / `$0.50`. `status` is `payable` (Bazaar GA held). Missing is not zero.
 
@@ -716,7 +716,7 @@ Spec §8 — not in this slice. Do not treat these as shipped or priced:
 - Playwright / `POST /v1/watch/fast` / JS render (`render: always` stays `400 render_not_available`)
 - Watcher renew
 - Confirm chain (`on_change.run=confirm`) — deferred. Verify chain via `POST /v1/watch/{id}/chain/topup` is live
-- Dispute endpoint or a published Sentinel false-positive rate on `GET /stats` (local benches live in `docs/sentinel-benches.md`)
+- Dispute endpoint or a live-route Sentinel false-positive rate (CI/local benches are published on `GET /stats` `sentinel.benches` from `bench/sentinel-report.json`)
 - Bazaar GA listing push (402 bazaar metadata on Verify stays; do not treat catalog index as GA)
 - Dual accepts or dynamic pricing on one 402
 - Postgres watcher spine (SQLite on the Fly volume)

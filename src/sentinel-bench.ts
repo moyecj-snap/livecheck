@@ -736,7 +736,7 @@ npm test -- test/sentinel-bench.test.ts
 
 ${report.scale.note}
 
-Fixtures rotate timestamps, view/sold counters, session/CSRF tokens, ad slots, cookie banners, and promo copy. \`text_diff\` uses selector \`${LISTING_TITLE_SELECTOR}\`. \`GET /stats\` Sentinel bench fields stay structured **null** (no dispute endpoint / no published live rate).
+Fixtures rotate timestamps, view/sold counters, session/CSRF tokens, ad slots, cookie banners, and promo copy. \`text_diff\` uses selector \`${LISTING_TITLE_SELECTOR}\`. \`GET /stats\` \`sentinel.benches\` publishes these CI/local numbers (loaded from \`bench/sentinel-report.json\` at boot, hardcoded fallback if the JSON is missing). Not a live dispute rate.
 
 ## Gate results
 

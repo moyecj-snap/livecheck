@@ -605,7 +605,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
           operationId: "livecheckStats",
           summary: "Confirm and Sentinel counts",
           description:
-            "Free. Confirm: lead_submit, listing_published, and order_placed rolling counts (false_confirmed_rate is a structured null). Sentinel: active_watchers, checks_run, change_events, by_detector from SQLite; false_positive_rate and median_latency_ms stay structured nulls (no dispute endpoint). Local/CI benches: docs/sentinel-benches.md. Not a payable route.",
+            "Free. Confirm: lead_submit, listing_published, and order_placed rolling counts (false_confirmed_rate is a structured null). Sentinel: active_watchers, checks_run, change_events, by_detector from SQLite; sentinel.benches publishes CI/local gate numbers from bench/sentinel-report.json (status_change/text_diff FP, latency p50/p95, HMAC, chain Verify) with a hardcoded fallback from main 590627c. Not a live dispute rate or 1000-watcher soak. Not a payable route.",
           tags: ["Confirm", "Sentinel"],
           responses: {
             "200": { description: "JSON stats (HTML when Accept: text/html)" },

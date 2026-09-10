@@ -12,6 +12,8 @@ RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
 COPY scripts ./scripts
+COPY bench ./bench
+COPY docs ./docs
 
 ENV NODE_ENV=production
 ENV PORT=43127
