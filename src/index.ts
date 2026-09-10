@@ -4,6 +4,8 @@ import { DEFAULT_PORT, isLiveSettlement, missingLiveKeyNames, port } from "./con
 import { isEbayAdapterEnabled, logEbayAdapterDisabled } from "./ebay.js";
 import { loadDotEnvIfPresent } from "./env.js";
 import { initPaidCallStore } from "./paid-call-store.js";
+import { startWatchScheduler } from "./watch-scheduler.js";
+import { initWatchStore } from "./watch-store.js";
 
 loadDotEnvIfPresent();
 
@@ -15,6 +17,14 @@ if (store.ok) {
     `paid_call retention: stdout-only (${store.reason}). CoS interim: npm run paid-call:cos -- --from-logs`,
   );
 }
+
+const watchStore = initWatchStore();
+if (watchStore.ok) {
+  console.log(`watch persistence: sqlite ${watchStore.path} (Fly volume /data, survives restarts)`);
+} else {
+  console.warn(`watch persistence failed (${watchStore.reason}). Watchers will not survive this process.`);
+}
+startWatchScheduler();
 
 const listenPort = port();
 const app = createApp();

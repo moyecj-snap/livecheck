@@ -10,6 +10,9 @@ import {
   CHECK_PAYMENT_DESCRIPTION,
   CHECK_PRICE_ATOMIC_USDC,
   CHECK_PRICE_USD,
+  WATCH_PAYMENT_DESCRIPTION,
+  WATCH_PRICE_ATOMIC_USDC,
+  WATCH_PRICE_USD,
   ORDER_PLACED_PRICE_ATOMIC_USDC,
   ORDER_PLACED_PRICE_USD,
   CONFIRM_RESOURCE_TAGS,
@@ -60,6 +63,12 @@ describe("listing price and description", () => {
     assert.equal(ORDER_PLACED_PRICE_ATOMIC_USDC, "250000");
     assert.equal(CHECK_PRICE_USD, 0.02);
     assert.equal(CHECK_PRICE_ATOMIC_USDC, "20000");
+    assert.equal(WATCH_PRICE_USD, 2.5);
+    assert.equal(WATCH_PRICE_ATOMIC_USDC, "2500000");
+    assert.equal(
+      [...WATCH_PAYMENT_DESCRIPTION].every((ch) => ch.charCodeAt(0) < 128),
+      true,
+    );
     assert.equal(
       [...CHECK_PAYMENT_DESCRIPTION].every((ch) => ch.charCodeAt(0) < 128),
       true,

@@ -106,6 +106,58 @@ export type CheckResult = {
   receipt: ConfirmReceipt;
 };
 
+export type WatchStatus = "active" | "stopped" | "expired";
+
+export type WatchBaseline = {
+  captured: boolean;
+  hash?: string;
+  summary?: string;
+};
+
+export type WatchCallback = {
+  url: string;
+  secret: string;
+  deliver: "on_change";
+};
+
+export type WatchCreateResult = {
+  id: string;
+  tier: "standard";
+  status: WatchStatus;
+  owner_token: string;
+  expires_at: string;
+  checks_remaining: number;
+  interval_s: number;
+  first_check_at: string;
+  next_check_at: string;
+  baseline: WatchBaseline;
+  target: CheckTarget;
+  condition: { detector: CheckDetector; params: Record<string, unknown> };
+  price_usd: number;
+  run: "none";
+  receipt: ConfirmReceipt;
+  label?: string;
+};
+
+export type WatchPublicView = {
+  id: string;
+  tier: "standard";
+  status: WatchStatus;
+  expires_at: string;
+  checks_remaining: number;
+  interval_s: number;
+  first_check_at: string;
+  next_check_at: string;
+  baseline: WatchBaseline;
+  last_observation: CheckObservation | null;
+  target: CheckTarget;
+  condition: { detector: CheckDetector; params: Record<string, unknown> };
+  price_usd: number;
+  run: "none";
+  callback: { url: string; deliver: "on_change" };
+  label?: string;
+};
+
 export type FetchedPage = {
   requestedUrl: string;
   canonicalUrl: string;

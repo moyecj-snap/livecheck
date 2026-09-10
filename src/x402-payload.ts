@@ -3,6 +3,7 @@ import {
   confirmBazaarExtensions,
   orderConfirmBazaarExtensions,
   verifyBazaarExtensions,
+  watchBazaarExtensions,
 } from "./bazaar.js";
 import {
   CHECK_PAYMENT_DESCRIPTION,
@@ -16,6 +17,8 @@ import {
   USDC_BASE,
   USDC_EIP712,
   VERIFY_DESCRIPTION,
+  WATCH_PAYMENT_DESCRIPTION,
+  WATCH_PRICE_ATOMIC_USDC,
   payToAddress,
 } from "./config.js";
 import {
@@ -24,6 +27,7 @@ import {
   publicConfirmOrderUrl,
   publicConfirmUrl,
   publicVerifyUrl,
+  publicWatchUrl,
 } from "./public-url.js";
 
 export type PaymentRequiredBody = {
@@ -119,6 +123,20 @@ export function checkPaymentRequiredBody(resourceUrl: string): PaymentRequiredBo
   };
 }
 
+export function watchPaymentRequiredBody(resourceUrl: string): PaymentRequiredBody {
+  return {
+    x402Version: 2,
+    error: "PAYMENT-SIGNATURE header is required",
+    resource: {
+      url: resourceUrl,
+      description: WATCH_PAYMENT_DESCRIPTION,
+      mimeType: "application/json",
+    },
+    accepts: [accept(WATCH_PRICE_ATOMIC_USDC)],
+    extensions: watchBazaarExtensions(),
+  };
+}
+
 export function encodePaymentRequired(body: PaymentRequiredBody | Record<string, unknown>): string {
   return Buffer.from(JSON.stringify(body), "utf8").toString("base64");
 }
@@ -146,6 +164,12 @@ function advertisedResource(kind: ReturnType<typeof paidResourceKind>, requestUr
       description: CHECK_PAYMENT_DESCRIPTION,
     };
   }
+  if (kind === "watch") {
+    return {
+      url: publicWatchUrl(requestUrl, host),
+      description: WATCH_PAYMENT_DESCRIPTION,
+    };
+  }
   return {
     url: publicVerifyUrl(requestUrl, host),
     description: VERIFY_DESCRIPTION,
@@ -156,6 +180,7 @@ function routeBazaar(kind: ReturnType<typeof paidResourceKind>): Record<string, 
   if (kind === "confirm_order") return orderConfirmBazaarExtensions();
   if (kind === "confirm") return confirmBazaarExtensions();
   if (kind === "check") return checkBazaarExtensions();
+  if (kind === "watch") return watchBazaarExtensions();
   return verifyBazaarExtensions();
 }
 

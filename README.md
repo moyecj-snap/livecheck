@@ -2,7 +2,7 @@
 
 Before you scrape a listing, check if it is still there. POST a specific job posting, Shopify or HTML product URL, or eBay item URL. Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404). Product pages are HTML-only (Shopify-class add-to-cart / sold-out); eBay item URLs use Browse availability, not sold comps. Not a search engine. $0.01 USDC per check on Base via x402.
 
-This is a per-check agent API, not a platform. Agents pay **$0.01 USDC** per `POST /v1/verify`, **$0.02 USDC** per `POST /v1/check` (Sentinel one-shot condition), **$0.10 USDC** per `POST /v1/confirm` (`lead_submit` / `listing_published`), and **$0.25 USDC** per `POST /v1/confirm/order` (`order_placed`) on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md). x402 wants one fixed price per resource — dual pricing on a single path makes facilitator verify fail when settle-time `paymentRequirements` drift from the first 402.
+This is a per-check agent API, not a platform. Agents pay **$0.01 USDC** per `POST /v1/verify`, **$0.02 USDC** per `POST /v1/check` (Sentinel one-shot condition), **$2.50 USDC** per `POST /v1/watch` (30-day standard watcher), **$0.10 USDC** per `POST /v1/confirm` (`lead_submit` / `listing_published`), and **$0.25 USDC** per `POST /v1/confirm/order` (`order_placed`) on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md). x402 wants one fixed price per resource — dual pricing on a single path makes facilitator verify fail when settle-time `paymentRequirements` drift from the first 402.
 
 ## What you get
 
@@ -37,9 +37,9 @@ After payment verifies and settles:
 
 v1 reads HTML + status only. It does not execute page JavaScript. Redirects are followed; `canonical_url` is the final URL. User-Agent identifies Livecheck.
 
-Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, `GET /.well-known/x402`, `GET /.well-known/livecheck-keys.json`, `GET /stats`, and `GET /v1/receipt/{id}`. Paid: `POST /v1/verify` ($0.01), `POST /v1/check` ($0.02, one-shot Sentinel condition), `POST /v1/confirm` ($0.10, `lead_submit` / `listing_published`), and `POST /v1/confirm/order` ($0.25, `order_placed`). `GET /v1/judge` is a 501 stub. `/v1/watch*` is not implemented in this phase.
+Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, `GET /.well-known/x402`, `GET /.well-known/livecheck-keys.json`, `GET /stats`, `GET /v1/receipt/{id}`, `GET /v1/watch/{id}`, and `DELETE /v1/watch/{id}` (owner token required). Paid: `POST /v1/verify` ($0.01), `POST /v1/check` ($0.02, one-shot Sentinel condition), `POST /v1/watch` ($2.50, 30-day standard watcher), `POST /v1/confirm` ($0.10, `lead_submit` / `listing_published`), and `POST /v1/confirm/order` ($0.25, `order_placed`). `GET /v1/judge` is a 501 stub. `/v1/watch/fast`, renew, and HMAC callback delivery are not in this phase.
 
-Agent crawlers (x402scan, AgentCash, Circle OpenAPI discovery) read the free JSON docs. `GET /openapi.json` is the canonical contract: `POST /v1/verify` with JSON `{ "url": "https://..." }`, `x-payment-info` fixed **$0.01** USD (decimal; runtime 402 `accepts[].amount` stays `"10000"` atomic USDC), and a 200 schema of `live | closed | unknown`. It lists `POST /v1/check` at fixed **$0.02** (`"20000"` atomic) for a one-shot condition (no watcher), `POST /v1/confirm` at fixed **$0.10** USD (`"100000"` atomic) for `lead_submit` / `listing_published` (no `intent_prices`), and `POST /v1/confirm/order` at fixed **$0.25** (`"250000"` atomic) for `order_placed`. `GET /.well-known/x402` lists `https://livecheck.fly.dev/v1/verify`, `https://livecheck.fly.dev/v1/check`, `https://livecheck.fly.dev/v1/confirm`, and `https://livecheck.fly.dev/v1/confirm/order`. Neither discovery route returns 402.
+Agent crawlers (x402scan, AgentCash, Circle OpenAPI discovery) read the free JSON docs. `GET /openapi.json` is the canonical contract: `POST /v1/verify` with JSON `{ "url": "https://..." }`, `x-payment-info` fixed **$0.01** USD (decimal; runtime 402 `accepts[].amount` stays `"10000"` atomic USDC), and a 200 schema of `live | closed | unknown`. It lists `POST /v1/check` at fixed **$0.02** (`"20000"` atomic) for a one-shot condition (no watcher), `POST /v1/watch` at fixed **$2.50** (`"2500000"` atomic) for a 30-day standard watcher, `POST /v1/confirm` at fixed **$0.10** USD (`"100000"` atomic) for `lead_submit` / `listing_published` (no `intent_prices`), and `POST /v1/confirm/order` at fixed **$0.25** (`"250000"` atomic) for `order_placed`. `GET /.well-known/x402` lists `https://livecheck.fly.dev/v1/verify`, `https://livecheck.fly.dev/v1/check`, `https://livecheck.fly.dev/v1/watch`, `https://livecheck.fly.dev/v1/confirm`, and `https://livecheck.fly.dev/v1/confirm/order`. Neither discovery route returns 402.
 
 Unpaid `POST /v1/verify` includes x402 v2 Bazaar discovery metadata (`extensions.bazaar` via `bazaarResourceServerExtension` + `declareDiscoveryExtension`). Listing in [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) is free to browse; CDP catalogs this route after a successful paid request that carries the extension. The 402 `resource.description` (and health `description`) is: Before you scrape a job posting, Shopify or HTML product page, or eBay item, POST the specific URL you already have and Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404); not a search engine.
 
@@ -100,6 +100,76 @@ curl -s http://127.0.0.1:43127/v1/check \
   -H 'X-Livecheck-Mock: 1' \
   -d '{"target":{"type":"url","url":"http://127.0.0.1:43127/fixtures/live-apply-now","render":"never"},"condition":{"detector":"status_change","params":{}}}'
 ```
+
+## Sentinel watch (`POST /v1/watch`)
+
+30-day standard watcher. **Does not include Playwright / `/v1/watch/fast`.** Fixed **$2.50 USDC** (`"2500000"` atomic — same scale as check: `$0.01 = 10000`). One accept on the 402 — never dual-priced.
+
+```http
+POST /v1/watch
+Content-Type: application/json
+
+{
+  "target": { "type": "url", "url": "https://boards.greenhouse.io/example/jobs/1842", "render": "never", "selector": null },
+  "condition": { "detector": "status_change", "params": {} },
+  "callback": { "url": "https://example.com/hooks/livecheck", "secret": "whsec_example", "deliver": "on_change" },
+  "interval_s": 900
+}
+```
+
+Create semantics:
+
+- Detectors reuse `/v1/check` (`status_change`, `keyword`). Do not send `text_diff` / `numeric`.
+- `callback.deliver=on_change` is accepted. `chain_budget_usd` is accepted and ignored (`run` stays `none`). HMAC retry delivery is a later step — Phase 2 logs + enqueues a `callback_pending` event.
+- `render: always` → **400** `render_not_available` with `use: "/v1/watch/fast"` (that route is not shipped yet).
+- `interval_s` min **300**, default **900**. Max **2880** checks per 30-day term.
+- Baseline is captured synchronously via the existing check/verify fetch path (≤10s). Fetch failure still returns **201** with `baseline.captured=false` (never 422 on watch).
+- Response **201**: `id` prefix `wtc_` + Crockford ULID, `tier: standard`, `owner_token` (`owt_…`, returned once, SHA-256 at rest), `expires_at` (+30d), `checks_remaining`, `interval_s`, `first_check_at`, `baseline`, `price_usd: 2.50`, Confirm-style `receipt`. `GET /v1/receipt/{id}` resolves `wtc_` with the same Ed25519 family as Confirm/check.
+- `GET /v1/watch/{id}` and `DELETE /v1/watch/{id}` are free. Send `X-Livecheck-Owner-Token` (header only). DELETE stops early with **no refund**.
+- Duplicate active watcher for the same paying wallet + `target.url` + condition → **409** `duplicate_watch` (includes existing `id`). Soft cap **200** active standard watchers per wallet → **429** `rate_limited`.
+
+The 402 `resource.url` is pinned to `https://livecheck.fly.dev/v1/watch`. Payment description is ASCII-only. `advertisePaymentRequired` does not change `amount` / `asset` / `payTo` / `network` / `scheme` / `extra` / `maxTimeoutSeconds`. `extra` is Verify's USDC domain `{name:"USD Coin", version:"2"}`. Bazaar is slim / verify-shaped like check.
+
+```bash
+curl -s http://127.0.0.1:43127/v1/watch \
+  -H 'content-type: application/json' \
+  -H 'X-Livecheck-Mock: 1' \
+  -d '{"target":{"type":"url","url":"http://127.0.0.1:43127/fixtures/live-apply-now","render":"never"},"condition":{"detector":"status_change","params":{}},"callback":{"url":"https://example.com/hooks/livecheck","secret":"whsec_example","deliver":"on_change"},"interval_s":900}'
+```
+
+Example **201**:
+
+```json
+{
+  "id": "wtc_01K4…",
+  "tier": "standard",
+  "status": "active",
+  "owner_token": "owt_01K4…",
+  "expires_at": "2026-10-10T18:00:00Z",
+  "checks_remaining": 2880,
+  "interval_s": 900,
+  "first_check_at": "2026-09-10T18:00:00Z",
+  "baseline": { "captured": true, "hash": "…", "summary": "live 2xx (200); apply form present" },
+  "price_usd": 2.5,
+  "run": "none",
+  "receipt": { "hash": "…", "verify_url": "http://127.0.0.1:43127/v1/receipt/wtc_01K4…" }
+}
+```
+
+### Watch persistence + scheduler (Fly)
+
+No Postgres / `DATABASE_URL` on this Fly app. Watchers persist in **SQLite** on the existing `livecheck_data` volume:
+
+| Process | Path |
+| --- | --- |
+| Fly | `/data/watchers.sqlite` (`WATCH_DB_PATH` in `fly.toml`) |
+| Local | `./data/watchers.sqlite` |
+
+Same volume as `paid-calls.sqlite`. State survives machine restarts. If Postgres is added later, dump the `watchers` + `watch_events` tables and point `WATCH_DB_PATH` at a migrator — the row shape is the migration contract.
+
+The scheduler is an **in-process** poll (every 15s) started by `npm start` (`src/index.ts`). It runs in the same Fly machine process as HTTP (`processes = ["app"]`). `fly.toml` already keeps that machine up (`auto_stop_machines = "off"`, `min_machines_running = 1`). This is **not** Fly cron and **not** a second `fly machine`. Due watchers are claimed, observed with the `/v1/check` detectors (max **2** concurrent fetches per hostname), then `checks_remaining` / `next_check_at` update with ±10% jitter. Fired observations enqueue a `callback_pending` event (HMAC delivery is the next phase).
+
+Health reports `watch: true`, `watch_price_usd: 2.5`, and `public_watch_url`.
 
 ## Confirm (`POST /v1/confirm`)
 

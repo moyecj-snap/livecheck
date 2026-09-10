@@ -51,5 +51,23 @@ export function isCheckId(value: string): boolean {
 }
 
 export function isReceiptId(value: string): boolean {
-  return isConfirmId(value) || isCheckId(value);
+  return isConfirmId(value) || isCheckId(value) || isWatchId(value);
+}
+
+/** Sentinel watcher id: `wtc_` + Crockford ULID. Same receipt store as Confirm/check. */
+export function newWatchId(now = Date.now()): string {
+  return `wtc_${ulid(now)}`;
+}
+
+export function isWatchId(value: string): boolean {
+  return /^wtc_[0-9A-HJKMNP-TV-Z]{26}$/.test(value);
+}
+
+/** Owner token returned once on create. Hash at rest; never persist the raw token. */
+export function newOwnerToken(now = Date.now()): string {
+  return `owt_${ulid(now)}`;
+}
+
+export function isOwnerToken(value: string): boolean {
+  return /^owt_[0-9A-HJKMNP-TV-Z]{26}$/.test(value);
 }

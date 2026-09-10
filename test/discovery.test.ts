@@ -158,6 +158,10 @@ describe("discovery documents (mock gate)", () => {
     assert.ok(check, "expected POST /v1/check");
     assert.equal(check["x-payment-info"]?.price?.amount, "0.02");
     assert.equal(check["x-payment-info"]?.intent_prices, undefined);
+    const watch = (doc.paths as Record<string, { post?: typeof confirm }>)?.["/v1/watch"]?.post;
+    assert.ok(watch, "expected POST /v1/watch");
+    assert.equal(watch["x-payment-info"]?.price?.amount, "2.50");
+    assert.equal(watch["x-payment-info"]?.intent_prices, undefined);
     const order = (doc.paths as Record<string, { post?: typeof confirm }>)?.["/v1/confirm/order"]?.post;
     assert.ok(order, "expected POST /v1/confirm/order");
     assert.equal(order["x-payment-info"]?.price?.amount, "0.25");
@@ -175,6 +179,7 @@ describe("discovery documents (mock gate)", () => {
     assert.deepEqual(body.resources, [
       "https://livecheck.fly.dev/v1/verify",
       "https://livecheck.fly.dev/v1/check",
+      "https://livecheck.fly.dev/v1/watch",
       "https://livecheck.fly.dev/v1/confirm",
       "https://livecheck.fly.dev/v1/confirm/order",
     ]);

@@ -15,6 +15,21 @@ export const ORDER_PLACED_PRICE_ATOMIC_USDC = "250000";
 export const CHECK_PRICE_USD = 0.02;
 export const CHECK_PRICE_LABEL = "$0.02";
 export const CHECK_PRICE_ATOMIC_USDC = "20000";
+/** Sentinel standard watcher. $2.50 USDC at 6 decimals = 2500000 atomic. Same scale as check ($0.01=10000). */
+export const WATCH_PRICE_USD = 2.5;
+export const WATCH_PRICE_LABEL = "$2.50";
+export const WATCH_PRICE_ATOMIC_USDC = "2500000";
+export const WATCH_TIER = "standard" as const;
+export const WATCH_TERM_DAYS = 30;
+export const WATCH_TERM_SECONDS = WATCH_TERM_DAYS * 24 * 60 * 60;
+export const WATCH_MAX_CHECKS_PER_TERM = 2880;
+export const WATCH_MIN_INTERVAL_S = 300;
+export const WATCH_DEFAULT_INTERVAL_S = 900;
+export const WATCH_MAX_ACTIVE_PER_WALLET = 200;
+export const WATCH_HOST_CONCURRENCY = 2;
+export const WATCH_BASELINE_TIMEOUT_MS = 10_000;
+export const WATCH_SCHEDULER_POLL_MS = 15_000;
+export const WATCH_OWNER_TOKEN_HEADER = "x-livecheck-owner-token";
 
 export function confirmIntentPriceUsd(intent: string): number {
   return intent === "order_placed" ? ORDER_PLACED_PRICE_USD : CONFIRM_PRICE_USD;
@@ -58,6 +73,15 @@ export const CHECK_PAYMENT_DESCRIPTION =
 export const OPENAPI_CHECK_SUMMARY = "One-shot URL condition check ($0.02)";
 export const OPENAPI_CHECK_DESCRIPTION =
   "POST {target, condition, baseline_hash?} for a one-shot check. No watcher is created. target.type=url, render=never (HTML only). Detectors: status_change — reuse Verify fetch/classify; fired when status or HTTP class differs from baseline_hash. keyword — params.any/all/none string arrays, optional selector, case_sensitive default false; fired when the presence set matches. Returns observation (status/signals/http_status/hash/summary), fired when comparable, confidence, price_usd 0.02, id (chk_ + ULID), and a Confirm-style receipt. 400 invalid_target / invalid_condition. 422 baseline_unreachable when the target cannot be fetched or baseline_hash is unusable. Unpaid → 402 with one $0.02 accept (20000 atomic).";
+/** Health / OpenAPI — Sentinel standard watcher. */
+export const WATCH_DESCRIPTION =
+  "Livecheck Sentinel watch — 30-day URL condition watcher. POST /v1/watch with {target, condition, callback, interval_s}. Detectors: status_change, keyword (same as /v1/check). Returns wtc_ id, owner_token (once), baseline, and a Confirm-style receipt. Fixed $2.50 USDC. GET/DELETE /v1/watch/{id} with X-Livecheck-Owner-Token. No Playwright / fast tier in this phase. Not /v1/check ($0.02) and not Confirm.";
+/** ASCII-only 402 copy for POST /v1/watch (fixed $2.50). Unicode broke Confirm settles. */
+export const WATCH_PAYMENT_DESCRIPTION =
+  "Livecheck Sentinel watch - 30-day URL condition watcher. POST /v1/watch with {target, condition, callback, interval_s}. Detectors: status_change, keyword (same as /v1/check). Returns wtc_ id, owner_token (once), baseline, and a signed receipt. Fixed $2.50 USDC (2500000 atomic). GET/DELETE /v1/watch/{id} with X-Livecheck-Owner-Token. No Playwright. Not /v1/check ($0.02) and not Confirm.";
+export const OPENAPI_WATCH_SUMMARY = "Create a 30-day URL condition watcher ($2.50)";
+export const OPENAPI_WATCH_DESCRIPTION =
+  "POST {target, condition, callback, interval_s?, label?, context?} to create a standard watcher. target.type=url, render=never (HTML only). render=always → 400 render_not_available (use /v1/watch/fast when that route ships). Detectors: status_change, keyword — same internals as POST /v1/check. callback.deliver on_change is accepted; chain_budget_usd is accepted and ignored (run stays none). interval_s min 300, default 900, max 2880 checks per 30-day term. Baseline is captured synchronously (≤10s); fetch failure still returns 201 with baseline.captured=false (never 422). owner_token (owt_…) is returned once; send it as X-Livecheck-Owner-Token on GET/DELETE /v1/watch/{id}. DELETE stops early with no refund. Duplicate active watcher for the same paying wallet + target.url + condition → 409 duplicate_watch. Soft cap 200 active standard watchers per wallet → 429 rate_limited. Unpaid → 402 with one $2.50 accept (2500000 atomic).";
 /** x402 ResourceInfo / RouteConfig — Confirm only, so CDP can find Confirm under Livecheck. */
 export const CONFIRM_SERVICE_NAME = "Livecheck";
 export const CONFIRM_RESOURCE_TAGS = ["livecheck", "confirm"] as const;

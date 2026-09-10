@@ -7,6 +7,7 @@ import {
   ORDER_PLACED_PRICE_USD,
   PRICE_USD,
   VERIFY_DESCRIPTION,
+  WATCH_PRICE_USD,
 } from "./config.js";
 
 export const VERIFY_EXAMPLE = {
@@ -440,3 +441,121 @@ export function checkBazaarExtensions(): Record<string, unknown> {
 }
 
 export const CHECK_ROUTE_DESCRIPTION = CHECK_DESCRIPTION;
+
+export const WATCH_EXAMPLE = {
+  id: "wtc_01J8Z0K3N4P5Q6R7S8T9V0WWTC",
+  tier: "standard",
+  status: "active",
+  owner_token: "owt_01J8Z0K3N4P5Q6R7S8T9V0WOWT",
+  expires_at: "2026-10-10T18:00:00Z",
+  checks_remaining: 2880,
+  interval_s: 900,
+  first_check_at: "2026-09-10T18:00:00Z",
+  next_check_at: "2026-09-10T18:15:00Z",
+  baseline: {
+    captured: true,
+    hash: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    summary: "live 2xx (200); apply form present, no closure banner",
+  },
+  target: CHECK_EXAMPLE.target,
+  condition: CHECK_EXAMPLE.condition,
+  price_usd: WATCH_PRICE_USD,
+  run: "none",
+  receipt: {
+    hash: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    verify_url: "https://livecheck.fly.dev/v1/receipt/wtc_01J8Z0K3N4P5Q6R7S8T9V0WWTC",
+  },
+} as const;
+
+export const WATCH_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    id: { type: "string", description: "Stable watcher id (wtc_ + ULID)." },
+    tier: { type: "string", enum: ["standard"] },
+    status: { type: "string", enum: ["active", "stopped", "expired"] },
+    owner_token: { type: "string", description: "Returned once on create. Send as X-Livecheck-Owner-Token." },
+    expires_at: { type: "string" },
+    checks_remaining: { type: "number" },
+    interval_s: { type: "number" },
+    first_check_at: { type: "string" },
+    next_check_at: { type: "string" },
+    baseline: {
+      type: "object",
+      properties: {
+        captured: { type: "boolean" },
+        hash: { type: "string" },
+        summary: { type: "string" },
+      },
+      required: ["captured"],
+    },
+    target: CHECK_OUTPUT_SCHEMA.properties.target,
+    condition: CHECK_OUTPUT_SCHEMA.properties.condition,
+    price_usd: { type: "number" },
+    run: { type: "string", enum: ["none"] },
+    receipt: CHECK_OUTPUT_SCHEMA.properties.receipt,
+  },
+  required: [
+    "id",
+    "tier",
+    "owner_token",
+    "expires_at",
+    "checks_remaining",
+    "interval_s",
+    "first_check_at",
+    "baseline",
+    "price_usd",
+    "receipt",
+  ],
+} as const;
+
+export const WATCH_INPUT_SCHEMA = {
+  properties: {
+    target: {
+      type: "object",
+      description: "URL target. type=url, render=never. render=always is 400 render_not_available.",
+    },
+    condition: {
+      type: "object",
+      description: "detector status_change or keyword. Same as POST /v1/check.",
+    },
+    callback: {
+      type: "object",
+      description: "url + secret. deliver=on_change. HMAC delivery is a later step; Phase 2 stores the event.",
+    },
+    interval_s: {
+      type: "number",
+      description: "Seconds between observations. Min 300, default 900.",
+    },
+    label: { type: "string" },
+    context: { type: "object" },
+    chain_budget_usd: {
+      type: "number",
+      description: "Accepted and ignored in Phase 2. run stays none.",
+    },
+  },
+  required: ["target", "condition", "callback"],
+} as const;
+
+/** Verify-shaped Bazaar only — same POST JSON wrapper as /v1/check. Slim until settle proven. */
+export function watchBazaarExtensions(): Record<string, unknown> {
+  return withPostJsonMethod(
+    declareDiscoveryExtension({
+      bodyType: "json",
+      input: {
+        target: WATCH_EXAMPLE.target,
+        condition: WATCH_EXAMPLE.condition,
+        callback: {
+          url: "https://example.com/hooks/livecheck",
+          secret: "whsec_example",
+          deliver: "on_change",
+        },
+        interval_s: 900,
+      },
+      inputSchema: WATCH_INPUT_SCHEMA,
+      output: {
+        example: WATCH_EXAMPLE,
+        schema: WATCH_OUTPUT_SCHEMA,
+      },
+    }),
+  );
+}

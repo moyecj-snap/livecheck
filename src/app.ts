@@ -11,6 +11,9 @@ import {
   PRICE_USD,
   USER_AGENT,
   VERIFY_DESCRIPTION,
+  WATCH_DESCRIPTION,
+  WATCH_OWNER_TOKEN_HEADER,
+  WATCH_PRICE_USD,
   isLiveSettlement,
   missingLiveKeyNames,
 } from "./config.js";
@@ -27,7 +30,7 @@ import { discoveryHeaders, openApiDocument, wellKnownX402 } from "./discovery.js
 import { FIXTURES } from "./fixtures.js";
 import { recordSuccessfulPaidCheck, withPaidCallContext } from "./paid-call.js";
 import { applyPaymentGate, settlementMode } from "./payments.js";
-import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl } from "./public-url.js";
+import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl, publicWatchUrl } from "./public-url.js";
 import { isReceiptId } from "./confirm-id.js";
 import {
   livecheckKeysDocument,
@@ -35,15 +38,19 @@ import {
   receiptSigningEnabled,
   sealCheckResult,
   sealConfirmResult,
+  sealWatchResult,
 } from "./receipt.js";
 import { buildStatsDocument, statsHtml } from "./stats.js";
 import { VerifyError, parseTargetUrl, verifyUrl } from "./verify.js";
+import { WatchError, createWatch, deleteWatch, readWatch, watchErrorBody } from "./watch.js";
+import { resolveWatchPayer, withWatchPayerContext } from "./watch-payer.js";
 
 export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): Hono {
   const app = new Hono();
 
   app.use(withPaidCallContext());
   app.use(withConfirmPaymentContext());
+  app.use(withWatchPayerContext());
   app.use(paymentGate);
 
   app.get("/openapi.json", (c) => {
@@ -101,18 +108,22 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
       confirm_price_usd: CONFIRM_PRICE_USD,
       order_placed_price_usd: ORDER_PLACED_PRICE_USD,
       check_price_usd: CHECK_PRICE_USD,
+      watch_price_usd: WATCH_PRICE_USD,
       public_verify_url: publicVerifyUrl(c.req.url),
       public_confirm_url: publicConfirmUrl(c.req.url),
       public_confirm_order_url: publicConfirmOrderUrl(c.req.url),
       public_check_url: publicCheckUrl(c.req.url),
+      public_watch_url: publicWatchUrl(c.req.url),
       bazaar: true,
       ebay: isEbayAdapterEnabled(),
       confirm: true,
       check: true,
+      watch: true,
       receipt_signing: receiptSigningEnabled(),
       description: VERIFY_DESCRIPTION,
       confirm_description: CONFIRM_DESCRIPTION,
       check_description: CHECK_DESCRIPTION,
+      watch_description: WATCH_DESCRIPTION,
       user_agent: USER_AGENT,
     });
   });
@@ -156,6 +167,9 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
   app.post("/v1/confirm", (c) => handlePaidConfirm(c, parseConfirmRouteRequest));
   app.post("/v1/confirm/order", (c) => handlePaidConfirm(c, parseOrderConfirmRequest));
   app.post("/v1/check", handlePaidCheck);
+  app.post("/v1/watch", handlePaidWatch);
+  app.get("/v1/watch/:id", handleGetWatch);
+  app.delete("/v1/watch/:id", handleDeleteWatch);
 
   return app;
 }
@@ -182,6 +196,63 @@ async function handlePaidCheck(c: Context) {
     }
     if (error instanceof VerifyError) {
       return c.json({ error: "invalid_target", message: error.message }, error.status as 400 | 502 | 504);
+    }
+    throw error;
+  }
+}
+
+async function handlePaidWatch(c: Context) {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid_target", message: "Request body must be JSON." }, 400);
+  }
+  try {
+    const created = await createWatch(body, {
+      payer: resolveWatchPayer({ get: (name) => c.req.header(name) }),
+    });
+    const result = sealWatchResult(created.result, {
+      url: created.result.target.url,
+      requestUrl: c.req.url,
+      host: c.req.header("host"),
+      observation: created.observation,
+    });
+    return c.json(result, 201);
+  } catch (error) {
+    if (error instanceof WatchError) {
+      return c.json(watchErrorBody(error), error.status as 400 | 401 | 403 | 404 | 409 | 429);
+    }
+    if (error instanceof VerifyError) {
+      return c.json({ error: "invalid_target", message: error.message }, error.status as 400 | 502 | 504);
+    }
+    throw error;
+  }
+}
+
+function ownerTokenFrom(c: Context): string | undefined {
+  return c.req.header(WATCH_OWNER_TOKEN_HEADER) ?? c.req.header("X-Livecheck-Owner-Token") ?? undefined;
+}
+
+async function handleGetWatch(c: Context) {
+  try {
+    const view = readWatch(c.req.param("id") ?? "", ownerTokenFrom(c));
+    return c.json(view);
+  } catch (error) {
+    if (error instanceof WatchError) {
+      return c.json(watchErrorBody(error), error.status as 400 | 401 | 403 | 404 | 409 | 429);
+    }
+    throw error;
+  }
+}
+
+async function handleDeleteWatch(c: Context) {
+  try {
+    const result = deleteWatch(c.req.param("id") ?? "", ownerTokenFrom(c));
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof WatchError) {
+      return c.json(watchErrorBody(error), error.status as 400 | 401 | 403 | 404 | 409 | 429);
     }
     throw error;
   }

@@ -6,7 +6,7 @@ import { bazaarResourceServerExtension } from "@x402/extensions/bazaar";
 import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import type { RoutesConfig } from "@x402/core/server";
 import type { MiddlewareHandler } from "hono";
-import { checkBazaarExtensions, confirmBazaarExtensions, orderConfirmBazaarExtensions, verifyBazaarExtensions } from "./bazaar.js";
+import { checkBazaarExtensions, confirmBazaarExtensions, orderConfirmBazaarExtensions, verifyBazaarExtensions, watchBazaarExtensions } from "./bazaar.js";
 import {
   CHECK_PAYMENT_DESCRIPTION,
   CHECK_PRICE_LABEL,
@@ -18,11 +18,13 @@ import {
   ORDER_PLACED_PRICE_LABEL,
   PRICE_LABEL,
   VERIFY_DESCRIPTION,
+  WATCH_PAYMENT_DESCRIPTION,
+  WATCH_PRICE_LABEL,
   isLiveSettlement,
   missingLiveKeyNames,
   readLiveKeys,
 } from "./config.js";
-import { isPaidPostPath, publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl } from "./public-url.js";
+import { isPaidPostPath, publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl, publicWatchUrl } from "./public-url.js";
 import {
   advertisePaymentRequired,
   checkPaymentRequiredBody,
@@ -31,8 +33,10 @@ import {
   encodePaymentRequired,
   orderConfirmPaymentRequiredBody,
   paymentRequiredBody,
+  watchPaymentRequiredBody,
 } from "./x402-payload.js";
 import { rememberMockConfirmPayment, wrapFacilitatorForVerifiedAmount } from "./confirm-payment.js";
+import { wrapFacilitatorForWatchPayer } from "./watch-payer.js";
 import { wrapFacilitatorForCatalog } from "./facilitator-catalog.js";
 import { emitPaidCallAfterSettle, extractPayer } from "./paid-call.js";
 import { createStripeClient, recordSettledPayment } from "./stripe-record.js";
@@ -105,6 +109,20 @@ export function verifyPaymentRoutes(payTo: string): RoutesConfig {
       resource: publicCheckUrl(),
       extensions: checkBazaarExtensions(),
     },
+    "POST /v1/watch": {
+      accepts: [
+        {
+          scheme: "exact" as const,
+          price: WATCH_PRICE_LABEL,
+          network: NETWORK as `${string}:${string}`,
+          payTo,
+        },
+      ],
+      description: WATCH_PAYMENT_DESCRIPTION,
+      mimeType: "application/json",
+      resource: publicWatchUrl(),
+      extensions: watchBazaarExtensions(),
+    },
   };
 }
 
@@ -161,7 +179,7 @@ export function livePaymentMiddlewareFromServer(
 }
 
 export function resourceServerFromFacilitator(facilitatorClient: FacilitatorClient): x402ResourceServer {
-  return new x402ResourceServer(wrapFacilitatorForVerifiedAmount(facilitatorClient))
+  return new x402ResourceServer(wrapFacilitatorForVerifiedAmount(wrapFacilitatorForWatchPayer(facilitatorClient)))
     .register(NETWORK, new ExactEvmScheme())
     .registerExtension(bazaarResourceServerExtension);
 }
@@ -213,7 +231,9 @@ function mockPaymentMiddleware(): MiddlewareHandler {
           ? confirmPaymentRequiredBody(publicConfirmUrl(c.req.url))
           : c.req.path === "/v1/check"
             ? checkPaymentRequiredBody(publicCheckUrl(c.req.url))
-            : paymentRequiredBody(publicVerifyUrl(c.req.url));
+            : c.req.path === "/v1/watch"
+              ? watchPaymentRequiredBody(publicWatchUrl(c.req.url))
+              : paymentRequiredBody(publicVerifyUrl(c.req.url));
     const encoded = encodePaymentRequired(body);
     c.header("payment-required", encoded);
     c.header("cache-control", "no-store");

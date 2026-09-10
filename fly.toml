@@ -10,6 +10,7 @@ primary_region = "sjc"
 [env]
   LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev"
   PAID_CALL_DB_PATH = "/data/paid-calls.sqlite"
+  WATCH_DB_PATH = "/data/watchers.sqlite"
 
 # Privacy-safe paid_call SQLite. Patty must create this volume before the
 # first deploy that includes this mount (see README). Single machine only.

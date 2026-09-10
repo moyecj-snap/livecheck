@@ -6,6 +6,7 @@ import { createApp } from "../src/app.js";
 import {
   CHECK_PAYMENT_DESCRIPTION,
   CONFIRM_PAYMENT_DESCRIPTION,
+  WATCH_PAYMENT_DESCRIPTION,
   MOCK_PAY_TO,
   NETWORK,
   ORDER_PAYMENT_DESCRIPTION,
@@ -141,6 +142,27 @@ describe("live @x402/hono 402 (decoded payment-required)", () => {
     assert.deepEqual(accepts[0]?.extra, { name: "USD Coin", version: "2" });
   });
 
+  it("watch 402 is one $2.50 accept with verify-shaped extra", async () => {
+    const res = await fetch(`${origin}/v1/watch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        target: { type: "url", url: "https://example.com", render: "never" },
+        condition: { detector: "status_change", params: {} },
+        callback: { url: "https://example.com/hook", secret: "whsec_x" },
+      }),
+    });
+    assert.equal(res.status, 402);
+    const decoded = decode402(res);
+    const resource = decoded.resource as { url?: string; description?: string };
+    assert.equal(resource.url, "https://livecheck.fly.dev/v1/watch");
+    assert.equal(resource.description, WATCH_PAYMENT_DESCRIPTION);
+    const accepts = decoded.accepts as Array<{ amount?: string; extra?: { name?: string; version?: string } }>;
+    assert.equal(accepts.length, 1);
+    assert.equal(accepts[0]?.amount, "2500000");
+    assert.deepEqual(accepts[0]?.extra, { name: "USD Coin", version: "2" });
+  });
+
   it("confirm/order 402 is one $0.25 accept with verify-shaped extra", async () => {
     const res = await fetch(`${origin}/v1/confirm/order`, {
       method: "POST",
@@ -268,6 +290,45 @@ describe("advertisePaymentRequired on a production-shaped 402", () => {
       const resource = decoded.resource as { url: string; description: string };
       assert.equal(resource.url, "https://livecheck.fly.dev/v1/check");
       assert.equal(resource.description, CHECK_PAYMENT_DESCRIPTION);
+    } finally {
+      if (previousPublic === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
+      else process.env.LIVECHECK_PUBLIC_URL = previousPublic;
+    }
+  });
+
+  it("does not change watch 402 matching fields (amount 2500000)", () => {
+    const accepts = [
+      {
+        scheme: "exact",
+        network: NETWORK,
+        amount: "2500000",
+        asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        payTo: MOCK_PAY_TO,
+        maxTimeoutSeconds: 60,
+        extra: { name: "USD Coin", version: "2" },
+      },
+    ];
+    const previousPublic = process.env.LIVECHECK_PUBLIC_URL;
+    process.env.LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev";
+    try {
+      const decoded = advertisePaymentRequired(
+        {
+          x402Version: 2,
+          error: "Payment required",
+          resource: {
+            url: "https://livecheck.fly.dev/v1/watch",
+            description: WATCH_PAYMENT_DESCRIPTION,
+            mimeType: "application/json",
+          },
+          accepts: structuredClone(accepts),
+        },
+        "https://livecheck.fly.dev/v1/watch",
+        "livecheck.fly.dev",
+      );
+      assert.deepEqual(decoded.accepts, accepts);
+      const resource = decoded.resource as { url: string; description: string };
+      assert.equal(resource.url, "https://livecheck.fly.dev/v1/watch");
+      assert.equal(resource.description, WATCH_PAYMENT_DESCRIPTION);
     } finally {
       if (previousPublic === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
       else process.env.LIVECHECK_PUBLIC_URL = previousPublic;

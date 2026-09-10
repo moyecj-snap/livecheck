@@ -1,4 +1,4 @@
-import { CHECK_OUTPUT_SCHEMA, CONFIRM_OUTPUT_SCHEMA, VERIFY_OUTPUT_SCHEMA } from "./bazaar.js";
+import { CHECK_OUTPUT_SCHEMA, CONFIRM_OUTPUT_SCHEMA, VERIFY_OUTPUT_SCHEMA, WATCH_OUTPUT_SCHEMA } from "./bazaar.js";
 import {
   OPENAPI_CHECK_DESCRIPTION,
   OPENAPI_CHECK_SUMMARY,
@@ -10,15 +10,18 @@ import {
   OPENAPI_ORDER_CONFIRM_DESCRIPTION,
   OPENAPI_ORDER_CONFIRM_INTENT_DESCRIPTION,
   OPENAPI_ORDER_CONFIRM_SUMMARY,
+  OPENAPI_WATCH_DESCRIPTION,
+  OPENAPI_WATCH_SUMMARY,
   VERIFY_DESCRIPTION,
 } from "./config.js";
-import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicOrigin, publicVerifyUrl } from "./public-url.js";
+import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicOrigin, publicVerifyUrl, publicWatchUrl } from "./public-url.js";
 
 const OPENAPI_VERSION = "1.0.0";
 const OPENAPI_PRICE_AMOUNT = "0.01";
 const OPENAPI_CONFIRM_PRICE_AMOUNT = "0.10";
 const OPENAPI_ORDER_PLACED_PRICE_AMOUNT = "0.25";
 const OPENAPI_CHECK_PRICE_AMOUNT = "0.02";
+const OPENAPI_WATCH_PRICE_AMOUNT = "2.50";
 
 export function discoveryHeaders(): Record<string, string> {
   return {
@@ -162,6 +165,160 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
           },
         },
       },
+      "/v1/watch": {
+        post: {
+          operationId: "sentinelWatch",
+          summary: OPENAPI_WATCH_SUMMARY,
+          description: OPENAPI_WATCH_DESCRIPTION,
+          "x-guidance": OPENAPI_WATCH_DESCRIPTION,
+          tags: ["Sentinel", "watch"],
+          "x-payment-info": {
+            price: {
+              mode: "fixed",
+              currency: "USD",
+              amount: OPENAPI_WATCH_PRICE_AMOUNT,
+            },
+            protocols: [{ x402: {} }],
+          },
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    target: {
+                      type: "object",
+                      description: "URL target. type must be url. render must be never. render=always is 400 render_not_available.",
+                      properties: {
+                        type: { type: "string", enum: ["url"] },
+                        url: { type: "string", format: "uri" },
+                        render: { type: "string", enum: ["never"] },
+                        selector: { type: ["string", "null"] },
+                      },
+                      required: ["type", "url"],
+                    },
+                    condition: {
+                      type: "object",
+                      description: "detector status_change or keyword. Same detectors as POST /v1/check.",
+                      properties: {
+                        detector: { type: "string", enum: ["status_change", "keyword"] },
+                        params: { type: "object" },
+                      },
+                      required: ["detector"],
+                    },
+                    callback: {
+                      type: "object",
+                      description: "HTTPS callback. deliver=on_change. HMAC retry is a later step.",
+                      properties: {
+                        url: { type: "string", format: "uri" },
+                        secret: { type: "string" },
+                        deliver: { type: "string", enum: ["on_change"] },
+                      },
+                      required: ["url", "secret"],
+                    },
+                    interval_s: {
+                      type: "integer",
+                      minimum: 300,
+                      default: 900,
+                      description: "Seconds between observations. Min 300, default 900. Max 2880 checks/term.",
+                    },
+                    label: { type: "string" },
+                    context: { type: "object" },
+                    chain_budget_usd: {
+                      type: "number",
+                      description: "Accepted and ignored in this phase. run stays none.",
+                    },
+                  },
+                  required: ["target", "condition", "callback"],
+                },
+              },
+            },
+          },
+          responses: {
+            "201": {
+              description: "Watcher created. owner_token is returned once.",
+              content: {
+                "application/json": {
+                  schema: WATCH_OUTPUT_SCHEMA,
+                },
+              },
+            },
+            "400": {
+              description: "invalid_target, invalid_condition, invalid_callback, invalid_interval, or render_not_available",
+            },
+            "402": {
+              description: "Payment required. Fixed $2.50 USDC (2500000 atomic).",
+            },
+            "409": {
+              description: "duplicate_watch — same paying wallet + target.url + condition while active",
+            },
+            "429": {
+              description: "rate_limited — 200 active standard watchers per wallet",
+            },
+          },
+        },
+      },
+      "/v1/watch/{id}": {
+        get: {
+          operationId: "getSentinelWatch",
+          summary: "Read a watcher (owner token required)",
+          description:
+            "Free. Send the owner_token from create as header X-Livecheck-Owner-Token. Does not return the token again. Does not refund or charge.",
+          tags: ["Sentinel", "watch"],
+          parameters: [
+            {
+              name: "id",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+              description: "Watcher id (wtc_ + ULID).",
+            },
+            {
+              name: "X-Livecheck-Owner-Token",
+              in: "header",
+              required: true,
+              schema: { type: "string" },
+              description: "owt_ token returned once on POST /v1/watch.",
+            },
+          ],
+          responses: {
+            "200": { description: "Watcher status, baseline, last observation" },
+            "401": { description: "Missing owner token" },
+            "403": { description: "Wrong owner token" },
+            "404": { description: "Unknown id" },
+          },
+        },
+        delete: {
+          operationId: "deleteSentinelWatch",
+          summary: "Stop a watcher early (no refund)",
+          description:
+            "Free. Requires X-Livecheck-Owner-Token. Stops the watcher immediately. No refund.",
+          tags: ["Sentinel", "watch"],
+          parameters: [
+            {
+              name: "id",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+              description: "Watcher id (wtc_ + ULID).",
+            },
+            {
+              name: "X-Livecheck-Owner-Token",
+              in: "header",
+              required: true,
+              schema: { type: "string" },
+              description: "owt_ token returned once on POST /v1/watch.",
+            },
+          ],
+          responses: {
+            "200": { description: "Stopped. { id, status: stopped, refund: false }" },
+            "401": { description: "Missing owner token" },
+            "403": { description: "Wrong owner token" },
+            "404": { description: "Unknown id" },
+          },
+        },
+      },
       "/v1/confirm": {
         post: {
           operationId: "confirmLeadSubmit",
@@ -291,7 +448,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
           operationId: "getConfirmReceipt",
           summary: "Fetch a Confirm receipt by id",
           description:
-            "Free. Returns the stored receipt, canonical payload, and verify metadata. Accepts Confirm ids (cfm_) and Sentinel check ids (chk_). Unsigned when CONFIRM_RECEIPT_PRIVATE_KEY is unset.",
+            "Free. Returns the stored receipt, canonical payload, and verify metadata. Accepts Confirm ids (cfm_), Sentinel check ids (chk_), and watcher ids (wtc_). Unsigned when CONFIRM_RECEIPT_PRIVATE_KEY is unset.",
           tags: ["Confirm", "Sentinel"],
           parameters: [
             {
@@ -299,7 +456,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
               in: "path",
               required: true,
               schema: { type: "string" },
-              description: "Confirm id (cfm_ + ULID) or check id (chk_ + ULID).",
+              description: "Confirm id (cfm_ + ULID), check id (chk_ + ULID), or watcher id (wtc_ + ULID).",
             },
           ],
           responses: {
@@ -359,6 +516,7 @@ export function wellKnownX402(requestUrl?: string, host?: string): Record<string
     resources: [
       publicVerifyUrl(requestUrl, host),
       publicCheckUrl(requestUrl, host),
+      publicWatchUrl(requestUrl, host),
       publicConfirmUrl(requestUrl, host),
       publicConfirmOrderUrl(requestUrl, host),
     ],

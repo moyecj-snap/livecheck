@@ -3,6 +3,7 @@ import {
   confirmBazaarExtensions,
   orderConfirmBazaarExtensions,
   verifyBazaarExtensions,
+  watchBazaarExtensions,
 } from "./bazaar.js";
 import {
   CHECK_PAYMENT_DESCRIPTION,
@@ -11,8 +12,9 @@ import {
   CONFIRM_SERVICE_NAME,
   ORDER_PAYMENT_DESCRIPTION,
   VERIFY_DESCRIPTION,
+  WATCH_PAYMENT_DESCRIPTION,
 } from "./config.js";
-import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl } from "./public-url.js";
+import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl, publicWatchUrl } from "./public-url.js";
 
 export type CatalogResourceInfo = {
   url: string;
@@ -32,7 +34,7 @@ export type PaymentEnvelope = {
 };
 
 export function advertisedResourceInfo(
-  kind: "verify" | "confirm" | "confirm_order" | "check" = "verify",
+  kind: "verify" | "confirm" | "confirm_order" | "check" | "watch" = "verify",
 ): CatalogResourceInfo {
   if (kind === "confirm_order") {
     return {
@@ -57,6 +59,13 @@ export function advertisedResourceInfo(
       mimeType: "application/json",
     };
   }
+  if (kind === "watch") {
+    return {
+      url: publicWatchUrl(),
+      description: WATCH_PAYMENT_DESCRIPTION,
+      mimeType: "application/json",
+    };
+  }
   return {
     url: publicVerifyUrl(),
     description: VERIFY_DESCRIPTION,
@@ -64,9 +73,10 @@ export function advertisedResourceInfo(
   };
 }
 
-function resourceKindFromUrl(url: string | undefined): "verify" | "confirm" | "confirm_order" | "check" {
+function resourceKindFromUrl(url: string | undefined): "verify" | "confirm" | "confirm_order" | "check" | "watch" {
   if (url && /\/v1\/confirm\/order\/?(\?|$)/i.test(url)) return "confirm_order";
   if (url && /\/v1\/confirm\/?(\?|$)/i.test(url)) return "confirm";
+  if (url && /\/v1\/watch\/?(\?|$)/i.test(url)) return "watch";
   if (url && /\/v1\/check\/?(\?|$)/i.test(url)) return "check";
   return "verify";
 }
@@ -126,7 +136,9 @@ export function fillCatalogPaymentPayload(payload: PaymentEnvelope): {
           ? confirmBazaarExtensions()
           : kind === "check"
             ? checkBazaarExtensions()
-            : verifyBazaarExtensions();
+            : kind === "watch"
+              ? watchBazaarExtensions()
+              : verifyBazaarExtensions();
     next.extensions = {
       ...bazaar,
       ...(payload.extensions && typeof payload.extensions === "object" ? payload.extensions : {}),
