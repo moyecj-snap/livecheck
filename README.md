@@ -4,6 +4,25 @@ Before you scrape a listing, check if it is still there. POST a specific job pos
 
 This is a per-check agent API, not a platform. Agents pay **$0.01 USDC** per `POST /v1/verify` on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md). The endpoint accepts any `http(s)` URL.
 
+## Agent skill (verify → Confirm)
+
+Install the twin-tool skill into Cursor / Claude Code / Codex (bypasses Marketplace review):
+
+```bash
+npx skills add moyecj-snap/livecheck
+```
+
+Manual: copy `skills/livecheck-verify-then-confirm/` into `.cursor/skills/` or `~/.cursor/skills/`.
+
+What it wires:
+1. **Livecheck** `POST /v1/verify` — $0.01 — URL still live?
+2. **Confirm** `POST /v1/confirm` — $0.10 — independent `lead_submit` side-effect check (actor ≠ verifier; thank-you alone ≠ confirmed)
+
+Pasteable tool JSON: [`skills/livecheck-verify-then-confirm/tools.json`](skills/livecheck-verify-then-confirm/tools.json).  
+OpenAPI: https://livecheck.fly.dev/openapi.json · Stats: https://livecheck.fly.dev/stats
+
+Paying still needs an x402 wallet (`purl`, CDP, or AgentCore payments plugin). The skill teaches *when* to call; it does not hold keys.
+
 ## What you get
 
 ```http
