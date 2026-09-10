@@ -1,0 +1,209 @@
+{
+  "generated_at": "2026-09-10T21:21:18Z",
+  "scale": {
+    "honesty_repeats": 20,
+    "honesty_checks_per_detector": 198,
+    "watch_ticks": 12,
+    "latency_samples": 20,
+    "interval_s": 300,
+    "note": "CI/local scale — not a 1000-watcher 24h soak. Virtual time for latency; no Fly deploy; no real $2.50 spends."
+  },
+  "honesty": {
+    "status_change": {
+      "checks": 198,
+      "fires": 0,
+      "false_positive_rate": 0,
+      "pass": true
+    },
+    "text_diff": {
+      "checks": 198,
+      "fires": 0,
+      "false_positive_rate": 0,
+      "pass": true
+    },
+    "true_positive": {
+      "status_change": true,
+      "text_diff": true
+    },
+    "watch_change_events": 0
+  },
+  "latency": {
+    "interval_s": 300,
+    "n": 20,
+    "p50_ms": 162500,
+    "p95_ms": 315250,
+    "p50_gate_ms": 360000,
+    "p95_gate_ms": 600000,
+    "samples": [
+      {
+        "id": "wtc_01SENTINELLAT0000000000000000",
+        "offset_s": 0,
+        "latency_ms": 320000
+      },
+      {
+        "id": "wtc_01SENTINELLAT0000000000000001",
+        "offset_s": 5,
+        "latency_ms": 315000
+      },
+      {
+        "id": "wtc_01SENTINELLAT0000000000000002",
+        "offset_s": 15,
+        "latency_ms": 305000
+      },
+      {
+        "id": "wtc_01SENTINELLAT0000000000000003",
+        "offset_s": 30,
+        "latency_ms": 290000
+      },
+      {
+        "id": "wtc_01SENTINELLAT0000000000000004",
+        "offset_s": 45,
+        "latency_ms": 275000
+      },
+      {
+        "id": "wtc_01SENTINELLAT0000000000000005",
+        "offset_s": 60,
+        "latency_ms": 260000
+      },
+      {
+        "id": "wtc_01SENTINELLAT0000000000000006",
+        "offset_s": 75,
+        "latency_ms": 245000
+      },
+      {
+        "id": "wtc_01SENTINELLAT0000000000000007",
+        "offset_s": 90,
+        "latency_ms": 230000
+      },
+      {
+        "id": "wtc_01SENTINELLAT0000000000000008",
+        "offset_s": 120,
+        "latency_ms": 200000
+      },
+      {
+        "id": "wtc_01SENTINELLAT0000000000000009",
+        "offset_s": 150,
+        "latency_ms": 170000
+      },
+      {
+        "id": "wtc_01SENTINELLAT0000000000000010",
+        "offset_s": 165,
+        "latency_ms": 155000
+      },
+      {
+        "id": "wtc_01SENTINELLAT0000000000000011",
+        "offset_s": 180,
+        "latency_ms": 140000
+      },
+      {
+        "id": "wtc_01SENTINELLAT0000000000000012",
+        "offset_s": 210,
+        "latency_ms": 110000
+      },
+      {
+        "id": "wtc_01SENTINELLAT0000000000000013",
+        "offset_s": 225,
+        "latency_ms": 95000
+      },
+      {
+        "id": "wtc_01SENTINELLAT0000000000000014",
+        "offset_s": 240,
+        "latency_ms": 80000
+      },
+      {
+        "id": "wtc_01SENTINELLAT0000000000000015",
+        "offset_s": 255,
+        "latency_ms": 65000
+      },
+      {
+        "id": "wtc_01SENTINELLAT0000000000000016",
+        "offset_s": 270,
+        "latency_ms": 50000
+      },
+      {
+        "id": "wtc_01SENTINELLAT0000000000000017",
+        "offset_s": 285,
+        "latency_ms": 35000
+      },
+      {
+        "id": "wtc_01SENTINELLAT0000000000000018",
+        "offset_s": 299,
+        "latency_ms": 21000
+      },
+      {
+        "id": "wtc_01SENTINELLAT0000000000000019",
+        "offset_s": 300,
+        "latency_ms": 20000
+      }
+    ],
+    "pass": true
+  },
+  "hmac": {
+    "recipe": "X-Sentinel-Signature: t=<unix>,v1=<hex> — v1 is lowercase hex HMAC-SHA256 of the raw UTF-8 body with callback.secret; t is not part of the MAC",
+    "unit_pass": true,
+    "delivered": 20,
+    "verified": 20,
+    "pass": true
+  },
+  "chain": {
+    "funded_attached": true,
+    "funded_debit_usd": 0.01,
+    "funded_status": "live",
+    "skipped": true,
+    "skipped_reason": "insufficient_balance",
+    "pass": true
+  },
+  "on_change_confirm_deferred": true,
+  "gates": [
+    {
+      "id": "status_change_fp",
+      "gate": "status_change false fires = 0 and watch change events = 0 on noisy fixtures",
+      "pass": true,
+      "detail": "fires=0/198 watch_change_events=0"
+    },
+    {
+      "id": "text_diff_fp",
+      "gate": "text_diff with selector .listing-title false-fire rate ≤ 0.02",
+      "pass": true,
+      "detail": "rate=0.0000 fires=0/198"
+    },
+    {
+      "id": "true_positive",
+      "gate": "injected live→closed and title rewrite still fire",
+      "pass": true,
+      "detail": "status_change=true text_diff=true"
+    },
+    {
+      "id": "latency_p50",
+      "gate": "p50 ≤ interval_s + 60s (360s)",
+      "pass": true,
+      "detail": "p50=162500ms n=20"
+    },
+    {
+      "id": "latency_p95",
+      "gate": "p95 ≤ 2×interval_s (600s)",
+      "pass": true,
+      "detail": "p95=315250ms n=20"
+    },
+    {
+      "id": "hmac",
+      "gate": "X-Sentinel-Signature: t=<unix>,v1=<hex> — v1 is lowercase hex HMAC-SHA256 of the raw UTF-8 body with callback.secret; t is not part of the MAC",
+      "pass": true,
+      "detail": "unit=true delivered_verified=20/20"
+    },
+    {
+      "id": "chain_verify",
+      "gate": "on_change.verify + balance attaches result; insufficient → skipped",
+      "pass": true,
+      "detail": "funded_attached=true skipped=insufficient_balance"
+    },
+    {
+      "id": "on_change_confirm_deferred",
+      "gate": "on_change.run=confirm stays rejected (Confirm chain deferred)",
+      "pass": true,
+      "detail": "parseWatchRequest throws invalid_target"
+    }
+  ],
+  "pass": true,
+  "path": "scripts/sentinel-bench.ts"
+}

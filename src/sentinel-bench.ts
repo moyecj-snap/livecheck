@@ -651,7 +651,7 @@ export async function runSentinelBench(): Promise<SentinelBenchReport> {
       generated_at: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
       scale: {
         honesty_repeats: SENTINEL_BENCH_HONESTY_REPEATS,
-        honesty_checks_per_detector: Math.max(0, honestyCases(SENTINEL_BENCH_HONESTY_REPEATS).length - 1),
+        honesty_checks_per_detector: honesty.status_change.checks,
         watch_ticks: SENTINEL_BENCH_WATCH_TICKS,
         latency_samples: LATENCY_OFFSETS_S.length,
         interval_s: SENTINEL_BENCH_INTERVAL_S,
