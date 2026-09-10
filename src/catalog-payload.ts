@@ -1,12 +1,18 @@
-import { confirmBazaarExtensions, orderConfirmBazaarExtensions, verifyBazaarExtensions } from "./bazaar.js";
 import {
+  checkBazaarExtensions,
+  confirmBazaarExtensions,
+  orderConfirmBazaarExtensions,
+  verifyBazaarExtensions,
+} from "./bazaar.js";
+import {
+  CHECK_PAYMENT_DESCRIPTION,
   CONFIRM_DESCRIPTION,
   CONFIRM_RESOURCE_TAGS,
   CONFIRM_SERVICE_NAME,
   ORDER_PAYMENT_DESCRIPTION,
   VERIFY_DESCRIPTION,
 } from "./config.js";
-import { publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl } from "./public-url.js";
+import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl } from "./public-url.js";
 
 export type CatalogResourceInfo = {
   url: string;
@@ -26,7 +32,7 @@ export type PaymentEnvelope = {
 };
 
 export function advertisedResourceInfo(
-  kind: "verify" | "confirm" | "confirm_order" = "verify",
+  kind: "verify" | "confirm" | "confirm_order" | "check" = "verify",
 ): CatalogResourceInfo {
   if (kind === "confirm_order") {
     return {
@@ -44,6 +50,13 @@ export function advertisedResourceInfo(
       tags: [...CONFIRM_RESOURCE_TAGS],
     };
   }
+  if (kind === "check") {
+    return {
+      url: publicCheckUrl(),
+      description: CHECK_PAYMENT_DESCRIPTION,
+      mimeType: "application/json",
+    };
+  }
   return {
     url: publicVerifyUrl(),
     description: VERIFY_DESCRIPTION,
@@ -51,9 +64,10 @@ export function advertisedResourceInfo(
   };
 }
 
-function resourceKindFromUrl(url: string | undefined): "verify" | "confirm" | "confirm_order" {
+function resourceKindFromUrl(url: string | undefined): "verify" | "confirm" | "confirm_order" | "check" {
   if (url && /\/v1\/confirm\/order\/?(\?|$)/i.test(url)) return "confirm_order";
   if (url && /\/v1\/confirm\/?(\?|$)/i.test(url)) return "confirm";
+  if (url && /\/v1\/check\/?(\?|$)/i.test(url)) return "check";
   return "verify";
 }
 
@@ -110,7 +124,9 @@ export function fillCatalogPaymentPayload(payload: PaymentEnvelope): {
         ? orderConfirmBazaarExtensions()
         : kind === "confirm"
           ? confirmBazaarExtensions()
-          : verifyBazaarExtensions();
+          : kind === "check"
+            ? checkBazaarExtensions()
+            : verifyBazaarExtensions();
     next.extensions = {
       ...bazaar,
       ...(payload.extensions && typeof payload.extensions === "object" ? payload.extensions : {}),

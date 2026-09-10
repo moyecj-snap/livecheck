@@ -7,11 +7,11 @@ import {
   verify,
   type KeyObject,
 } from "node:crypto";
-import { newConfirmId } from "./confirm-id.js";
+import { newCheckId, newConfirmId } from "./confirm-id.js";
 import { hashUrl } from "./paid-call.js";
 import { getConfirmReceipt, rememberConfirmReceipt, type ConfirmReceiptRow } from "./receipt-store.js";
 import { publicOrigin } from "./public-url.js";
-import type { ConfirmReceipt, ConfirmResult, EvidenceLevel } from "./types.js";
+import type { CheckResult, ConfirmReceipt, ConfirmResult, EvidenceLevel } from "./types.js";
 
 export const RECEIPT_SIGNER_KID = "livecheck-confirm-v1" as const;
 export const RECEIPT_ALG = "Ed25519" as const;
@@ -182,7 +182,7 @@ export function livecheckKeysDocument(): Record<string, unknown> {
     return {
       keys: [],
       signing: false,
-      note: "CONFIRM_RECEIPT_PRIVATE_KEY is unset; Confirm receipts are unsigned stubs.",
+      note: "CONFIRM_RECEIPT_PRIVATE_KEY is unset; Confirm and check receipts are unsigned stubs.",
     };
   }
   return {
@@ -282,6 +282,79 @@ export function sealConfirmResult(
 
   const sealed: ConfirmResult = { ...result, id, receipt };
   return sealed;
+}
+
+function checkReceiptVerdict(fired: boolean | null): string {
+  if (fired === true) return "fired";
+  if (fired === false) return "unfired";
+  return "observed";
+}
+
+/** Confirm-style additive id + Ed25519 receipt. Same key family; id prefix is chk_. */
+export function sealCheckResult(
+  result: Omit<CheckResult, "id" | "receipt">,
+  input: {
+    url: string;
+    requestUrl?: string;
+    host?: string;
+    now?: Date;
+  },
+): CheckResult {
+  const id = newCheckId(input.now?.getTime());
+  const evidenceSummary = sha256Hex(
+    stableJson({
+      status: result.observation.status,
+      http_class: result.observation.http_class,
+      hash: result.observation.hash,
+      fired: result.fired,
+      signals: [...result.observation.signals].sort(),
+    }),
+  );
+  const observedAt = result.observation.checked_at;
+  const canonicalPayload: ReceiptCanonical = {
+    id,
+    intent: "check",
+    verdict: checkReceiptVerdict(result.fired),
+    confidence: result.confidence,
+    evidence_level: 1,
+    evidence_summary_or_hash: evidenceSummary,
+    observed_at: observedAt,
+    url_hash: hashUrl(input.url),
+    claim_hash: hashClaim({
+      detector: result.condition.detector,
+      params: result.condition.params,
+      baseline_comparable: result.fired !== null,
+    }),
+  };
+  const canonical = canonicalizeReceiptPayload(canonicalPayload);
+  const hash = sha256Hex(canonical);
+  const signer = loadReceiptSigner();
+  const signature = signer ? signCanonical(canonical, signer) : undefined;
+  const verifyUrl = publicReceiptUrl(id, input.requestUrl, input.host);
+  const receipt: ConfirmReceipt = { hash, verify_url: verifyUrl };
+  if (signature && signer) {
+    receipt.signature = signature;
+    receipt.signer = signer.kid;
+  }
+
+  const row: ConfirmReceiptRow = {
+    id,
+    intent: "check",
+    verdict: canonicalPayload.verdict,
+    confidence: result.confidence,
+    evidence_level: 1,
+    canonical_json: canonical,
+    payload_hash: hash,
+    signature: signature ?? null,
+    signer: signer?.kid ?? null,
+    observed_at: observedAt,
+    url_hash: canonicalPayload.url_hash,
+    claim_hash: canonicalPayload.claim_hash,
+    created_at: observedAt,
+  };
+  rememberConfirmReceipt(row);
+
+  return { ...result, id, receipt };
 }
 
 export function receiptRecordToResponse(

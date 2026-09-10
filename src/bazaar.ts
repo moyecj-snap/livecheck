@@ -1,5 +1,7 @@
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import {
+  CHECK_DESCRIPTION,
+  CHECK_PRICE_USD,
   CONFIRM_DESCRIPTION,
   CONFIRM_PRICE_USD,
   ORDER_PLACED_PRICE_USD,
@@ -316,3 +318,125 @@ export function orderConfirmBazaarExtensions(): Record<string, unknown> {
 }
 
 export const CONFIRM_ROUTE_DESCRIPTION = CONFIRM_DESCRIPTION;
+
+export const CHECK_EXAMPLE = {
+  id: "chk_01J8Z0K3N4P5Q6R7S8T9V0WCHK",
+  target: {
+    type: "url",
+    url: "https://boards.greenhouse.io/example/jobs/1842",
+    render: "never",
+    selector: null,
+  },
+  condition: { detector: "status_change", params: {} },
+  observation: {
+    status: "live",
+    signals: ["apply form present", "no closure banner"],
+    http_status: 200,
+    http_class: "2xx",
+    hash: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    summary: "live 2xx (200); apply form present, no closure banner",
+    checked_at: "2026-09-10T18:00:00Z",
+    canonical_url: "https://boards.greenhouse.io/example/jobs/1842",
+    title: "Staff Backend Engineer — Northwind Labs",
+  },
+  fired: null,
+  confidence: 0.82,
+  price_usd: CHECK_PRICE_USD,
+  receipt: {
+    hash: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    verify_url: "https://livecheck.fly.dev/v1/receipt/chk_01J8Z0K3N4P5Q6R7S8T9V0WCHK",
+  },
+} as const;
+
+export const CHECK_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    id: { type: "string", description: "Stable check id (chk_ + ULID)." },
+    target: {
+      type: "object",
+      properties: {
+        type: { type: "string", enum: ["url"] },
+        url: { type: "string" },
+        render: { type: "string", enum: ["never"] },
+        selector: { type: ["string", "null"] },
+      },
+      required: ["type", "url", "render"],
+    },
+    condition: {
+      type: "object",
+      properties: {
+        detector: { type: "string", enum: ["status_change", "keyword"] },
+        params: { type: "object" },
+      },
+      required: ["detector"],
+    },
+    observation: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["live", "closed", "unknown"] },
+        signals: { type: "array", items: { type: "string" } },
+        http_status: { type: "number" },
+        http_class: { type: "string" },
+        hash: { type: "string" },
+        summary: { type: "string" },
+        checked_at: { type: "string" },
+        canonical_url: { type: "string" },
+        title: { type: "string" },
+      },
+      required: ["status", "signals", "http_status", "http_class", "hash", "summary"],
+    },
+    fired: { type: ["boolean", "null"] },
+    confidence: { type: "number" },
+    price_usd: { type: "number" },
+    receipt: {
+      type: "object",
+      properties: {
+        hash: { type: "string" },
+        signature: { type: "string" },
+        signer: { type: "string" },
+        verify_url: { type: "string" },
+      },
+      required: ["hash", "verify_url"],
+    },
+  },
+  required: ["id", "target", "condition", "observation", "fired", "confidence", "price_usd", "receipt"],
+} as const;
+
+export const CHECK_INPUT_SCHEMA = {
+  properties: {
+    target: {
+      type: "object",
+      description: "URL target. type=url, render=never. selector optional.",
+    },
+    condition: {
+      type: "object",
+      description: "detector status_change or keyword. keyword params: any/all/none, selector?, case_sensitive?",
+    },
+    baseline_hash: {
+      type: ["string", "null"],
+      description: "Prior observation.hash for status_change. Omit or null on first check.",
+    },
+  },
+  required: ["target", "condition"],
+} as const;
+
+/** Verify-shaped Bazaar only — same POST JSON wrapper as /v1/verify. Not a fat Confirm bazaar. */
+export function checkBazaarExtensions(): Record<string, unknown> {
+  return withPostJsonMethod(
+    declareDiscoveryExtension({
+      bodyType: "json",
+      input: {
+        target: CHECK_EXAMPLE.target,
+        condition: CHECK_EXAMPLE.condition,
+        baseline_hash: null,
+      },
+      inputSchema: CHECK_INPUT_SCHEMA,
+      output: {
+        example: CHECK_EXAMPLE,
+        schema: CHECK_OUTPUT_SCHEMA,
+      },
+    }),
+  );
+}
+
+export const CHECK_ROUTE_DESCRIPTION = CHECK_DESCRIPTION;

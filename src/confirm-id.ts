@@ -40,3 +40,16 @@ export function newConfirmId(now = Date.now()): string {
 export function isConfirmId(value: string): boolean {
   return /^cfm_[0-9A-HJKMNP-TV-Z]{26}$/.test(value);
 }
+
+/** Sentinel check id: `chk_` + Crockford ULID. Same receipt store as Confirm. */
+export function newCheckId(now = Date.now()): string {
+  return `chk_${ulid(now)}`;
+}
+
+export function isCheckId(value: string): boolean {
+  return /^chk_[0-9A-HJKMNP-TV-Z]{26}$/.test(value);
+}
+
+export function isReceiptId(value: string): boolean {
+  return isConfirmId(value) || isCheckId(value);
+}

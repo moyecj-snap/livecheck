@@ -5,7 +5,7 @@ function stripTrailingSlash(value: string): string {
 }
 
 function originOnly(value: string): string {
-  return stripTrailingSlash(value).replace(/\/v1\/(verify|confirm(\/order)?)$/i, "");
+  return stripTrailingSlash(value).replace(/\/v1\/(verify|check|confirm(\/order)?)$/i, "");
 }
 
 /** Force https for Fly public hostnames. 402 resource.url must not be http in production. */
@@ -70,7 +70,11 @@ export function publicConfirmOrderUrl(requestUrl?: string, host?: string): strin
   return `${publicOrigin(requestUrl, host)}/v1/confirm/order`;
 }
 
-export type PaidResourceKind = "verify" | "confirm" | "confirm_order";
+export function publicCheckUrl(requestUrl?: string, host?: string): string {
+  return `${publicOrigin(requestUrl, host)}/v1/check`;
+}
+
+export type PaidResourceKind = "verify" | "confirm" | "confirm_order" | "check";
 
 function pathnameOf(requestUrl?: string): string | undefined {
   if (!requestUrl) return undefined;
@@ -94,13 +98,25 @@ export function isConfirmRequestPath(requestUrl?: string): boolean {
   return Boolean(requestUrl && /\/v1\/confirm\/?(\?|$)/i.test(requestUrl));
 }
 
+export function isCheckRequestPath(requestUrl?: string): boolean {
+  const pathname = pathnameOf(requestUrl);
+  if (pathname) return pathname.endsWith("/v1/check");
+  return Boolean(requestUrl && /\/v1\/check\/?(\?|$)/i.test(requestUrl));
+}
+
 export function paidResourceKind(requestUrl?: string): PaidResourceKind {
   if (isConfirmOrderRequestPath(requestUrl)) return "confirm_order";
   if (isConfirmRequestPath(requestUrl)) return "confirm";
+  if (isCheckRequestPath(requestUrl)) return "check";
   return "verify";
 }
 
 export function isPaidPostPath(path: string): boolean {
   const normalized = path.replace(/\/+$/, "") || "/";
-  return normalized === "/v1/verify" || normalized === "/v1/confirm" || normalized === "/v1/confirm/order";
+  return (
+    normalized === "/v1/verify" ||
+    normalized === "/v1/check" ||
+    normalized === "/v1/confirm" ||
+    normalized === "/v1/confirm/order"
+  );
 }

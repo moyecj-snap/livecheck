@@ -1,5 +1,7 @@
-import { CONFIRM_OUTPUT_SCHEMA, VERIFY_OUTPUT_SCHEMA } from "./bazaar.js";
+import { CHECK_OUTPUT_SCHEMA, CONFIRM_OUTPUT_SCHEMA, VERIFY_OUTPUT_SCHEMA } from "./bazaar.js";
 import {
+  OPENAPI_CHECK_DESCRIPTION,
+  OPENAPI_CHECK_SUMMARY,
   OPENAPI_CONFIRM_CLAIM_DESCRIPTION,
   OPENAPI_CONFIRM_DESCRIPTION,
   OPENAPI_CONFIRM_INTENT_DESCRIPTION,
@@ -10,12 +12,13 @@ import {
   OPENAPI_ORDER_CONFIRM_SUMMARY,
   VERIFY_DESCRIPTION,
 } from "./config.js";
-import { publicConfirmOrderUrl, publicConfirmUrl, publicOrigin, publicVerifyUrl } from "./public-url.js";
+import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicOrigin, publicVerifyUrl } from "./public-url.js";
 
 const OPENAPI_VERSION = "1.0.0";
 const OPENAPI_PRICE_AMOUNT = "0.01";
 const OPENAPI_CONFIRM_PRICE_AMOUNT = "0.10";
 const OPENAPI_ORDER_PLACED_PRICE_AMOUNT = "0.25";
+const OPENAPI_CHECK_PRICE_AMOUNT = "0.02";
 
 export function discoveryHeaders(): Record<string, string> {
   return {
@@ -81,6 +84,80 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
             },
             "402": {
               description: "Payment Required",
+            },
+          },
+        },
+      },
+      "/v1/check": {
+        post: {
+          operationId: "sentinelCheck",
+          summary: OPENAPI_CHECK_SUMMARY,
+          description: OPENAPI_CHECK_DESCRIPTION,
+          "x-guidance": OPENAPI_CHECK_DESCRIPTION,
+          tags: ["Sentinel", "check"],
+          "x-payment-info": {
+            price: {
+              mode: "fixed",
+              currency: "USD",
+              amount: OPENAPI_CHECK_PRICE_AMOUNT,
+            },
+            protocols: [{ x402: {} }],
+          },
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    target: {
+                      type: "object",
+                      description: "URL target. type must be url. render must be never. selector optional.",
+                      properties: {
+                        type: { type: "string", enum: ["url"] },
+                        url: { type: "string", format: "uri" },
+                        render: { type: "string", enum: ["never"] },
+                        selector: { type: ["string", "null"] },
+                      },
+                      required: ["type", "url"],
+                    },
+                    condition: {
+                      type: "object",
+                      description:
+                        "detector status_change or keyword. keyword params: any/all/none arrays, optional selector, case_sensitive default false.",
+                      properties: {
+                        detector: { type: "string", enum: ["status_change", "keyword"] },
+                        params: { type: "object" },
+                      },
+                      required: ["detector"],
+                    },
+                    baseline_hash: {
+                      type: ["string", "null"],
+                      description: "Prior observation.hash. Required for status_change fired. Omit on first check.",
+                    },
+                  },
+                  required: ["target", "condition"],
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description: "Current observation, optional fired, chk_ id, and receipt",
+              content: {
+                "application/json": {
+                  schema: CHECK_OUTPUT_SCHEMA,
+                },
+              },
+            },
+            "400": {
+              description: "invalid_target or invalid_condition",
+            },
+            "402": {
+              description: "Payment required. Fixed $0.02 USDC (20000 atomic).",
+            },
+            "422": {
+              description: "baseline_unreachable — target fetch failed or baseline_hash unusable",
             },
           },
         },
@@ -214,15 +291,15 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
           operationId: "getConfirmReceipt",
           summary: "Fetch a Confirm receipt by id",
           description:
-            "Free. Returns the stored receipt, canonical payload, and verify metadata. Unsigned when CONFIRM_RECEIPT_PRIVATE_KEY is unset.",
-          tags: ["Confirm"],
+            "Free. Returns the stored receipt, canonical payload, and verify metadata. Accepts Confirm ids (cfm_) and Sentinel check ids (chk_). Unsigned when CONFIRM_RECEIPT_PRIVATE_KEY is unset.",
+          tags: ["Confirm", "Sentinel"],
           parameters: [
             {
               name: "id",
               in: "path",
               required: true,
               schema: { type: "string" },
-              description: "Confirm id (cfm_ + ULID).",
+              description: "Confirm id (cfm_ + ULID) or check id (chk_ + ULID).",
             },
           ],
           responses: {
@@ -281,6 +358,7 @@ export function wellKnownX402(requestUrl?: string, host?: string): Record<string
     x402Version: 2,
     resources: [
       publicVerifyUrl(requestUrl, host),
+      publicCheckUrl(requestUrl, host),
       publicConfirmUrl(requestUrl, host),
       publicConfirmOrderUrl(requestUrl, host),
     ],

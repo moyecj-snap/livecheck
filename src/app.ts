@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
+import { CheckError, parseCheckRequest, runCheck } from "./check.js";
 import {
+  CHECK_DESCRIPTION,
+  CHECK_PRICE_USD,
   CONFIRM_DESCRIPTION,
   CONFIRM_PRICE_USD,
   NETWORK,
@@ -24,12 +27,13 @@ import { discoveryHeaders, openApiDocument, wellKnownX402 } from "./discovery.js
 import { FIXTURES } from "./fixtures.js";
 import { recordSuccessfulPaidCheck, withPaidCallContext } from "./paid-call.js";
 import { applyPaymentGate, settlementMode } from "./payments.js";
-import { publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl } from "./public-url.js";
-import { isConfirmId } from "./confirm-id.js";
+import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl } from "./public-url.js";
+import { isReceiptId } from "./confirm-id.js";
 import {
   livecheckKeysDocument,
   lookupReceiptResponse,
   receiptSigningEnabled,
+  sealCheckResult,
   sealConfirmResult,
 } from "./receipt.js";
 import { buildStatsDocument, statsHtml } from "./stats.js";
@@ -66,7 +70,7 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
 
   app.get("/v1/receipt/:id", (c) => {
     const id = c.req.param("id");
-    if (!id || !isConfirmId(id)) {
+    if (!id || !isReceiptId(id)) {
       return c.json({ error: "not_found" }, 404);
     }
     const body = lookupReceiptResponse(id, c.req.url, c.req.header("host"));
@@ -96,15 +100,19 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
       price_usd: PRICE_USD,
       confirm_price_usd: CONFIRM_PRICE_USD,
       order_placed_price_usd: ORDER_PLACED_PRICE_USD,
+      check_price_usd: CHECK_PRICE_USD,
       public_verify_url: publicVerifyUrl(c.req.url),
       public_confirm_url: publicConfirmUrl(c.req.url),
       public_confirm_order_url: publicConfirmOrderUrl(c.req.url),
+      public_check_url: publicCheckUrl(c.req.url),
       bazaar: true,
       ebay: isEbayAdapterEnabled(),
       confirm: true,
+      check: true,
       receipt_signing: receiptSigningEnabled(),
       description: VERIFY_DESCRIPTION,
       confirm_description: CONFIRM_DESCRIPTION,
+      check_description: CHECK_DESCRIPTION,
       user_agent: USER_AGENT,
     });
   });
@@ -147,8 +155,36 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
 
   app.post("/v1/confirm", (c) => handlePaidConfirm(c, parseConfirmRouteRequest));
   app.post("/v1/confirm/order", (c) => handlePaidConfirm(c, parseOrderConfirmRequest));
+  app.post("/v1/check", handlePaidCheck);
 
   return app;
+}
+
+async function handlePaidCheck(c: Context) {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid_target", message: "Request body must be JSON." }, 400);
+  }
+  try {
+    const parsed = parseCheckRequest(body);
+    const classified = await runCheck(parsed);
+    const result = sealCheckResult(classified, {
+      url: parsed.target.url,
+      requestUrl: c.req.url,
+      host: c.req.header("host"),
+    });
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof CheckError) {
+      return c.json({ error: error.code, message: error.message }, error.status as 400 | 422);
+    }
+    if (error instanceof VerifyError) {
+      return c.json({ error: "invalid_target", message: error.message }, error.status as 400 | 502 | 504);
+    }
+    throw error;
+  }
 }
 
 async function handlePaidConfirm(c: Context, parse: typeof parseConfirmRouteRequest) {

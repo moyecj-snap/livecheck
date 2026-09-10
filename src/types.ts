@@ -59,6 +59,53 @@ export type ConfirmResult = {
   next_step?: ConfirmNextStep;
 };
 
+export type CheckDetector = "status_change" | "keyword";
+
+export type CheckTarget = {
+  type: "url";
+  url: string;
+  render: "never";
+  selector: string | null;
+};
+
+export type KeywordParams = {
+  any: string[];
+  all: string[];
+  none: string[];
+  selector: string | null;
+  case_sensitive: boolean;
+};
+
+export type CheckCondition =
+  | { detector: "status_change"; params: Record<string, never> }
+  | { detector: "keyword"; params: KeywordParams };
+
+export type HttpClass = "1xx" | "2xx" | "3xx" | "4xx" | "5xx" | "other";
+
+export type CheckObservation = {
+  status: SourceStatus;
+  signals: string[];
+  http_status: number;
+  http_class: HttpClass;
+  hash: string;
+  summary: string;
+  checked_at: string;
+  canonical_url: string;
+  title?: string;
+};
+
+export type CheckResult = {
+  id: string;
+  target: CheckTarget;
+  condition: { detector: CheckDetector; params: Record<string, unknown> };
+  observation: CheckObservation;
+  /** Present when the detector can decide. null when status_change has no baseline_hash. */
+  fired: boolean | null;
+  confidence: number;
+  price_usd: number;
+  receipt: ConfirmReceipt;
+};
+
 export type FetchedPage = {
   requestedUrl: string;
   canonicalUrl: string;

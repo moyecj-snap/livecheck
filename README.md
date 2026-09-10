@@ -2,7 +2,7 @@
 
 Before you scrape a listing, check if it is still there. POST a specific job posting, Shopify or HTML product URL, or eBay item URL. Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404). Product pages are HTML-only (Shopify-class add-to-cart / sold-out); eBay item URLs use Browse availability, not sold comps. Not a search engine. $0.01 USDC per check on Base via x402.
 
-This is a per-check agent API, not a platform. Agents pay **$0.01 USDC** per `POST /v1/verify`, **$0.10 USDC** per `POST /v1/confirm` (`lead_submit` / `listing_published`), and **$0.25 USDC** per `POST /v1/confirm/order` (`order_placed`) on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md). x402 wants one fixed price per resource — dual pricing on a single path makes facilitator verify fail when settle-time `paymentRequirements` drift from the first 402.
+This is a per-check agent API, not a platform. Agents pay **$0.01 USDC** per `POST /v1/verify`, **$0.02 USDC** per `POST /v1/check` (Sentinel one-shot condition), **$0.10 USDC** per `POST /v1/confirm` (`lead_submit` / `listing_published`), and **$0.25 USDC** per `POST /v1/confirm/order` (`order_placed`) on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md). x402 wants one fixed price per resource — dual pricing on a single path makes facilitator verify fail when settle-time `paymentRequirements` drift from the first 402.
 
 ## What you get
 
@@ -37,9 +37,9 @@ After payment verifies and settles:
 
 v1 reads HTML + status only. It does not execute page JavaScript. Redirects are followed; `canonical_url` is the final URL. User-Agent identifies Livecheck.
 
-Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, `GET /.well-known/x402`, `GET /.well-known/livecheck-keys.json`, `GET /stats`, and `GET /v1/receipt/{id}`. Paid: `POST /v1/verify` ($0.01), `POST /v1/confirm` ($0.10, `lead_submit` / `listing_published`), and `POST /v1/confirm/order` ($0.25, `order_placed`). `GET /v1/judge` is a 501 stub.
+Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, `GET /.well-known/x402`, `GET /.well-known/livecheck-keys.json`, `GET /stats`, and `GET /v1/receipt/{id}`. Paid: `POST /v1/verify` ($0.01), `POST /v1/check` ($0.02, one-shot Sentinel condition), `POST /v1/confirm` ($0.10, `lead_submit` / `listing_published`), and `POST /v1/confirm/order` ($0.25, `order_placed`). `GET /v1/judge` is a 501 stub. `/v1/watch*` is not implemented in this phase.
 
-Agent crawlers (x402scan, AgentCash, Circle OpenAPI discovery) read the free JSON docs. `GET /openapi.json` is the canonical contract: `POST /v1/verify` with JSON `{ "url": "https://..." }`, `x-payment-info` fixed **$0.01** USD (decimal; runtime 402 `accepts[].amount` stays `"10000"` atomic USDC), and a 200 schema of `live | closed | unknown`. It lists `POST /v1/confirm` at fixed **$0.10** USD (`"100000"` atomic) for `lead_submit` / `listing_published` (no `intent_prices`), and `POST /v1/confirm/order` at fixed **$0.25** (`"250000"` atomic) for `order_placed`. `GET /.well-known/x402` lists `https://livecheck.fly.dev/v1/verify`, `https://livecheck.fly.dev/v1/confirm`, and `https://livecheck.fly.dev/v1/confirm/order`. Neither discovery route returns 402.
+Agent crawlers (x402scan, AgentCash, Circle OpenAPI discovery) read the free JSON docs. `GET /openapi.json` is the canonical contract: `POST /v1/verify` with JSON `{ "url": "https://..." }`, `x-payment-info` fixed **$0.01** USD (decimal; runtime 402 `accepts[].amount` stays `"10000"` atomic USDC), and a 200 schema of `live | closed | unknown`. It lists `POST /v1/check` at fixed **$0.02** (`"20000"` atomic) for a one-shot condition (no watcher), `POST /v1/confirm` at fixed **$0.10** USD (`"100000"` atomic) for `lead_submit` / `listing_published` (no `intent_prices`), and `POST /v1/confirm/order` at fixed **$0.25** (`"250000"` atomic) for `order_placed`. `GET /.well-known/x402` lists `https://livecheck.fly.dev/v1/verify`, `https://livecheck.fly.dev/v1/check`, `https://livecheck.fly.dev/v1/confirm`, and `https://livecheck.fly.dev/v1/confirm/order`. Neither discovery route returns 402.
 
 Unpaid `POST /v1/verify` includes x402 v2 Bazaar discovery metadata (`extensions.bazaar` via `bazaarResourceServerExtension` + `declareDiscoveryExtension`). Listing in [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) is free to browse; CDP catalogs this route after a successful paid request that carries the extension. The 402 `resource.description` (and health `description`) is: Before you scrape a job posting, Shopify or HTML product page, or eBay item, POST the specific URL you already have and Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404); not a search engine.
 
@@ -66,6 +66,39 @@ curl -sS -D - -o /dev/null https://livecheck.fly.dev/v1/verify \
   -d '{"url":"https://example.com"}'
 # decode payment-required: resource.url must be https://livecheck.fly.dev/v1/verify
 # and extensions.bazaar must be present
+```
+
+## Sentinel check (`POST /v1/check`)
+
+One-shot condition check. **Does not create a watcher.** Fixed **$0.02 USDC** (`"20000"` atomic). One accept on the 402 — never dual-priced.
+
+```http
+POST /v1/check
+Content-Type: application/json
+
+{
+  "target": { "type": "url", "url": "https://boards.greenhouse.io/example/jobs/1842", "render": "never", "selector": null },
+  "condition": { "detector": "status_change", "params": {} },
+  "baseline_hash": null
+}
+```
+
+Phase 1 detectors:
+
+- **status_change** — same fetch/classify path as Verify. `observation.hash` is SHA-256 of `{status, http_class}`. When `baseline_hash` is the prior hash, `fired` is true iff status or HTTP class changed. Omit or null `baseline_hash` on the first call (`fired` is then `null`).
+- **keyword** — `params.any` / `all` / `none` string arrays, optional `selector`, `case_sensitive` default false. `fired` is true when the presence set matches.
+
+Successful JSON includes `observation` (status, signals, http_status, http_class, hash, summary), `fired`, `confidence`, `price_usd: 0.02`, and Confirm-style additive `id` + `receipt`. Check ids use prefix **`chk_`** + ULID. `GET /v1/receipt/{id}` resolves both `chk_` and `cfm_`. Same Ed25519 key as Confirm (`CONFIRM_RECEIPT_PRIVATE_KEY`).
+
+Errors: **400** `invalid_target` / `invalid_condition`; **422** `baseline_unreachable` (unusable `baseline_hash` or the target could not be fetched); unpaid → **402**.
+
+The 402 `resource.url` is `https://livecheck.fly.dev/v1/check` in production. Payment description is ASCII-only. `advertisePaymentRequired` does not change `amount` / `asset` / `payTo` / `network` / `scheme` / `extra` / `maxTimeoutSeconds`. `extra` is Verify's USDC domain `{name:"USD Coin", version:"2"}`.
+
+```bash
+curl -s http://127.0.0.1:43127/v1/check \
+  -H 'content-type: application/json' \
+  -H 'X-Livecheck-Mock: 1' \
+  -d '{"target":{"type":"url","url":"http://127.0.0.1:43127/fixtures/live-apply-now","render":"never"},"condition":{"detector":"status_change","params":{}}}'
 ```
 
 ## Confirm (`POST /v1/confirm`)

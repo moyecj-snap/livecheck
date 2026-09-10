@@ -70,6 +70,22 @@ describe("fillCatalogPaymentPayload", () => {
     }
   });
 
+  it("does not overwrite a check resource with the verify URL", () => {
+    const previous = process.env.LIVECHECK_PUBLIC_URL;
+    process.env.LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev";
+    try {
+      const { payload, resourceFilled } = fillCatalogPaymentPayload({
+        resource: { url: "http://livecheck.fly.dev/v1/check", description: "old" },
+      });
+      assert.equal(resourceFilled, true);
+      assert.equal(paymentPayloadResourceUrl(payload), "https://livecheck.fly.dev/v1/check");
+      assert.notEqual(paymentPayloadResourceUrl(payload), advertised);
+    } finally {
+      if (previous === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
+      else process.env.LIVECHECK_PUBLIC_URL = previous;
+    }
+  });
+
   it("does not overwrite a confirm resource with the verify URL", () => {
     const previous = process.env.LIVECHECK_PUBLIC_URL;
     process.env.LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev";

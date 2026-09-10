@@ -1,9 +1,12 @@
 import {
+  checkBazaarExtensions,
   confirmBazaarExtensions,
   orderConfirmBazaarExtensions,
   verifyBazaarExtensions,
 } from "./bazaar.js";
 import {
+  CHECK_PAYMENT_DESCRIPTION,
+  CHECK_PRICE_ATOMIC_USDC,
   CONFIRM_PAYMENT_DESCRIPTION,
   CONFIRM_PRICE_ATOMIC_USDC,
   NETWORK,
@@ -17,6 +20,7 @@ import {
 } from "./config.js";
 import {
   paidResourceKind,
+  publicCheckUrl,
   publicConfirmOrderUrl,
   publicConfirmUrl,
   publicVerifyUrl,
@@ -101,6 +105,20 @@ export function orderConfirmPaymentRequiredBody(resourceUrl: string): PaymentReq
   };
 }
 
+export function checkPaymentRequiredBody(resourceUrl: string): PaymentRequiredBody {
+  return {
+    x402Version: 2,
+    error: "PAYMENT-SIGNATURE header is required",
+    resource: {
+      url: resourceUrl,
+      description: CHECK_PAYMENT_DESCRIPTION,
+      mimeType: "application/json",
+    },
+    accepts: [accept(CHECK_PRICE_ATOMIC_USDC)],
+    extensions: checkBazaarExtensions(),
+  };
+}
+
 export function encodePaymentRequired(body: PaymentRequiredBody | Record<string, unknown>): string {
   return Buffer.from(JSON.stringify(body), "utf8").toString("base64");
 }
@@ -122,6 +140,12 @@ function advertisedResource(kind: ReturnType<typeof paidResourceKind>, requestUr
       description: CONFIRM_PAYMENT_DESCRIPTION,
     };
   }
+  if (kind === "check") {
+    return {
+      url: publicCheckUrl(requestUrl, host),
+      description: CHECK_PAYMENT_DESCRIPTION,
+    };
+  }
   return {
     url: publicVerifyUrl(requestUrl, host),
     description: VERIFY_DESCRIPTION,
@@ -131,6 +155,7 @@ function advertisedResource(kind: ReturnType<typeof paidResourceKind>, requestUr
 function routeBazaar(kind: ReturnType<typeof paidResourceKind>): Record<string, unknown> {
   if (kind === "confirm_order") return orderConfirmBazaarExtensions();
   if (kind === "confirm") return confirmBazaarExtensions();
+  if (kind === "check") return checkBazaarExtensions();
   return verifyBazaarExtensions();
 }
 

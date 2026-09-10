@@ -3,7 +3,7 @@ import { createPublicKey, randomBytes, verify } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import { serve } from "@hono/node-server";
 import { createApp } from "../src/app.js";
-import { isConfirmId, newConfirmId } from "../src/confirm-id.js";
+import { isCheckId, isConfirmId, isReceiptId, newCheckId, newConfirmId } from "../src/confirm-id.js";
 import {
   canonicalizeReceiptPayload,
   generateReceiptPrivateKeyPem,
@@ -21,6 +21,14 @@ describe("confirm ids", () => {
     const id = newConfirmId();
     assert.equal(isConfirmId(id), true);
     assert.match(id, /^cfm_[0-9A-HJKMNP-TV-Z]{26}$/);
+  });
+
+  it("emits chk_ + 26-char Crockford ULID for Sentinel checks", () => {
+    const id = newCheckId();
+    assert.equal(isCheckId(id), true);
+    assert.equal(isConfirmId(id), false);
+    assert.equal(isReceiptId(id), true);
+    assert.match(id, /^chk_[0-9A-HJKMNP-TV-Z]{26}$/);
   });
 });
 

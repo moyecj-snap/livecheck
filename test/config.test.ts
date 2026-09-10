@@ -7,6 +7,9 @@ import {
   OPENAPI_CONFIRM_DESCRIPTION,
   OPENAPI_CONFIRM_INTENT_DESCRIPTION,
   OPENAPI_CONFIRM_SUMMARY,
+  CHECK_PAYMENT_DESCRIPTION,
+  CHECK_PRICE_ATOMIC_USDC,
+  CHECK_PRICE_USD,
   ORDER_PLACED_PRICE_ATOMIC_USDC,
   ORDER_PLACED_PRICE_USD,
   CONFIRM_RESOURCE_TAGS,
@@ -55,6 +58,12 @@ describe("listing price and description", () => {
     assert.equal(CONFIRM_PRICE_ATOMIC_USDC, "100000");
     assert.equal(ORDER_PLACED_PRICE_USD, 0.25);
     assert.equal(ORDER_PLACED_PRICE_ATOMIC_USDC, "250000");
+    assert.equal(CHECK_PRICE_USD, 0.02);
+    assert.equal(CHECK_PRICE_ATOMIC_USDC, "20000");
+    assert.equal(
+      [...CHECK_PAYMENT_DESCRIPTION].every((ch) => ch.charCodeAt(0) < 128),
+      true,
+    );
     assert.equal(
       CONFIRM_DESCRIPTION,
       "Livecheck Confirm — independent side-effect verification (actor ≠ verifier). POST /v1/confirm with {url, intent} (+ optional claim). Returns confirmed|failed|unknown; thank-you fluff alone never confirmed — durable ref/id required. Intents: lead_submit $0.10 (lead/contact thank-you), listing_published $0.10 (listing go-live; claim title/sku/id optional) on /v1/confirm; order_placed $0.25 on POST /v1/confirm/order (order confirm/status; claim optional). Signed receipts + GET /stats. Same origin as Livecheck verify ($0.01). Not Trust Oracle / L3.",

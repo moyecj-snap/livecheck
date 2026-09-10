@@ -11,6 +11,10 @@ export const ORDER_PLACED_PRICE_USD = 0.25;
 export const ORDER_PLACED_PRICE_LABEL = "$0.25";
 /** $0.25 USDC at 6 decimals = 250000 atomic. */
 export const ORDER_PLACED_PRICE_ATOMIC_USDC = "250000";
+/** Sentinel one-shot check. $0.02 USDC at 6 decimals = 20000 atomic. */
+export const CHECK_PRICE_USD = 0.02;
+export const CHECK_PRICE_LABEL = "$0.02";
+export const CHECK_PRICE_ATOMIC_USDC = "20000";
 
 export function confirmIntentPriceUsd(intent: string): number {
   return intent === "order_placed" ? ORDER_PLACED_PRICE_USD : CONFIRM_PRICE_USD;
@@ -45,6 +49,15 @@ export const OPENAPI_ORDER_CONFIRM_INTENT_DESCRIPTION =
   "Payable on this route: order_placed ($0.25). claim.order_id/total/etc optional; thank-you fluff alone never confirmed; durable order/confirmation/ref/ticket id required for confirmed. Other values → 400 unsupported_intent (lead_submit / listing_published use POST /v1/confirm).";
 export const OPENAPI_ORDER_CONFIRM_CLAIM_DESCRIPTION =
   "Optional. Not required. order_id/total/email_domain may match or veto; never invents ids; fluff-only pages stay unknown.";
+/** Health / OpenAPI — Sentinel one-shot check. */
+export const CHECK_DESCRIPTION =
+  "Livecheck Sentinel check — one-shot URL condition check. POST /v1/check with {target, condition, baseline_hash?}. Detectors: status_change (Verify classify; fires when status/http class differs from baseline_hash), keyword (any/all/none presence). Returns current observation + fired when comparable. Fixed $0.02 USDC. No watcher created. Not /v1/verify ($0.01) and not Confirm.";
+/** ASCII-only 402 copy for POST /v1/check (fixed $0.02). Unicode broke Confirm settles. */
+export const CHECK_PAYMENT_DESCRIPTION =
+  "Livecheck Sentinel check - one-shot URL condition check. POST /v1/check with {target, condition, baseline_hash?}. Detectors: status_change, keyword. Returns current observation + fired when baseline_hash is supplied. Fixed $0.02 USDC. No watcher created. Not /v1/verify ($0.01) and not Confirm.";
+export const OPENAPI_CHECK_SUMMARY = "One-shot URL condition check ($0.02)";
+export const OPENAPI_CHECK_DESCRIPTION =
+  "POST {target, condition, baseline_hash?} for a one-shot check. No watcher is created. target.type=url, render=never (HTML only). Detectors: status_change — reuse Verify fetch/classify; fired when status or HTTP class differs from baseline_hash. keyword — params.any/all/none string arrays, optional selector, case_sensitive default false; fired when the presence set matches. Returns observation (status/signals/http_status/hash/summary), fired when comparable, confidence, price_usd 0.02, id (chk_ + ULID), and a Confirm-style receipt. 400 invalid_target / invalid_condition. 422 baseline_unreachable when the target cannot be fetched or baseline_hash is unusable. Unpaid → 402 with one $0.02 accept (20000 atomic).";
 /** x402 ResourceInfo / RouteConfig — Confirm only, so CDP can find Confirm under Livecheck. */
 export const CONFIRM_SERVICE_NAME = "Livecheck";
 export const CONFIRM_RESOURCE_TAGS = ["livecheck", "confirm"] as const;

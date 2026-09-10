@@ -154,6 +154,10 @@ describe("discovery documents (mock gate)", () => {
       /claim\.title\/sku\/id optional/,
     );
     assert.match(confirm.responses?.["402"]?.description ?? "", /\$0\.10/);
+    const check = (doc.paths as Record<string, { post?: typeof confirm }>)?.["/v1/check"]?.post;
+    assert.ok(check, "expected POST /v1/check");
+    assert.equal(check["x-payment-info"]?.price?.amount, "0.02");
+    assert.equal(check["x-payment-info"]?.intent_prices, undefined);
     const order = (doc.paths as Record<string, { post?: typeof confirm }>)?.["/v1/confirm/order"]?.post;
     assert.ok(order, "expected POST /v1/confirm/order");
     assert.equal(order["x-payment-info"]?.price?.amount, "0.25");
@@ -170,6 +174,7 @@ describe("discovery documents (mock gate)", () => {
     assert.equal(body.version, 1);
     assert.deepEqual(body.resources, [
       "https://livecheck.fly.dev/v1/verify",
+      "https://livecheck.fly.dev/v1/check",
       "https://livecheck.fly.dev/v1/confirm",
       "https://livecheck.fly.dev/v1/confirm/order",
     ]);
