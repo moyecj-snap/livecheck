@@ -9,6 +9,20 @@ import {
   VERIFY_DESCRIPTION,
   WATCH_PRICE_USD,
 } from "./config.js";
+import { WATCH_HINT_DETECTOR, WATCH_HINT_SUGGEST } from "./watch-hint.js";
+
+/** Paid 200 Verify / Confirm only. Not on 402 bodies or payment-required headers. */
+export const WATCH_HINT_SCHEMA = {
+  type: "object",
+  description:
+    "Present on paid 200 responses. Cross-sell hint to POST /v1/watch ($2.50, 30-day standard watcher). Default detector is status_change. Not included on unpaid 402.",
+  properties: {
+    suggest: { type: "string", enum: [WATCH_HINT_SUGGEST] },
+    detector: { type: "string", enum: [WATCH_HINT_DETECTOR] },
+    price_usd: { type: "number" },
+  },
+  required: ["suggest", "detector", "price_usd"],
+} as const;
 
 export const VERIFY_EXAMPLE = {
   url: "https://boards.greenhouse.io/example/jobs/1842",
@@ -34,6 +48,7 @@ export const VERIFY_OUTPUT_SCHEMA = {
     signals: { type: "array", items: { type: "string" } },
     confidence: { type: "number" },
     price_usd: { type: "number" },
+    watch: WATCH_HINT_SCHEMA,
   },
   required: [
     "url",
@@ -204,6 +219,7 @@ export const CONFIRM_OUTPUT_SCHEMA = {
       },
       description: "Present when verdict is unknown. /v1/judge is a 501 stub in this phase and is not payable.",
     },
+    watch: WATCH_HINT_SCHEMA,
   },
   required: [
     "id",

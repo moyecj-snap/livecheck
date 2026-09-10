@@ -78,7 +78,8 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
           },
           responses: {
             "200": {
-              description: "Primary-source live, closed, or unknown verdict",
+              description:
+                "Primary-source live, closed, or unknown verdict. Paid 200 includes watch suggest for POST /v1/watch.",
               content: {
                 "application/json": {
                   schema: VERIFY_OUTPUT_SCHEMA,
@@ -364,7 +365,8 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
           },
           responses: {
             "200": {
-              description: "Independent confirmed, failed, or unknown verdict",
+              description:
+                "Independent confirmed, failed, or unknown verdict. Paid 200 includes watch suggest for POST /v1/watch.",
               content: {
                 "application/json": {
                   schema: CONFIRM_OUTPUT_SCHEMA,
@@ -426,7 +428,8 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
           },
           responses: {
             "200": {
-              description: "Independent confirmed, failed, or unknown verdict",
+              description:
+                "Independent confirmed, failed, or unknown verdict. Paid 200 includes watch suggest for POST /v1/watch.",
               content: {
                 "application/json": {
                   schema: CONFIRM_OUTPUT_SCHEMA,

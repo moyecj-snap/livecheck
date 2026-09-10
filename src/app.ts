@@ -43,6 +43,7 @@ import {
 import { buildStatsDocument, statsHtml } from "./stats.js";
 import { VerifyError, parseTargetUrl, verifyUrl } from "./verify.js";
 import { WatchError, createWatch, deleteWatch, readWatch, watchErrorBody } from "./watch.js";
+import { withWatchHint } from "./watch-hint.js";
 import { resolveWatchPayer, withWatchPayerContext } from "./watch-payer.js";
 
 export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): Hono {
@@ -155,7 +156,7 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
       const target = parseTargetUrl(url);
       const verdict = await verifyUrl(target);
       recordSuccessfulPaidCheck({ route: "verify", url: target, status: verdict.status });
-      return c.json(verdict);
+      return c.json(withWatchHint(verdict));
     } catch (error) {
       if (error instanceof VerifyError) {
         return c.json({ error: error.message }, error.status as 400 | 502 | 504);
@@ -281,7 +282,7 @@ async function handlePaidConfirm(c: Context, parse: typeof parseConfirmRouteRequ
       intent,
       verdict: result.verdict,
     });
-    return c.json(result);
+    return c.json(withWatchHint(result));
   } catch (error) {
     if (error instanceof UnsupportedIntentError) {
       const payload: Record<string, unknown> = {

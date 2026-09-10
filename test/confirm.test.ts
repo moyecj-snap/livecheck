@@ -220,6 +220,7 @@ describe("confirmUrl + HTTP", () => {
       independent_evidence: boolean;
       price_usd: number;
       receipt?: { hash?: string; verify_url?: string; signature?: string };
+      watch?: { suggest?: string; detector?: string; price_usd?: number };
     };
     assert.equal(body.verdict, "confirmed");
     assert.equal(body.evidence_strength, 2);
@@ -231,6 +232,7 @@ describe("confirmUrl + HTTP", () => {
     assert.match(body.id ?? "", /^cfm_/);
     assert.ok(body.receipt?.hash);
     assert.ok(body.receipt?.verify_url?.includes("/v1/receipt/"));
+    assert.deepEqual(body.watch, { suggest: "/v1/watch", detector: "status_change", price_usd: 2.5 });
   });
 
   it("POST /v1/confirm thank-you copy only is unknown", async () => {
@@ -309,6 +311,7 @@ describe("confirmUrl + HTTP", () => {
     assert.match(decoded.resource?.description ?? "", /Livecheck/);
     assert.notEqual(decoded.resource?.description, VERIFY_DESCRIPTION);
     assert.match(decoded.resource?.url ?? "", /\/v1\/confirm$/);
+    assert.equal("watch" in decoded, false);
   });
 
   it("unpaid POST /v1/confirm/order is 402 at $0.25 with one accept", async () => {

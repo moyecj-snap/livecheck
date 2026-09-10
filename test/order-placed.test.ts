@@ -170,6 +170,7 @@ describe("order_placed HTTP + regressions", () => {
       id?: string;
       receipt?: { hash?: string; verify_url?: string };
       price_usd: number;
+      watch?: { suggest?: string; detector?: string; price_usd?: number };
     };
     assert.equal(body.verdict, "confirmed");
     assert.equal(body.effect.type, "order_placed");
@@ -179,6 +180,7 @@ describe("order_placed HTTP + regressions", () => {
     assert.equal(body.price_usd, 0.25);
     assert.match(body.id ?? "", /^cfm_/);
     assert.ok(body.receipt?.hash);
+    assert.deepEqual(body.watch, { suggest: "/v1/watch", detector: "status_change", price_usd: 2.5 });
 
     const receipt = await fetch(body.receipt!.verify_url!);
     assert.equal(receipt.status, 200);

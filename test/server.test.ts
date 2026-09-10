@@ -120,8 +120,13 @@ describe("HTTP surface", () => {
       body: JSON.stringify({ url: `${origin}/fixtures/live-apply-now` }),
     });
     assert.equal(res.status, 200);
-    const body = (await res.json()) as { status: string; price_usd: number };
+    const body = (await res.json()) as {
+      status: string;
+      price_usd: number;
+      watch?: { suggest?: string; detector?: string; price_usd?: number };
+    };
     assert.equal(body.status, "live");
     assert.equal(body.price_usd, PRICE_USD);
+    assert.deepEqual(body.watch, { suggest: "/v1/watch", detector: "status_change", price_usd: 2.5 });
   });
 });

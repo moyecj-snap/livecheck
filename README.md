@@ -25,11 +25,16 @@ After payment verifies and settles:
   "title": "Staff Backend Engineer — Northwind Labs",
   "signals": ["apply form present", "no closure banner"],
   "confidence": 0.82,
-  "price_usd": 0.01
+  "price_usd": 0.01,
+  "watch": {
+    "suggest": "/v1/watch",
+    "detector": "status_change",
+    "price_usd": 2.5
+  }
 }
 ```
 
-`status` is `live`, `closed`, or `unknown`.
+`status` is `live`, `closed`, or `unknown`. Paid 200 Verify (and Confirm / Confirm-order) responses include `watch` — an in-band hint to `POST /v1/watch` at **$2.50** with default detector `status_change`. Unpaid 402 bodies and `payment-required` headers do not include `watch`.
 
 - **closed** — HTTP 404/410; job close language (“no longer accepting applications”, “this job is closed to new applications”, …); a Greenhouse/Lever/Ashby job URL that redirects to a board with no job; or a specific product page with sold-out / out of stock / currently unavailable language.
 - **live** — HTTP 200 on a specific job posting with an apply/submit affordance and no close language, or a specific product page with add to cart / add to bag / buy now and no sold-out phrase. A recaptcha/hcaptcha widget on that page is not a bot wall.
@@ -169,7 +174,7 @@ Same volume as `paid-calls.sqlite`. State survives machine restarts. If Postgres
 
 The scheduler is an **in-process** poll (every 15s) started by `npm start` (`src/index.ts`). It runs in the same Fly machine process as HTTP (`processes = ["app"]`). `fly.toml` already keeps that machine up (`auto_stop_machines = "off"`, `min_machines_running = 1`). This is **not** Fly cron and **not** a second `fly machine`. Due watchers are claimed, observed with the `/v1/check` detectors (max **2** concurrent fetches per hostname), then `checks_remaining` / `next_check_at` update with ±10% jitter. Fired observations enqueue a `callback_pending` event (HMAC delivery is the next phase).
 
-Health reports `watch: true`, `watch_price_usd: 2.5`, and `public_watch_url`.
+Health reports `watch: true`, `watch_price_usd: 2.5`, and `public_watch_url`. Paid Verify and Confirm 200 responses include a `watch` suggest (`/v1/watch`, detector `status_change`, `$2.50`) so agents can create a watcher after a one-shot check.
 
 ## Confirm (`POST /v1/confirm`)
 
@@ -207,6 +212,8 @@ Content-Type: application/json
 - **unknown** — Level 1 only (thank-you copy, no id; or soft/ambiguous listing signals). May include `next_step: { action: "human_review", endpoint: "/v1/judge", est_price_usd: 1.00 }` (`GET /v1/judge` is a 501 stub, not payable).
 - **failed** — clear error/reject banner, or Verify closed for `listing_published`.
 - Fetch is cookieless. `independent_evidence` is true only then; cookies never produce `confirmed`.
+
+Paid 200 Confirm and Confirm-order JSON also includes the same `watch` suggest as Verify (`/v1/watch`, detector `status_change`, `price_usd: 2.5`). It is not present on unpaid 402.
 
 Successful JSON is additive on the v0 fields (`verdict`, `effect`, `signals`, `evidence_strength`, `evidence_id`, …):
 
