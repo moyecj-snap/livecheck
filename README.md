@@ -380,7 +380,22 @@ Unknown intents return HTTP **400** `{ "error": "unsupported_intent" }` after pa
 
 **Payment (one fixed price per resource):** `@x402/hono` prices the *route*, not the JSON `intent`. Unpaid `POST /v1/confirm` 402s with exactly one accept at **$0.10 / 100000 atomic**. Unpaid `POST /v1/confirm/order` 402s with exactly one accept at **$0.25 / 250000 atomic**. Dual/dynamic `accepts[]` on one path made purl report "Payment was not accepted" because facilitator verify failed when settle-time `paymentRequirements` drifted from the first 402. `advertisePaymentRequired` must not change matching fields (`amount`, `asset`, `payTo`, `network`, `scheme`, `extra`, `maxTimeoutSeconds`). `extra` stays Verify's USDC domain `{name, version}`. Route config pins `resource` URL + ASCII description to the public values so that rewrite is a no-op for signing fields. Mock pay (`X-Livecheck-Mock: 1`) still bypasses the gate. Successful JSON still returns `price_usd: 0.25` for `order_placed`.
 
-Free Confirm extras: `GET /v1/receipt/{id}`, `GET /.well-known/livecheck-keys.json`, `GET /stats` (JSON; HTML if `Accept: text/html`). `GET /stats` publishes lead_submit, listing_published, and order_placed rolling counts and explicitly **null** false-confirmed rate (no published bench number on the live route). Local honesty benches: `npm run bench:listing-published` and `npm run bench:order-placed` (gate: `false_confirmed = 0`).
+Free Confirm extras: `GET /v1/receipt/{id}`, `GET /.well-known/livecheck-keys.json`, `GET /stats` (JSON; HTML if `Accept: text/html`). `GET /stats` publishes lead_submit, listing_published, and order_placed rolling counts and explicitly **null** false-confirmed rate (no published bench number on the live route), plus a **Sentinel** section (below). Local honesty benches: `npm run bench:listing-published` and `npm run bench:order-placed` (gate: `false_confirmed = 0`).
+
+### Sentinel on `GET /stats`
+
+JSON and HTML include `sentinel` next to Confirm intents. Counts come from `watchers.sqlite` (plus one-shot `chk_` receipts):
+
+| Field | Source |
+| --- | --- |
+| `active_watchers` | `watchers` rows with `status=active` |
+| `checks_run` | one-shot `POST /v1/check` receipts + scheduled observations (`term quota − checks_remaining`) |
+| `change_events` | `watch_events` rows with `kind=change` |
+| `by_detector.{status_change,keyword,text_diff,numeric_threshold}` | watcher counts and change-event counts per detector |
+| `benches.false_positive_rate` | structured **null** until dispute + benches land |
+| `benches.median_latency_ms` | structured **null** until benches land |
+
+Prices on that object stay `$0.02` / `$2.50` / `$0.50`. `status` is `payable` (Bazaar GA held). Missing is not zero.
 
 ### Signed receipts
 
@@ -693,3 +708,17 @@ No new secrets. `PAID_CALL_DB_PATH`, `WATCH_DB_PATH`, and `RECEIPT_DB_PATH` are 
 - Product pages on this path are HTML-only. Amazon, TikTok, and Alibaba listings stay `unknown`. Loginwalls, SPAs, and real challenge interstitials often come back `unknown`. Workday boards that render apply UI only in JavaScript stay unknown.
 - No GitHub mirror. This Origin repository is the source of truth. Deploy Fly from this tree.
 - New York businesses cannot accept x402 stablecoin payments.
+
+## Non-goals (this phase)
+
+Spec §8 — not in this slice. Do not treat these as shipped or priced:
+
+- Playwright / `POST /v1/watch/fast` / JS render (`render: always` stays `400 render_not_available`)
+- Watcher renew
+- Confirm chain (`on_change.run=confirm`) — Verify chain via `POST /v1/watch/{id}/chain/topup` is live
+- Dispute endpoint or a published Sentinel false-positive rate
+- Bazaar GA listing push (402 bazaar metadata on Verify stays; do not treat catalog index as GA)
+- Dual accepts or dynamic pricing on one 402
+- Postgres watcher spine (SQLite on the Fly volume)
+- Price changes
+- Fly deploy or GitHub mirror from this tree (Origin remains SoT)

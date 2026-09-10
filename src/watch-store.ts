@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { WATCH_MAX_CHECKS_PER_TERM, WATCH_TERM_SECONDS } from "./config.js";
 import type {
   CheckCondition,
   CheckObservation,
@@ -735,4 +736,116 @@ export function expireOverdueWatchers(nowIso: string): WatcherRow[] {
     ).run(nowIso);
   }
   return expired;
+}
+
+export const SENTINEL_DETECTORS = [
+  "status_change",
+  "keyword",
+  "text_diff",
+  "numeric_threshold",
+] as const;
+
+export type SentinelDetector = (typeof SENTINEL_DETECTORS)[number];
+
+export type SentinelDetectorCount = {
+  watchers: number;
+  change_events: number;
+};
+
+export type SentinelDetectorCounts = Record<SentinelDetector, SentinelDetectorCount>;
+
+export type SentinelWatchStats = {
+  active_watchers: number;
+  checks_run_scheduled: number;
+  change_events: number;
+  by_detector: SentinelDetectorCounts;
+};
+
+export function emptySentinelDetectorCounts(): SentinelDetectorCounts {
+  return {
+    status_change: { watchers: 0, change_events: 0 },
+    keyword: { watchers: 0, change_events: 0 },
+    text_diff: { watchers: 0, change_events: 0 },
+    numeric_threshold: { watchers: 0, change_events: 0 },
+  };
+}
+
+export function emptySentinelWatchStats(): SentinelWatchStats {
+  return {
+    active_watchers: 0,
+    checks_run_scheduled: 0,
+    change_events: 0,
+    by_detector: emptySentinelDetectorCounts(),
+  };
+}
+
+function isSentinelDetector(value: string): value is SentinelDetector {
+  return (SENTINEL_DETECTORS as readonly string[]).includes(value);
+}
+
+function countColumn(db: DatabaseSync, sql: string): number {
+  const row = db.prepare(sql).get() as { n?: number | bigint } | undefined;
+  return Number(row?.n ?? 0);
+}
+
+/**
+ * Point-in-time Sentinel counts from watchers.sqlite.
+ * Scheduled checks_run is inferred from term quota minus checks_remaining.
+ * Returns zeros when the store is unavailable.
+ */
+export function querySentinelWatchStats(): SentinelWatchStats {
+  const empty = emptySentinelWatchStats();
+  try {
+    const db = requireDb();
+    const by_detector = emptySentinelDetectorCounts();
+    const active_watchers = countColumn(
+      db,
+      `SELECT COUNT(*) AS n FROM watchers WHERE status = 'active'`,
+    );
+    const change_events = countColumn(
+      db,
+      `SELECT COUNT(*) AS n FROM watch_events WHERE kind = 'change'`,
+    );
+    const checks_run_scheduled = countColumn(
+      db,
+      `SELECT COALESCE(SUM(
+         CASE
+           WHEN interval_s IS NULL OR interval_s <= 0 THEN 0
+           ELSE MAX(0, MIN(${WATCH_MAX_CHECKS_PER_TERM}, CAST(${WATCH_TERM_SECONDS} / interval_s AS INTEGER)) - checks_remaining)
+         END
+       ), 0) AS n
+       FROM watchers`,
+    );
+    const watcherRows = db
+      .prepare(
+        `SELECT COALESCE(json_extract(condition_json, '$.detector'), '') AS detector, COUNT(*) AS n
+         FROM watchers
+         GROUP BY 1`,
+      )
+      .all() as Array<{ detector?: string; n?: number | bigint }>;
+    for (const row of watcherRows) {
+      const detector = String(row.detector ?? "");
+      if (isSentinelDetector(detector)) {
+        by_detector[detector].watchers = Number(row.n ?? 0);
+      }
+    }
+    const changeRows = db
+      .prepare(
+        `SELECT COALESCE(json_extract(w.condition_json, '$.detector'), '') AS detector, COUNT(*) AS n
+         FROM watch_events e
+         JOIN watchers w ON w.id = e.watcher_id
+         WHERE e.kind = 'change'
+         GROUP BY 1`,
+      )
+      .all() as Array<{ detector?: string; n?: number | bigint }>;
+    for (const row of changeRows) {
+      const detector = String(row.detector ?? "");
+      if (isSentinelDetector(detector)) {
+        by_detector[detector].change_events = Number(row.n ?? 0);
+      }
+    }
+    return { active_watchers, checks_run_scheduled, change_events, by_detector };
+  } catch {
+    return empty;
+  }
 }
