@@ -19,6 +19,15 @@ export const CHECK_PRICE_ATOMIC_USDC = "20000";
 export const WATCH_PRICE_USD = 2.5;
 export const WATCH_PRICE_LABEL = "$2.50";
 export const WATCH_PRICE_ATOMIC_USDC = "2500000";
+/** Sentinel chain top-up. $0.50 USDC at 6 decimals = 500000 atomic. Funds on_change.verify, not bundled into watch $2.50. */
+export const CHAIN_TOPUP_PRICE_USD = 0.5;
+export const CHAIN_TOPUP_PRICE_LABEL = "$0.50";
+export const CHAIN_TOPUP_PRICE_ATOMIC_USDC = "500000";
+export const CHAIN_TOPUP_PRICE_ATOMIC = 500_000;
+/** Internal chained Verify debit. Same $0.01 / 10000 atomic as POST /v1/verify. */
+export const CHAIN_VERIFY_PRICE_USD = PRICE_USD;
+export const CHAIN_VERIFY_PRICE_ATOMIC = 10_000;
+export const USDC_ATOMIC_SCALE = 1_000_000;
 export const WATCH_TIER = "standard" as const;
 export const WATCH_TERM_DAYS = 30;
 export const WATCH_TERM_SECONDS = WATCH_TERM_DAYS * 24 * 60 * 60;
@@ -58,6 +67,14 @@ export const SENTINEL_SIGNATURE_HEADER = "X-Sentinel-Signature";
 
 export function confirmIntentPriceUsd(intent: string): number {
   return intent === "order_placed" ? ORDER_PLACED_PRICE_USD : CONFIRM_PRICE_USD;
+}
+
+export function usdFromAtomic(atomic: number): number {
+  return Math.round(atomic) / USDC_ATOMIC_SCALE;
+}
+
+export function atomicFromUsd(usd: number): number {
+  return Math.round(usd * USDC_ATOMIC_SCALE);
 }
 /** Bazaar 402 / health confirm_description — rich copy; 402 headers stay ASCII. */
 export const CONFIRM_DESCRIPTION =
@@ -100,13 +117,21 @@ export const OPENAPI_CHECK_DESCRIPTION =
   "POST {target, condition, baseline_hash?} for a one-shot check. No watcher is created. target.type=url, render=never (HTML only). Detectors: status_change — reuse Verify fetch/classify; fired when status or HTTP class differs from baseline_hash. keyword — params.any/all/none string arrays, optional selector, case_sensitive default false; fired when the presence set matches. text_diff — params.selector recommended (without it confidence is capped at 0.6), params.ignore regex array, params.min_change_ratio default 0.02; hashes after the ignore-by-default list (timestamps, viewers/sold, session ids, CSRF, ad slots, cookie banners). numeric_threshold — params.selector or params.jsonpath, params.op lt/lte/gt/gte/eq/change_pct, params.value, optional params.currency; parses $1,299.00 / 1 299,00 EUR / 149. Returns observation (status/signals/http_status/hash/summary), fired when comparable, confidence, price_usd 0.02, id (chk_ + ULID), and a Confirm-style receipt. 400 invalid_target / invalid_condition. 422 baseline_unreachable when the target cannot be fetched or baseline_hash is unusable. Unpaid → 402 with one $0.02 accept (20000 atomic).";
 /** Health / OpenAPI — Sentinel standard watcher. */
 export const WATCH_DESCRIPTION =
-  "Livecheck Sentinel watch — 30-day URL condition watcher. POST /v1/watch with {target, condition, callback, interval_s}. Detectors: status_change, keyword, text_diff, numeric_threshold (same as /v1/check). Standard tier emits change only after 2-of-3 confirmation (two consecutive checks or one check plus a ~20s re-fetch). HMAC-signed callbacks (X-Sentinel-Signature). Returns wtc_ id, owner_token (once), baseline, and a Confirm-style receipt. Fixed $2.50 USDC. GET/DELETE /v1/watch/{id} and GET /v1/watch/{id}/events with X-Livecheck-Owner-Token. No Playwright / fast tier in this phase. Not /v1/check ($0.02) and not Confirm.";
+  "Livecheck Sentinel watch — 30-day URL condition watcher. POST /v1/watch with {target, condition, callback, interval_s, on_change?, chain_budget_usd?}. Detectors: status_change, keyword, text_diff, numeric_threshold (same as /v1/check). Standard tier emits change only after 2-of-3 confirmation (two consecutive checks or one check plus a ~20s re-fetch). HMAC-signed callbacks (X-Sentinel-Signature). Returns wtc_ id, owner_token (once), baseline, and a Confirm-style receipt. Fixed $2.50 USDC. on_change.run none|verify; chain_budget_usd is a spend cap. Fund chain balance via POST /v1/watch/{id}/chain/topup ($0.50). GET/DELETE /v1/watch/{id} and GET /v1/watch/{id}/events with X-Livecheck-Owner-Token. No Playwright / fast tier in this phase. Not /v1/check ($0.02) and not Confirm.";
 /** ASCII-only 402 copy for POST /v1/watch (fixed $2.50). Unicode broke Confirm settles. */
 export const WATCH_PAYMENT_DESCRIPTION =
-  "Livecheck Sentinel watch - 30-day URL condition watcher. POST /v1/watch with {target, condition, callback, interval_s}. Detectors: status_change, keyword, text_diff, numeric_threshold (same as /v1/check). Standard tier change events use 2-of-3 confirmation. HMAC-signed callbacks. Returns wtc_ id, owner_token (once), baseline, and a signed receipt. Fixed $2.50 USDC (2500000 atomic). GET/DELETE /v1/watch/{id} and GET /v1/watch/{id}/events with X-Livecheck-Owner-Token. No Playwright. Not /v1/check ($0.02) and not Confirm.";
+  "Livecheck Sentinel watch - 30-day URL condition watcher. POST /v1/watch with {target, condition, callback, interval_s, on_change?, chain_budget_usd?}. Detectors: status_change, keyword, text_diff, numeric_threshold (same as /v1/check). Standard tier change events use 2-of-3 confirmation. HMAC-signed callbacks. Returns wtc_ id, owner_token (once), baseline, and a signed receipt. Fixed $2.50 USDC (2500000 atomic). on_change.run none or verify. chain_budget_usd is a spend cap; fund via POST /v1/watch/{id}/chain/topup ($0.50). GET/DELETE /v1/watch/{id} and GET /v1/watch/{id}/events with X-Livecheck-Owner-Token. No Playwright. Not /v1/check ($0.02) and not Confirm.";
 export const OPENAPI_WATCH_SUMMARY = "Create a 30-day URL condition watcher ($2.50)";
 export const OPENAPI_WATCH_DESCRIPTION =
-  "POST {target, condition, callback, interval_s?, label?, context?} to create a standard watcher. target.type=url, render=never (HTML only). render=always → 400 render_not_available (use /v1/watch/fast when that route ships). Detectors: status_change, keyword, text_diff, numeric_threshold — same internals as POST /v1/check. Standard tier emits change only after 2-of-3 confirmation: two consecutive candidate checks, or one candidate plus a ~20s confirmation re-fetch. callback.deliver on_change or every_check is accepted (standard still skips baseline spam). HMAC POSTs to callback.url with X-Sentinel-Signature t=<unix>,v1=<hex> (HMAC-SHA256 of the raw JSON body with callback.secret). Failed deliveries retry 1m, 5m, 30m, 2h (5 attempts); events are never dropped. chain_budget_usd is accepted and ignored (run stays none). interval_s min 300, default 900, max 2880 checks per 30-day term. Baseline is captured synchronously (≤10s); fetch failure still returns 201 with baseline.captured=false (never 422). owner_token (owt_…) is returned once; send it as X-Livecheck-Owner-Token on GET/DELETE /v1/watch/{id} and GET /v1/watch/{id}/events. DELETE stops early with no refund. Duplicate active watcher for the same paying wallet + target.url + condition → 409 duplicate_watch. Soft cap 200 active standard watchers per wallet → 429 rate_limited. Unpaid → 402 with one $2.50 accept (2500000 atomic).";
+  "POST {target, condition, callback, interval_s?, label?, context?, on_change?, chain_budget_usd?} to create a standard watcher. target.type=url, render=never (HTML only). render=always → 400 render_not_available (use /v1/watch/fast when that route ships). Detectors: status_change, keyword, text_diff, numeric_threshold — same internals as POST /v1/check. Standard tier emits change only after 2-of-3 confirmation: two consecutive candidate checks, or one candidate plus a ~20s confirmation re-fetch. callback.deliver on_change or every_check is accepted (standard still skips baseline spam). HMAC POSTs to callback.url with X-Sentinel-Signature t=<unix>,v1=<hex> (HMAC-SHA256 of the raw JSON body with callback.secret). Failed deliveries retry 1m, 5m, 30m, 2h (5 attempts); events are never dropped. on_change.run is none or verify (Confirm chain is not in this phase). chain_budget_usd is a spend cap only — the $2.50 watch price does not include chain funds. Fund via POST /v1/watch/{id}/chain/topup ($0.50, owner token + payment). interval_s min 300, default 900, max 2880 checks per 30-day term. Baseline is captured synchronously (≤10s); fetch failure still returns 201 with baseline.captured=false (never 422). owner_token (owt_…) is returned once; send it as X-Livecheck-Owner-Token on GET/DELETE /v1/watch/{id}, GET /v1/watch/{id}/events, and POST /v1/watch/{id}/chain/topup. DELETE stops early with no refund. Duplicate active watcher for the same paying wallet + target.url + condition → 409 duplicate_watch. Soft cap 200 active standard watchers per wallet → 429 rate_limited. Unpaid → 402 with one $2.50 accept (2500000 atomic).";
+export const CHAIN_TOPUP_DESCRIPTION =
+  "Livecheck Sentinel chain top-up — add $0.50 USDC chain balance to an existing watcher. POST /v1/watch/{id}/chain/topup. Requires X-Livecheck-Owner-Token plus x402 payment. Balance funds on_change.run=verify (internal Verify at $0.01, no public /v1/verify payment). chain_budget_usd on create is a spend cap, not funding. Fixed $0.50 USDC. Not watch create ($2.50) and not Confirm.";
+/** ASCII-only 402 copy for POST /v1/watch/{id}/chain/topup (fixed $0.50). */
+export const CHAIN_TOPUP_PAYMENT_DESCRIPTION =
+  "Livecheck Sentinel chain top-up - add $0.50 USDC chain balance to an existing watcher. POST /v1/watch/{id}/chain/topup. Requires X-Livecheck-Owner-Token plus payment. Funds on_change.run=verify (internal Verify at $0.01; no public /v1/verify). chain_budget_usd is a spend cap, not funding. Fixed $0.50 USDC (500000 atomic). Not watch create ($2.50) and not Confirm.";
+export const OPENAPI_CHAIN_TOPUP_SUMMARY = "Add $0.50 chain balance to a watcher";
+export const OPENAPI_CHAIN_TOPUP_DESCRIPTION =
+  "Paid $0.50 USDC (500000 atomic). One accept. Requires X-Livecheck-Owner-Token in addition to payment (owner token + payment). Credits $0.50 chain balance on the watcher in the path. chain_budget_usd from create is a spend cap; this route is the only funding path (not bundled into POST /v1/watch $2.50). Unpaid → 402. Missing owner token after pay → 401. Wrong token → 403. Unknown id → 404.";
 /** x402 ResourceInfo / RouteConfig — Confirm only, so CDP can find Confirm under Livecheck. */
 export const CONFIRM_SERVICE_NAME = "Livecheck";
 export const CONFIRM_RESOURCE_TAGS = ["livecheck", "confirm"] as const;

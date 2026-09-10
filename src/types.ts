@@ -135,6 +135,19 @@ export type WatchBaseline = {
 
 export type WatchCallbackDeliver = "on_change" | "every_check";
 
+/** on_change.run. Confirm chain is a later step. */
+export type WatchRun = "none" | "verify";
+
+export type WatchChainNone = { run: "none" };
+export type WatchChainSkipped = { skipped: "insufficient_balance" };
+export type WatchChainVerify = {
+  run: "verify";
+  result: VerifyVerdict;
+  receipt: ConfirmReceipt;
+  debit_usd: number;
+};
+export type WatchChain = WatchChainNone | WatchChainSkipped | WatchChainVerify;
+
 export type WatchEventType = "change" | "unreachable" | "recovered" | "expiring" | "expired" | "baseline";
 
 export type WatchObservationSnapshot = {
@@ -158,7 +171,7 @@ export type WatchCallbackPayload = {
   expires_at: string;
   receipt: ConfirmReceipt;
   context: Record<string, unknown> | null;
-  chain: { run: "none" };
+  chain: WatchChain;
 };
 
 export type WatchCallback = {
@@ -181,7 +194,10 @@ export type WatchCreateResult = {
   target: CheckTarget;
   condition: { detector: CheckDetector; params: Record<string, unknown> };
   price_usd: number;
-  run: "none";
+  run: WatchRun;
+  on_change: { run: WatchRun };
+  chain_budget_usd: number | null;
+  chain_balance_usd: number;
   receipt: ConfirmReceipt;
   label?: string;
 };
@@ -200,7 +216,10 @@ export type WatchPublicView = {
   target: CheckTarget;
   condition: { detector: CheckDetector; params: Record<string, unknown> };
   price_usd: number;
-  run: "none";
+  run: WatchRun;
+  on_change: { run: WatchRun };
+  chain_budget_usd: number | null;
+  chain_balance_usd: number;
   callback: { url: string; deliver: WatchCallbackDeliver };
   label?: string;
 };

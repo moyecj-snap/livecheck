@@ -10,6 +10,9 @@ import {
   CHECK_PAYMENT_DESCRIPTION,
   CHECK_PRICE_ATOMIC_USDC,
   CHECK_PRICE_USD,
+  CHAIN_TOPUP_PAYMENT_DESCRIPTION,
+  CHAIN_TOPUP_PRICE_ATOMIC_USDC,
+  CHAIN_TOPUP_PRICE_USD,
   WATCH_PAYMENT_DESCRIPTION,
   WATCH_PRICE_ATOMIC_USDC,
   WATCH_PRICE_USD,
@@ -65,6 +68,12 @@ describe("listing price and description", () => {
     assert.equal(CHECK_PRICE_ATOMIC_USDC, "20000");
     assert.equal(WATCH_PRICE_USD, 2.5);
     assert.equal(WATCH_PRICE_ATOMIC_USDC, "2500000");
+    assert.equal(CHAIN_TOPUP_PRICE_USD, 0.5);
+    assert.equal(CHAIN_TOPUP_PRICE_ATOMIC_USDC, "500000");
+    assert.equal(
+      [...CHAIN_TOPUP_PAYMENT_DESCRIPTION].every((ch) => ch.charCodeAt(0) < 128),
+      true,
+    );
     assert.equal(
       [...WATCH_PAYMENT_DESCRIPTION].every((ch) => ch.charCodeAt(0) < 128),
       true,

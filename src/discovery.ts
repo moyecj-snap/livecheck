@@ -1,5 +1,7 @@
-import { CHECK_OUTPUT_SCHEMA, CONFIRM_OUTPUT_SCHEMA, VERIFY_OUTPUT_SCHEMA, WATCH_OUTPUT_SCHEMA } from "./bazaar.js";
+import { CHAIN_TOPUP_OUTPUT_SCHEMA, CHECK_OUTPUT_SCHEMA, CONFIRM_OUTPUT_SCHEMA, VERIFY_OUTPUT_SCHEMA, WATCH_OUTPUT_SCHEMA } from "./bazaar.js";
 import {
+  OPENAPI_CHAIN_TOPUP_DESCRIPTION,
+  OPENAPI_CHAIN_TOPUP_SUMMARY,
   OPENAPI_CHECK_DESCRIPTION,
   OPENAPI_CHECK_SUMMARY,
   OPENAPI_CONFIRM_CLAIM_DESCRIPTION,
@@ -14,7 +16,7 @@ import {
   OPENAPI_WATCH_SUMMARY,
   VERIFY_DESCRIPTION,
 } from "./config.js";
-import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicOrigin, publicVerifyUrl, publicWatchUrl } from "./public-url.js";
+import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicOrigin, publicVerifyUrl, publicWatchChainTopupUrl, publicWatchUrl } from "./public-url.js";
 
 const OPENAPI_VERSION = "1.0.0";
 const OPENAPI_PRICE_AMOUNT = "0.01";
@@ -22,6 +24,7 @@ const OPENAPI_CONFIRM_PRICE_AMOUNT = "0.10";
 const OPENAPI_ORDER_PLACED_PRICE_AMOUNT = "0.25";
 const OPENAPI_CHECK_PRICE_AMOUNT = "0.02";
 const OPENAPI_WATCH_PRICE_AMOUNT = "2.50";
+const OPENAPI_CHAIN_TOPUP_PRICE_AMOUNT = "0.50";
 
 export function discoveryHeaders(): Record<string, string> {
   return {
@@ -235,7 +238,15 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
                     context: { type: "object" },
                     chain_budget_usd: {
                       type: "number",
-                      description: "Accepted and ignored in this phase. run stays none.",
+                      description:
+                        "Spend cap for chained Verify. Funding is POST /v1/watch/{id}/chain/topup ($0.50), not bundled into the $2.50 watch price.",
+                    },
+                    on_change: {
+                      type: "object",
+                      description: "run=none (default) or verify. On emitted change, verify runs internally when chain balance >= $0.01.",
+                      properties: {
+                        run: { type: "string", enum: ["none", "verify"] },
+                      },
                     },
                   },
                   required: ["target", "condition", "callback"],
@@ -324,6 +335,55 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
             "401": { description: "Missing owner token" },
             "403": { description: "Wrong owner token" },
             "404": { description: "Unknown id" },
+          },
+        },
+      },
+      "/v1/watch/{id}/chain/topup": {
+        post: {
+          operationId: "sentinelWatchChainTopup",
+          summary: OPENAPI_CHAIN_TOPUP_SUMMARY,
+          description: OPENAPI_CHAIN_TOPUP_DESCRIPTION,
+          "x-guidance": OPENAPI_CHAIN_TOPUP_DESCRIPTION,
+          tags: ["Sentinel", "watch", "chain"],
+          "x-payment-info": {
+            price: {
+              mode: "fixed",
+              currency: "USD",
+              amount: OPENAPI_CHAIN_TOPUP_PRICE_AMOUNT,
+            },
+            protocols: [{ x402: {} }],
+          },
+          parameters: [
+            {
+              name: "id",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+              description: "Watcher id (wtc_ + ULID).",
+            },
+            {
+              name: "X-Livecheck-Owner-Token",
+              in: "header",
+              required: true,
+              schema: { type: "string" },
+              description: "owt_ token returned once on POST /v1/watch. Required in addition to payment.",
+            },
+          ],
+          responses: {
+            "200": {
+              description: "Chain balance increased by $0.50.",
+              content: {
+                "application/json": {
+                  schema: CHAIN_TOPUP_OUTPUT_SCHEMA,
+                },
+              },
+            },
+            "401": { description: "Missing owner token" },
+            "403": { description: "Wrong owner token" },
+            "404": { description: "Unknown watcher" },
+            "402": {
+              description: "Payment required. Fixed $0.50 USDC (500000 atomic). One accept.",
+            },
           },
         },
       },
@@ -571,6 +631,7 @@ export function wellKnownX402(requestUrl?: string, host?: string): Record<string
       publicVerifyUrl(requestUrl, host),
       publicCheckUrl(requestUrl, host),
       publicWatchUrl(requestUrl, host),
+      publicWatchChainTopupUrl(requestUrl, host),
       publicConfirmUrl(requestUrl, host),
       publicConfirmOrderUrl(requestUrl, host),
     ],

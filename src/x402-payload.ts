@@ -1,4 +1,5 @@
 import {
+  chainTopupBazaarExtensions,
   checkBazaarExtensions,
   confirmBazaarExtensions,
   orderConfirmBazaarExtensions,
@@ -6,6 +7,8 @@ import {
   watchBazaarExtensions,
 } from "./bazaar.js";
 import {
+  CHAIN_TOPUP_PAYMENT_DESCRIPTION,
+  CHAIN_TOPUP_PRICE_ATOMIC_USDC,
   CHECK_PAYMENT_DESCRIPTION,
   CHECK_PRICE_ATOMIC_USDC,
   CONFIRM_PAYMENT_DESCRIPTION,
@@ -27,6 +30,7 @@ import {
   publicConfirmOrderUrl,
   publicConfirmUrl,
   publicVerifyUrl,
+  publicWatchChainTopupUrl,
   publicWatchUrl,
 } from "./public-url.js";
 
@@ -137,6 +141,20 @@ export function watchPaymentRequiredBody(resourceUrl: string): PaymentRequiredBo
   };
 }
 
+export function chainTopupPaymentRequiredBody(resourceUrl: string): PaymentRequiredBody {
+  return {
+    x402Version: 2,
+    error: "PAYMENT-SIGNATURE header is required",
+    resource: {
+      url: resourceUrl,
+      description: CHAIN_TOPUP_PAYMENT_DESCRIPTION,
+      mimeType: "application/json",
+    },
+    accepts: [accept(CHAIN_TOPUP_PRICE_ATOMIC_USDC)],
+    extensions: chainTopupBazaarExtensions(),
+  };
+}
+
 export function encodePaymentRequired(body: PaymentRequiredBody | Record<string, unknown>): string {
   return Buffer.from(JSON.stringify(body), "utf8").toString("base64");
 }
@@ -170,6 +188,12 @@ function advertisedResource(kind: ReturnType<typeof paidResourceKind>, requestUr
       description: WATCH_PAYMENT_DESCRIPTION,
     };
   }
+  if (kind === "chain_topup") {
+    return {
+      url: publicWatchChainTopupUrl(requestUrl, host),
+      description: CHAIN_TOPUP_PAYMENT_DESCRIPTION,
+    };
+  }
   return {
     url: publicVerifyUrl(requestUrl, host),
     description: VERIFY_DESCRIPTION,
@@ -181,6 +205,7 @@ function routeBazaar(kind: ReturnType<typeof paidResourceKind>): Record<string, 
   if (kind === "confirm") return confirmBazaarExtensions();
   if (kind === "check") return checkBazaarExtensions();
   if (kind === "watch") return watchBazaarExtensions();
+  if (kind === "chain_topup") return chainTopupBazaarExtensions();
   return verifyBazaarExtensions();
 }
 

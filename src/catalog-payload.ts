@@ -1,4 +1,5 @@
 import {
+  chainTopupBazaarExtensions,
   checkBazaarExtensions,
   confirmBazaarExtensions,
   orderConfirmBazaarExtensions,
@@ -6,6 +7,7 @@ import {
   watchBazaarExtensions,
 } from "./bazaar.js";
 import {
+  CHAIN_TOPUP_PAYMENT_DESCRIPTION,
   CHECK_PAYMENT_DESCRIPTION,
   CONFIRM_DESCRIPTION,
   CONFIRM_RESOURCE_TAGS,
@@ -14,7 +16,15 @@ import {
   VERIFY_DESCRIPTION,
   WATCH_PAYMENT_DESCRIPTION,
 } from "./config.js";
-import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl, publicWatchUrl } from "./public-url.js";
+import {
+  parseWatchChainTopupId,
+  publicCheckUrl,
+  publicConfirmOrderUrl,
+  publicConfirmUrl,
+  publicVerifyUrl,
+  publicWatchChainTopupUrl,
+  publicWatchUrl,
+} from "./public-url.js";
 
 export type CatalogResourceInfo = {
   url: string;
@@ -34,7 +44,8 @@ export type PaymentEnvelope = {
 };
 
 export function advertisedResourceInfo(
-  kind: "verify" | "confirm" | "confirm_order" | "check" | "watch" = "verify",
+  kind: "verify" | "confirm" | "confirm_order" | "check" | "watch" | "chain_topup" = "verify",
+  inboundUrl?: string,
 ): CatalogResourceInfo {
   if (kind === "confirm_order") {
     return {
@@ -66,6 +77,21 @@ export function advertisedResourceInfo(
       mimeType: "application/json",
     };
   }
+  if (kind === "chain_topup") {
+    let watcherId: string | undefined;
+    if (inboundUrl) {
+      try {
+        watcherId = parseWatchChainTopupId(new URL(inboundUrl).pathname);
+      } catch {
+        watcherId = undefined;
+      }
+    }
+    return {
+      url: publicWatchChainTopupUrl(inboundUrl, undefined, watcherId),
+      description: CHAIN_TOPUP_PAYMENT_DESCRIPTION,
+      mimeType: "application/json",
+    };
+  }
   return {
     url: publicVerifyUrl(),
     description: VERIFY_DESCRIPTION,
@@ -73,9 +99,10 @@ export function advertisedResourceInfo(
   };
 }
 
-function resourceKindFromUrl(url: string | undefined): "verify" | "confirm" | "confirm_order" | "check" | "watch" {
+function resourceKindFromUrl(url: string | undefined): "verify" | "confirm" | "confirm_order" | "check" | "watch" | "chain_topup" {
   if (url && /\/v1\/confirm\/order\/?(\?|$)/i.test(url)) return "confirm_order";
   if (url && /\/v1\/confirm\/?(\?|$)/i.test(url)) return "confirm";
+  if (url && /\/v1\/watch\/[^/?#]+\/chain\/topup\/?(\?|$)/i.test(url)) return "chain_topup";
   if (url && /\/v1\/watch\/?(\?|$)/i.test(url)) return "watch";
   if (url && /\/v1\/check\/?(\?|$)/i.test(url)) return "check";
   return "verify";
@@ -117,7 +144,7 @@ export function fillCatalogPaymentPayload(payload: PaymentEnvelope): {
 } {
   const inboundUrl = paymentPayloadResourceUrl(payload);
   const kind = resourceKindFromUrl(inboundUrl);
-  const advertised = advertisedResourceInfo(kind);
+  const advertised = advertisedResourceInfo(kind, inboundUrl);
   const resourceFilled = needsAdvertisedResource(inboundUrl, advertised.url);
   const bazaarFilled = !paymentPayloadHasBazaar(payload);
 
@@ -138,7 +165,9 @@ export function fillCatalogPaymentPayload(payload: PaymentEnvelope): {
             ? checkBazaarExtensions()
             : kind === "watch"
               ? watchBazaarExtensions()
-              : verifyBazaarExtensions();
+              : kind === "chain_topup"
+                ? chainTopupBazaarExtensions()
+                : verifyBazaarExtensions();
     next.extensions = {
       ...bazaar,
       ...(payload.extensions && typeof payload.extensions === "object" ? payload.extensions : {}),

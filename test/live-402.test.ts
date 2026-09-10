@@ -4,6 +4,7 @@ import { serve } from "@hono/node-server";
 import type { FacilitatorClient } from "@x402/core/server";
 import { createApp } from "../src/app.js";
 import {
+  CHAIN_TOPUP_PAYMENT_DESCRIPTION,
   CHECK_PAYMENT_DESCRIPTION,
   CONFIRM_PAYMENT_DESCRIPTION,
   WATCH_PAYMENT_DESCRIPTION,
@@ -160,6 +161,22 @@ describe("live @x402/hono 402 (decoded payment-required)", () => {
     const accepts = decoded.accepts as Array<{ amount?: string; extra?: { name?: string; version?: string } }>;
     assert.equal(accepts.length, 1);
     assert.equal(accepts[0]?.amount, "2500000");
+    assert.deepEqual(accepts[0]?.extra, { name: "USD Coin", version: "2" });
+  });
+
+  it("chain topup 402 is one $0.50 accept with the watcher URL pinned", async () => {
+    const res = await fetch(`${origin}/v1/watch/wtc_01M26F7JFYRFCCBSQVNW1B0E3M/chain/topup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+    });
+    assert.equal(res.status, 402);
+    const decoded = decode402(res);
+    const resource = decoded.resource as { url?: string; description?: string };
+    assert.equal(resource.url, "https://livecheck.fly.dev/v1/watch/wtc_01M26F7JFYRFCCBSQVNW1B0E3M/chain/topup");
+    assert.equal(resource.description, CHAIN_TOPUP_PAYMENT_DESCRIPTION);
+    const accepts = decoded.accepts as Array<{ amount?: string; extra?: { name?: string; version?: string } }>;
+    assert.equal(accepts.length, 1);
+    assert.equal(accepts[0]?.amount, "500000");
     assert.deepEqual(accepts[0]?.extra, { name: "USD Coin", version: "2" });
   });
 

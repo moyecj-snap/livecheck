@@ -7,6 +7,7 @@ import type {
   CheckTarget,
   WatchBaseline,
   WatchCallbackDeliver,
+  WatchRun,
   WatchStatus,
 } from "./types.js";
 import { parseDetectorState, type DetectorState } from "./watch-state.js";
@@ -31,8 +32,10 @@ export type WatcherRow = {
   callback_url: string;
   callback_secret: string;
   callback_deliver: WatchCallbackDeliver;
-  run: "none";
+  run: WatchRun;
   chain_budget_usd: number | null;
+  chain_balance_atomic: number;
+  chain_spent_atomic: number;
   label: string | null;
   context_json: string | null;
   created_at: string;
@@ -87,6 +90,8 @@ CREATE TABLE IF NOT EXISTS watchers (
   callback_deliver TEXT NOT NULL,
   run TEXT NOT NULL DEFAULT 'none',
   chain_budget_usd REAL,
+  chain_balance_atomic INTEGER NOT NULL DEFAULT 0,
+  chain_spent_atomic INTEGER NOT NULL DEFAULT 0,
   label TEXT,
   context_json TEXT,
   created_at TEXT NOT NULL,
@@ -200,6 +205,8 @@ export function migrateWatchStore(db: DatabaseSync): void {
   ensureColumn(db, "watch_events", "next_attempt_at", "next_attempt_at TEXT");
   ensureColumn(db, "watch_events", "last_error", "last_error TEXT");
   ensureColumn(db, "watchers", "detector_state_json", "detector_state_json TEXT");
+  ensureColumn(db, "watchers", "chain_balance_atomic", "chain_balance_atomic INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "watchers", "chain_spent_atomic", "chain_spent_atomic INTEGER NOT NULL DEFAULT 0");
   ensureTable(
     db,
     `CREATE TABLE IF NOT EXISTS watch_delivery_attempts (
@@ -308,8 +315,10 @@ function fromSql(item: Record<string, unknown>): WatcherRow | undefined {
     callback_url: String(item.callback_url),
     callback_secret: String(item.callback_secret),
     callback_deliver: item.callback_deliver === "every_check" ? "every_check" : "on_change",
-    run: "none",
+    run: item.run === "verify" ? "verify" : "none",
     chain_budget_usd: item.chain_budget_usd == null ? null : Number(item.chain_budget_usd),
+    chain_balance_atomic: Number(item.chain_balance_atomic ?? 0),
+    chain_spent_atomic: Number(item.chain_spent_atomic ?? 0),
     label: item.label == null ? null : String(item.label),
     context_json: item.context_json == null ? null : String(item.context_json),
     created_at: String(item.created_at),
@@ -326,7 +335,7 @@ function fromSql(item: Record<string, unknown>): WatcherRow | undefined {
 const SELECT_COLS = `id, payer, owner_token_hash, status, tier, target_url, target_json, condition_json,
   condition_key, interval_s, checks_remaining, expires_at, first_check_at, next_check_at,
   baseline_json, last_observation_json, callback_url, callback_secret, callback_deliver,
-  run, chain_budget_usd, label, context_json, created_at, claimed_until,
+  run, chain_budget_usd, chain_balance_atomic, chain_spent_atomic, label, context_json, created_at, claimed_until,
   consecutive_failures, unreachable, expiring_emitted, detector_state_json`;
 
 export function insertWatcher(row: WatcherRow): void {
@@ -336,9 +345,9 @@ export function insertWatcher(row: WatcherRow): void {
       id, payer, owner_token_hash, status, tier, target_url, target_json, condition_json,
       condition_key, interval_s, checks_remaining, expires_at, first_check_at, next_check_at,
       baseline_json, last_observation_json, callback_url, callback_secret, callback_deliver,
-      run, chain_budget_usd, label, context_json, created_at, claimed_until,
+      run, chain_budget_usd, chain_balance_atomic, chain_spent_atomic, label, context_json, created_at, claimed_until,
       consecutive_failures, unreachable, expiring_emitted, detector_state_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     row.id,
     row.payer,
@@ -361,6 +370,8 @@ export function insertWatcher(row: WatcherRow): void {
     row.callback_deliver,
     row.run,
     row.chain_budget_usd,
+    row.chain_balance_atomic ?? 0,
+    row.chain_spent_atomic ?? 0,
     row.label,
     row.context_json,
     row.created_at,
@@ -507,6 +518,47 @@ export function stopWatcher(id: string): boolean {
   const result = db
     .prepare(`UPDATE watchers SET status = 'stopped', claimed_until = NULL WHERE id = ? AND status = 'active'`)
     .run(id);
+  return Number(result.changes) > 0;
+}
+
+/** Credit prepaid chain balance (atomic USDC). Returns the new balance. */
+export function creditChainBalance(id: string, atomic: number): number {
+  const db = requireDb();
+  db.prepare(
+    `UPDATE watchers SET chain_balance_atomic = COALESCE(chain_balance_atomic, 0) + ? WHERE id = ?`,
+  ).run(atomic, id);
+  const row = db.prepare(`SELECT chain_balance_atomic FROM watchers WHERE id = ?`).get(id) as
+    | { chain_balance_atomic?: number }
+    | undefined;
+  return Number(row?.chain_balance_atomic ?? 0);
+}
+
+/**
+ * Atomically debit chain balance for an internal Verify.
+ * `budgetAtomic` is a spend cap (null = no cap). Returns false when balance or budget is insufficient.
+ */
+export function tryDebitChainBalance(id: string, atomic: number, budgetAtomic: number | null): boolean {
+  const db = requireDb();
+  const result =
+    budgetAtomic == null
+      ? db
+          .prepare(
+            `UPDATE watchers
+             SET chain_balance_atomic = chain_balance_atomic - ?,
+                 chain_spent_atomic = COALESCE(chain_spent_atomic, 0) + ?
+             WHERE id = ? AND COALESCE(chain_balance_atomic, 0) >= ?`,
+          )
+          .run(atomic, atomic, id, atomic)
+      : db
+          .prepare(
+            `UPDATE watchers
+             SET chain_balance_atomic = chain_balance_atomic - ?,
+                 chain_spent_atomic = COALESCE(chain_spent_atomic, 0) + ?
+             WHERE id = ?
+               AND COALESCE(chain_balance_atomic, 0) >= ?
+               AND COALESCE(chain_spent_atomic, 0) + ? <= ?`,
+          )
+          .run(atomic, atomic, id, atomic, atomic, budgetAtomic);
   return Number(result.changes) > 0;
 }
 

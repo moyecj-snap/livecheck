@@ -6,8 +6,10 @@ import { bazaarResourceServerExtension } from "@x402/extensions/bazaar";
 import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import type { RoutesConfig } from "@x402/core/server";
 import type { MiddlewareHandler } from "hono";
-import { checkBazaarExtensions, confirmBazaarExtensions, orderConfirmBazaarExtensions, verifyBazaarExtensions, watchBazaarExtensions } from "./bazaar.js";
+import { chainTopupBazaarExtensions, checkBazaarExtensions, confirmBazaarExtensions, orderConfirmBazaarExtensions, verifyBazaarExtensions, watchBazaarExtensions } from "./bazaar.js";
 import {
+  CHAIN_TOPUP_PAYMENT_DESCRIPTION,
+  CHAIN_TOPUP_PRICE_LABEL,
   CHECK_PAYMENT_DESCRIPTION,
   CHECK_PRICE_LABEL,
   CONFIRM_PAYMENT_DESCRIPTION,
@@ -24,9 +26,10 @@ import {
   missingLiveKeyNames,
   readLiveKeys,
 } from "./config.js";
-import { isPaidPostPath, publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl, publicWatchUrl } from "./public-url.js";
+import { isPaidPostPath, parseWatchChainTopupId, publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl, publicWatchChainTopupUrl, publicWatchUrl } from "./public-url.js";
 import {
   advertisePaymentRequired,
+  chainTopupPaymentRequiredBody,
   checkPaymentRequiredBody,
   confirmPaymentRequiredBody,
   decodePaymentRequired,
@@ -122,6 +125,20 @@ export function verifyPaymentRoutes(payTo: string): RoutesConfig {
       mimeType: "application/json",
       resource: publicWatchUrl(),
       extensions: watchBazaarExtensions(),
+    },
+    "POST /v1/watch/:id/chain/topup": {
+      accepts: [
+        {
+          scheme: "exact" as const,
+          price: CHAIN_TOPUP_PRICE_LABEL,
+          network: NETWORK as `${string}:${string}`,
+          payTo,
+        },
+      ],
+      description: CHAIN_TOPUP_PAYMENT_DESCRIPTION,
+      mimeType: "application/json",
+      resource: publicWatchChainTopupUrl(),
+      extensions: chainTopupBazaarExtensions(),
     },
   };
 }
@@ -233,7 +250,11 @@ function mockPaymentMiddleware(): MiddlewareHandler {
             ? checkPaymentRequiredBody(publicCheckUrl(c.req.url))
             : c.req.path === "/v1/watch"
               ? watchPaymentRequiredBody(publicWatchUrl(c.req.url))
-              : paymentRequiredBody(publicVerifyUrl(c.req.url));
+              : parseWatchChainTopupId(c.req.path)
+                ? chainTopupPaymentRequiredBody(
+                    publicWatchChainTopupUrl(c.req.url, c.req.header("host"), parseWatchChainTopupId(c.req.path)),
+                  )
+                : paymentRequiredBody(publicVerifyUrl(c.req.url));
     const encoded = encodePaymentRequired(body);
     c.header("payment-required", encoded);
     c.header("cache-control", "no-store");

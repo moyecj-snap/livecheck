@@ -68,6 +68,8 @@ function stubWatcher(overrides: Partial<WatcherRow> = {}): WatcherRow {
     callback_deliver: "on_change",
     run: "none",
     chain_budget_usd: null,
+    chain_balance_atomic: 0,
+    chain_spent_atomic: 0,
     label: null,
     context_json: null,
     created_at: now,
@@ -87,10 +89,12 @@ describe("watch parsers", () => {
       condition: { detector: "status_change", params: {} },
       callback: { url: "https://example.com/hook", secret: "whsec_x" },
       chain_budget_usd: 5,
+      on_change: { run: "verify" },
     });
     assert.equal(parsed.interval_s, 900);
     assert.equal(parsed.callback.deliver, "on_change");
     assert.equal(parsed.chain_budget_usd, 5);
+    assert.equal(parsed.run, "verify");
     const every = parseWatchRequest({
       target: { type: "url", url: "https://example.com/job", render: "never" },
       condition: { detector: "status_change", params: {} },

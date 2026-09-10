@@ -62,6 +62,8 @@ function stubWatcher(overrides: Partial<WatcherRow> = {}): WatcherRow {
     callback_deliver: overrides.callback_deliver ?? "on_change",
     run: "none",
     chain_budget_usd: null,
+    chain_balance_atomic: 0,
+    chain_spent_atomic: 0,
     label: null,
     context_json: overrides.context_json ?? JSON.stringify({ listing_id: "job-1" }),
     created_at: now,
@@ -159,7 +161,7 @@ describe("callback retry + events HTTP", () => {
       now: now0,
     });
     assert.equal(isEventId(payload.id), true);
-    assert.equal(payload.chain.run, "none");
+    assert.deepEqual(payload.chain, { run: "none" });
     assert.deepEqual(payload.context, { listing_id: "job-1" });
     assert.ok(payload.receipt.hash);
     assert.ok(payload.receipt.verify_url.includes(payload.id));

@@ -4,9 +4,11 @@ import { sealWatchEventReceipt } from "./receipt.js";
 import type {
   CheckObservation,
   WatchCallbackPayload,
+  WatchChain,
   WatchEventType,
   WatchObservationSnapshot,
 } from "./types.js";
+import { resolveChangeChain } from "./watch-chain.js";
 import { isChangeCandidate } from "./watch-confirm.js";
 import { hasWatchEventKind, insertWatchEvent, markExpiringEmitted, type WatcherRow } from "./watch-store.js";
 
@@ -73,9 +75,11 @@ export function emitWatchEvent(input: {
   now: Date;
   requestUrl?: string;
   host?: string;
+  chain?: WatchChain;
+  id?: string;
 }): WatchCallbackPayload {
   const createdAt = isoTs(input.now);
-  const id = newEventId(input.now.getTime());
+  const id = input.id ?? newEventId(input.now.getTime());
   const diff = observationDiff(input.previous, input.current, input.fired);
   const unsigned: Omit<WatchCallbackPayload, "receipt"> = {
     id,
@@ -89,7 +93,7 @@ export function emitWatchEvent(input: {
     checks_remaining: input.checks_remaining,
     expires_at: input.watcher.expires_at,
     context: parseContext(input.watcher.context_json),
-    chain: { run: "none" },
+    chain: input.chain ?? { run: "none" },
   };
   const receipt = sealWatchEventReceipt({
     id,
@@ -116,16 +120,20 @@ export function emitWatchEvent(input: {
   return payload;
 }
 
-export function emitChangeIfNeeded(
+export async function emitChangeIfNeeded(
   watcher: WatcherRow,
   observation: CheckObservation,
   fired: boolean | null,
   confidence: number,
   checksRemaining: number,
   now: Date,
-): WatchCallbackPayload | undefined {
+  fetcher: typeof fetch = fetch,
+): Promise<WatchCallbackPayload | undefined> {
   if (!shouldEmitChange(watcher, observation, fired)) return undefined;
+  const id = newEventId(now.getTime());
+  const chain = await resolveChangeChain(watcher, fetcher, now, id);
   return emitWatchEvent({
+    id,
     watcher,
     type: "change",
     previous: snapshotObservation(watcher.last_observation) ??
@@ -143,6 +151,7 @@ export function emitChangeIfNeeded(
     confidence,
     checks_remaining: checksRemaining,
     now,
+    chain,
   });
 }
 

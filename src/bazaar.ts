@@ -1,5 +1,6 @@
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import {
+  CHAIN_TOPUP_PRICE_USD,
   CHECK_DESCRIPTION,
   CHECK_PRICE_USD,
   CONFIRM_DESCRIPTION,
@@ -508,7 +509,13 @@ export const WATCH_OUTPUT_SCHEMA = {
     target: CHECK_OUTPUT_SCHEMA.properties.target,
     condition: CHECK_OUTPUT_SCHEMA.properties.condition,
     price_usd: { type: "number" },
-    run: { type: "string", enum: ["none"] },
+    run: { type: "string", enum: ["none", "verify"] },
+    on_change: {
+      type: "object",
+      properties: { run: { type: "string", enum: ["none", "verify"] } },
+    },
+    chain_budget_usd: { type: ["number", "null"] },
+    chain_balance_usd: { type: "number" },
     receipt: CHECK_OUTPUT_SCHEMA.properties.receipt,
   },
   required: [
@@ -547,11 +554,57 @@ export const WATCH_INPUT_SCHEMA = {
     context: { type: "object" },
     chain_budget_usd: {
       type: "number",
-      description: "Accepted and ignored in Phase 2. run stays none.",
+      description: "Spend cap for chained Verify. Funding is POST /v1/watch/{id}/chain/topup ($0.50), not bundled into $2.50.",
+    },
+    on_change: {
+      type: "object",
+      description: "run=none (default) or verify. Confirm chain is not in this phase.",
     },
   },
   required: ["target", "condition", "callback"],
 } as const;
+
+export const CHAIN_TOPUP_EXAMPLE = {
+  id: "wtc_01J8Z0K3N4P5Q6R7S8T9V0WWTC",
+  added_usd: CHAIN_TOPUP_PRICE_USD,
+  chain_balance_usd: CHAIN_TOPUP_PRICE_USD,
+  chain_budget_usd: 5,
+  price_usd: CHAIN_TOPUP_PRICE_USD,
+  run: "verify",
+} as const;
+
+export const CHAIN_TOPUP_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    id: { type: "string", description: "Watcher id (wtc_ + ULID)." },
+    added_usd: { type: "number" },
+    chain_balance_usd: { type: "number" },
+    chain_budget_usd: { type: ["number", "null"] },
+    price_usd: { type: "number" },
+    run: { type: "string", enum: ["none", "verify"] },
+  },
+  required: ["id", "added_usd", "chain_balance_usd", "price_usd", "run"],
+} as const;
+
+export const CHAIN_TOPUP_INPUT_SCHEMA = {
+  properties: {},
+  required: [] as string[],
+} as const;
+
+/** Slim verify-shaped Bazaar. Hold Bazaar GA — not a marketing listing. */
+export function chainTopupBazaarExtensions(): Record<string, unknown> {
+  return withPostJsonMethod(
+    declareDiscoveryExtension({
+      bodyType: "json",
+      input: {},
+      inputSchema: CHAIN_TOPUP_INPUT_SCHEMA,
+      output: {
+        example: CHAIN_TOPUP_EXAMPLE,
+        schema: CHAIN_TOPUP_OUTPUT_SCHEMA,
+      },
+    }),
+  );
+}
 
 /** Verify-shaped Bazaar only — same POST JSON wrapper as /v1/check. Slim until settle proven. */
 export function watchBazaarExtensions(): Record<string, unknown> {

@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
 import { CheckError, parseCheckRequest, runCheck } from "./check.js";
 import {
+  CHAIN_TOPUP_DESCRIPTION,
+  CHAIN_TOPUP_PRICE_USD,
   CHECK_DESCRIPTION,
   CHECK_PRICE_USD,
   CONFIRM_DESCRIPTION,
@@ -30,7 +32,7 @@ import { discoveryHeaders, openApiDocument, wellKnownX402 } from "./discovery.js
 import { FIXTURES } from "./fixtures.js";
 import { recordSuccessfulPaidCheck, withPaidCallContext } from "./paid-call.js";
 import { applyPaymentGate, settlementMode } from "./payments.js";
-import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl, publicWatchUrl } from "./public-url.js";
+import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl, publicWatchChainTopupUrl, publicWatchUrl } from "./public-url.js";
 import { isReceiptId } from "./confirm-id.js";
 import {
   livecheckKeysDocument,
@@ -42,7 +44,7 @@ import {
 } from "./receipt.js";
 import { buildStatsDocument, statsHtml } from "./stats.js";
 import { VerifyError, parseTargetUrl, verifyUrl } from "./verify.js";
-import { WatchError, createWatch, deleteWatch, listWatchEventsForOwner, readWatch, watchErrorBody } from "./watch.js";
+import { WatchError, createWatch, deleteWatch, listWatchEventsForOwner, readWatch, topupWatchChain, watchErrorBody } from "./watch.js";
 import { withWatchHint } from "./watch-hint.js";
 import { resolveWatchPayer, withWatchPayerContext } from "./watch-payer.js";
 
@@ -110,21 +112,25 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
       order_placed_price_usd: ORDER_PLACED_PRICE_USD,
       check_price_usd: CHECK_PRICE_USD,
       watch_price_usd: WATCH_PRICE_USD,
+      chain_topup_price_usd: CHAIN_TOPUP_PRICE_USD,
       public_verify_url: publicVerifyUrl(c.req.url),
       public_confirm_url: publicConfirmUrl(c.req.url),
       public_confirm_order_url: publicConfirmOrderUrl(c.req.url),
       public_check_url: publicCheckUrl(c.req.url),
       public_watch_url: publicWatchUrl(c.req.url),
+      public_chain_topup_url: publicWatchChainTopupUrl(c.req.url),
       bazaar: true,
       ebay: isEbayAdapterEnabled(),
       confirm: true,
       check: true,
       watch: true,
+      chain_topup: true,
       receipt_signing: receiptSigningEnabled(),
       description: VERIFY_DESCRIPTION,
       confirm_description: CONFIRM_DESCRIPTION,
       check_description: CHECK_DESCRIPTION,
       watch_description: WATCH_DESCRIPTION,
+      chain_topup_description: CHAIN_TOPUP_DESCRIPTION,
       user_agent: USER_AGENT,
     });
   });
@@ -169,6 +175,7 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
   app.post("/v1/confirm/order", (c) => handlePaidConfirm(c, parseOrderConfirmRequest));
   app.post("/v1/check", handlePaidCheck);
   app.post("/v1/watch", handlePaidWatch);
+  app.post("/v1/watch/:id/chain/topup", handleChainTopup);
   app.get("/v1/watch/:id/events", handleListWatchEvents);
   app.get("/v1/watch/:id", handleGetWatch);
   app.delete("/v1/watch/:id", handleDeleteWatch);
@@ -235,6 +242,18 @@ async function handlePaidWatch(c: Context) {
 
 function ownerTokenFrom(c: Context): string | undefined {
   return c.req.header(WATCH_OWNER_TOKEN_HEADER) ?? c.req.header("X-Livecheck-Owner-Token") ?? undefined;
+}
+
+async function handleChainTopup(c: Context) {
+  try {
+    const body = topupWatchChain(c.req.param("id") ?? "", ownerTokenFrom(c));
+    return c.json(body);
+  } catch (error) {
+    if (error instanceof WatchError) {
+      return c.json(watchErrorBody(error), error.status as 400 | 401 | 403 | 404 | 409 | 429);
+    }
+    throw error;
+  }
 }
 
 async function handleGetWatch(c: Context) {

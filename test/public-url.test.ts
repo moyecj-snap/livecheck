@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicOrigin, publicVerifyUrl, publicWatchUrl } from "../src/public-url.js";
+import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicOrigin, publicVerifyUrl, publicWatchChainTopupUrl, publicWatchUrl } from "../src/public-url.js";
 
 function withoutPublicUrl(fn: () => void) {
   const previous = process.env.LIVECHECK_PUBLIC_URL;
@@ -26,6 +26,10 @@ describe("public verify URL", () => {
       assert.equal(publicConfirmOrderUrl("http://127.0.0.1:43127/"), "http://127.0.0.1:43127/v1/confirm/order");
       assert.equal(publicCheckUrl("http://127.0.0.1:43127/"), "http://127.0.0.1:43127/v1/check");
       assert.equal(publicWatchUrl("http://127.0.0.1:43127/"), "http://127.0.0.1:43127/v1/watch");
+      assert.equal(
+        publicWatchChainTopupUrl("http://127.0.0.1:43127/", undefined, "wtc_01TEST"),
+        "http://127.0.0.1:43127/v1/watch/wtc_01TEST/chain/topup",
+      );
     });
   });
 

@@ -6,6 +6,8 @@ import {
   runCheck,
 } from "./check.js";
 import {
+  CHAIN_TOPUP_PRICE_ATOMIC,
+  CHAIN_TOPUP_PRICE_USD,
   WATCH_BASELINE_TIMEOUT_MS,
   WATCH_DEFAULT_INTERVAL_S,
   WATCH_EVENTS_DEFAULT_LIMIT,
@@ -17,6 +19,7 @@ import {
   WATCH_PRICE_USD,
   WATCH_TERM_DAYS,
   WATCH_TERM_SECONDS,
+  usdFromAtomic,
 } from "./config.js";
 import { newOwnerToken, newWatchId } from "./confirm-id.js";
 import { hostnameOnly, isoTs } from "./paid-call.js";
@@ -31,11 +34,13 @@ import type {
   WatchCreateResult,
   WatchEventType,
   WatchPublicView,
+  WatchRun,
 } from "./types.js";
 import { parseTargetUrl, VerifyError } from "./verify.js";
 import {
   countActiveStandardWatchers,
   findActiveDuplicate,
+  creditChainBalance,
   getWatchEvent,
   getWatcher,
   insertWatcher,
@@ -87,6 +92,7 @@ export type ParsedWatchRequest = {
   label: string | null;
   context: Record<string, unknown> | null;
   chain_budget_usd: number | null;
+  run: WatchRun;
 };
 
 function isRecord(value: unknown): boolean {
@@ -224,9 +230,28 @@ export function parseWatchRequest(body: unknown): ParsedWatchRequest {
     if (typeof record.chain_budget_usd !== "number" || !Number.isFinite(record.chain_budget_usd)) {
       throw new WatchError("invalid_target", "chain_budget_usd must be a number.", 400);
     }
+    if (record.chain_budget_usd < 0) {
+      throw new WatchError("invalid_target", "chain_budget_usd must be >= 0.", 400);
+    }
     chain_budget_usd = record.chain_budget_usd;
   }
-  return { target, condition, callback, interval_s, label, context, chain_budget_usd };
+  const run = parseOnChangeRun(record.on_change);
+  return { target, condition, callback, interval_s, label, context, chain_budget_usd, run };
+}
+
+export function parseOnChangeRun(raw: unknown): WatchRun {
+  if (raw === undefined || raw === null) return "none";
+  if (!isRecord(raw)) {
+    throw new WatchError("invalid_target", 'on_change must be { run: "none" | "verify" }.', 400);
+  }
+  const run = (raw as { run?: unknown }).run;
+  if (run === undefined || run === null || run === "none") return "none";
+  if (run === "verify") return "verify";
+  throw new WatchError(
+    "invalid_target",
+    'on_change.run must be "none" or "verify". Confirm chain is not available on this route.',
+    400,
+  );
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -292,7 +317,10 @@ export function publicWatcherView(row: WatcherRow): WatchPublicView {
     target: row.target,
     condition: row.condition,
     price_usd: WATCH_PRICE_USD,
-    run: "none",
+    run: row.run,
+    on_change: { run: row.run },
+    chain_budget_usd: row.chain_budget_usd,
+    chain_balance_usd: usdFromAtomic(row.chain_balance_atomic),
     callback: { url: row.callback_url, deliver: row.callback_deliver },
   };
   if (row.label) view.label = row.label;
@@ -371,8 +399,10 @@ export async function createWatch(
     callback_url: parsed.callback.url,
     callback_secret: parsed.callback.secret,
     callback_deliver: parsed.callback.deliver,
-    run: "none",
+    run: parsed.run,
     chain_budget_usd: parsed.chain_budget_usd,
+    chain_balance_atomic: 0,
+    chain_spent_atomic: 0,
     label: parsed.label,
     context_json: parsed.context ? JSON.stringify(parsed.context) : null,
     created_at: createdAt,
@@ -413,10 +443,37 @@ export async function createWatch(
     target: row.target,
     condition: row.condition,
     price_usd: WATCH_PRICE_USD,
-    run: "none",
+    run: parsed.run,
+    on_change: { run: parsed.run },
+    chain_budget_usd: parsed.chain_budget_usd,
+    chain_balance_usd: 0,
   };
   if (parsed.label) result.label = parsed.label;
   return { result, ownerToken, observation };
+}
+
+export function topupWatchChain(
+  watcherId: string,
+  ownerToken: string | undefined,
+): {
+  id: string;
+  added_usd: number;
+  chain_balance_usd: number;
+  chain_budget_usd: number | null;
+  price_usd: number;
+  run: WatchRun;
+} {
+  const row = requireOwnerToken(ownerToken, getWatcher(watcherId));
+  const nextAtomic = creditChainBalance(row.id, CHAIN_TOPUP_PRICE_ATOMIC);
+  const updated = getWatcher(row.id);
+  return {
+    id: row.id,
+    added_usd: CHAIN_TOPUP_PRICE_USD,
+    chain_balance_usd: usdFromAtomic(updated?.chain_balance_atomic ?? nextAtomic),
+    chain_budget_usd: updated?.chain_budget_usd ?? row.chain_budget_usd,
+    price_usd: CHAIN_TOPUP_PRICE_USD,
+    run: updated?.run ?? row.run,
+  };
 }
 
 export function readWatch(id: string, ownerToken: string | undefined): WatchPublicView {

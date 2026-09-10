@@ -87,6 +87,8 @@ function stubWatcher(id: string, conditionKey = "phase2-migrate-b".padEnd(64, "0
     callback_deliver: "on_change",
     run: "none",
     chain_budget_usd: null,
+    chain_balance_atomic: 0,
+    chain_spent_atomic: 0,
     label: null,
     context_json: null,
     created_at: now,
@@ -177,6 +179,8 @@ describe("watch store Phase 2 → step 3 migrate", () => {
     assert.equal(watcherCols.has("unreachable"), true);
     assert.equal(watcherCols.has("expiring_emitted"), true);
     assert.equal(watcherCols.has("detector_state_json"), true);
+    assert.equal(watcherCols.has("chain_balance_atomic"), true);
+    assert.equal(watcherCols.has("chain_spent_atomic"), true);
     const tables = opened.db
       .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'watch_delivery_attempts'`)
       .get() as { name?: string } | undefined;

@@ -53,6 +53,8 @@ function row(overrides: Partial<WatcherRow> = {}): WatcherRow {
     callback_deliver: "on_change",
     run: "none",
     chain_budget_usd: null,
+    chain_balance_atomic: 0,
+    chain_spent_atomic: 0,
     label: null,
     context_json: null,
     created_at: now,

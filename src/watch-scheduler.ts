@@ -129,7 +129,7 @@ async function runOneWatcher(row: WatcherRow, now: Date, fetcher: typeof fetch):
       next = confirmationNextCheckAt(now);
     }
     if (decision.emit) {
-      emitChangeIfNeeded(row, observation, fired, confidence, remaining, now);
+      await emitChangeIfNeeded(row, observation, fired, confidence, remaining, now, fetcher);
     }
   }
 

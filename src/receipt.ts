@@ -400,7 +400,7 @@ export function sealWatchResult(
       detector: result.condition.detector,
       params: result.condition.params,
       interval_s: result.interval_s,
-      run: "none",
+      run: result.run,
     }),
   };
   const canonical = canonicalizeReceiptPayload(canonicalPayload);

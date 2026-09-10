@@ -2,7 +2,7 @@
 
 Before you scrape a listing, check if it is still there. POST a specific job posting, Shopify or HTML product URL, or eBay item URL. Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404). Product pages are HTML-only (Shopify-class add-to-cart / sold-out); eBay item URLs use Browse availability, not sold comps. Not a search engine. $0.01 USDC per check on Base via x402.
 
-This is a per-check agent API, not a platform. Agents pay **$0.01 USDC** per `POST /v1/verify`, **$0.02 USDC** per `POST /v1/check` (Sentinel one-shot condition), **$2.50 USDC** per `POST /v1/watch` (30-day standard watcher), **$0.10 USDC** per `POST /v1/confirm` (`lead_submit` / `listing_published`), and **$0.25 USDC** per `POST /v1/confirm/order` (`order_placed`) on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md). x402 wants one fixed price per resource — dual pricing on a single path makes facilitator verify fail when settle-time `paymentRequirements` drift from the first 402.
+This is a per-check agent API, not a platform. Agents pay **$0.01 USDC** per `POST /v1/verify`, **$0.02 USDC** per `POST /v1/check` (Sentinel one-shot condition), **$2.50 USDC** per `POST /v1/watch` (30-day standard watcher), **$0.50 USDC** per `POST /v1/watch/{id}/chain/topup` (chain balance; owner token + payment), **$0.10 USDC** per `POST /v1/confirm` (`lead_submit` / `listing_published`), and **$0.25 USDC** per `POST /v1/confirm/order` (`order_placed`) on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md). x402 wants one fixed price per resource — dual pricing on a single path makes facilitator verify fail when settle-time `paymentRequirements` drift from the first 402.
 
 ## What you get
 
@@ -42,9 +42,9 @@ After payment verifies and settles:
 
 v1 reads HTML + status only. It does not execute page JavaScript. Redirects are followed; `canonical_url` is the final URL. User-Agent identifies Livecheck.
 
-Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, `GET /.well-known/x402`, `GET /.well-known/livecheck-keys.json`, `GET /stats`, `GET /v1/receipt/{id}`, `GET /v1/watch/{id}`, `GET /v1/watch/{id}/events`, and `DELETE /v1/watch/{id}` (owner token required). Paid: `POST /v1/verify` ($0.01), `POST /v1/check` ($0.02, one-shot Sentinel condition), `POST /v1/watch` ($2.50, 30-day standard watcher), `POST /v1/confirm` ($0.10, `lead_submit` / `listing_published`), and `POST /v1/confirm/order` ($0.25, `order_placed`). `GET /v1/judge` is a 501 stub. `/v1/watch/fast`, renew, and chain top-up are not in this phase.
+Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, `GET /.well-known/x402`, `GET /.well-known/livecheck-keys.json`, `GET /stats`, `GET /v1/receipt/{id}`, `GET /v1/watch/{id}`, `GET /v1/watch/{id}/events`, and `DELETE /v1/watch/{id}` (owner token required). Paid: `POST /v1/verify` ($0.01), `POST /v1/check` ($0.02, one-shot Sentinel condition), `POST /v1/watch` ($2.50, 30-day standard watcher), `POST /v1/watch/{id}/chain/topup` ($0.50, owner token + payment), `POST /v1/confirm` ($0.10, `lead_submit` / `listing_published`), and `POST /v1/confirm/order` ($0.25, `order_placed`). `GET /v1/judge` is a 501 stub. `/v1/watch/fast`, renew, Confirm chain, and Bazaar GA are not in this phase.
 
-Agent crawlers (x402scan, AgentCash, Circle OpenAPI discovery) read the free JSON docs. `GET /openapi.json` is the canonical contract: `POST /v1/verify` with JSON `{ "url": "https://..." }`, `x-payment-info` fixed **$0.01** USD (decimal; runtime 402 `accepts[].amount` stays `"10000"` atomic USDC), and a 200 schema of `live | closed | unknown`. It lists `POST /v1/check` at fixed **$0.02** (`"20000"` atomic) for a one-shot condition (no watcher), `POST /v1/watch` at fixed **$2.50** (`"2500000"` atomic) for a 30-day standard watcher, `GET /v1/watch/{id}/events` (free, owner token), `POST /v1/confirm` at fixed **$0.10** USD (`"100000"` atomic) for `lead_submit` / `listing_published` (no `intent_prices`), and `POST /v1/confirm/order` at fixed **$0.25** (`"250000"` atomic) for `order_placed`. `GET /.well-known/x402` lists `https://livecheck.fly.dev/v1/verify`, `https://livecheck.fly.dev/v1/check`, `https://livecheck.fly.dev/v1/watch`, `https://livecheck.fly.dev/v1/confirm`, and `https://livecheck.fly.dev/v1/confirm/order`. Neither discovery route returns 402.
+Agent crawlers (x402scan, AgentCash, Circle OpenAPI discovery) read the free JSON docs. `GET /openapi.json` is the canonical contract: `POST /v1/verify` with JSON `{ "url": "https://..." }`, `x-payment-info` fixed **$0.01** USD (decimal; runtime 402 `accepts[].amount` stays `"10000"` atomic USDC), and a 200 schema of `live | closed | unknown`. It lists `POST /v1/check` at fixed **$0.02** (`"20000"` atomic) for a one-shot condition (no watcher), `POST /v1/watch` at fixed **$2.50** (`"2500000"` atomic) for a 30-day standard watcher, `POST /v1/watch/{id}/chain/topup` at fixed **$0.50** (`"500000"` atomic; owner token + payment), `GET /v1/watch/{id}/events` (free, owner token), `POST /v1/confirm` at fixed **$0.10** USD (`"100000"` atomic) for `lead_submit` / `listing_published` (no `intent_prices`), and `POST /v1/confirm/order` at fixed **$0.25** (`"250000"` atomic) for `order_placed`. `GET /.well-known/x402` lists `https://livecheck.fly.dev/v1/verify`, `https://livecheck.fly.dev/v1/check`, `https://livecheck.fly.dev/v1/watch`, `https://livecheck.fly.dev/v1/watch/{id}/chain/topup`, `https://livecheck.fly.dev/v1/confirm`, and `https://livecheck.fly.dev/v1/confirm/order`. Neither discovery route returns 402.
 
 Unpaid `POST /v1/verify` includes x402 v2 Bazaar discovery metadata (`extensions.bazaar` via `bazaarResourceServerExtension` + `declareDiscoveryExtension`). Listing in [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) is free to browse; CDP catalogs this route after a successful paid request that carries the extension. The 402 `resource.description` (and health `description`) is: Before you scrape a job posting, Shopify or HTML product page, or eBay item, POST the specific URL you already have and Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404); not a search engine.
 
@@ -150,7 +150,9 @@ Content-Type: application/json
 Create semantics:
 
 - Detectors reuse `/v1/check` (`status_change`, `keyword`, `text_diff`, `numeric_threshold`).
-- `callback.deliver=on_change` or `every_check` is accepted. Standard still skips `baseline` spam (`every_check` is stored for a later fast tier). `chain_budget_usd` is accepted and ignored (`run` stays `none`).
+- `callback.deliver=on_change` or `every_check` is accepted. Standard still skips `baseline` spam (`every_check` is stored for a later fast tier).
+- `on_change.run` is `none` (default) or `verify`. Confirm chain is not in this phase.
+- `chain_budget_usd` is a **spend cap**, not funding. The $2.50 watch price does not include chain balance. Fund via `POST /v1/watch/{id}/chain/topup` ($0.50).
 - HMAC-signed POSTs go to `callback.url`. Failed deliveries retry **1m, 5m, 30m, 2h** (5 attempts). The event row is never dropped.
 - `GET /v1/watch/{id}/events` is free (owner token). Last 30 days, paginated (`limit`, `cursor`).
 - `render: always` → **400** `render_not_available` with `use: "/v1/watch/fast"` (that route is not shipped yet).
@@ -184,6 +186,9 @@ Example **201**:
   "baseline": { "captured": true, "hash": "…", "summary": "live 2xx (200); apply form present" },
   "price_usd": 2.5,
   "run": "none",
+  "on_change": { "run": "none" },
+  "chain_budget_usd": null,
+  "chain_balance_usd": 0,
   "receipt": { "hash": "…", "verify_url": "http://127.0.0.1:43127/v1/receipt/wtc_01K4…" }
 }
 ```
@@ -199,7 +204,7 @@ No Postgres / `DATABASE_URL` on this Fly app. Watchers persist in **SQLite** on 
 
 Same volume as `paid-calls.sqlite`. State survives machine restarts. If Postgres is added later, dump the `watchers` + `watch_events` tables and point `WATCH_DB_PATH` at a migrator — the row shape is the migration contract.
 
-Opening the store runs an idempotent upgrade for Phase 2 volumes: `ALTER TABLE` adds `watchers.consecutive_failures` / `unreachable` / `expiring_emitted` / `detector_state_json` and `watch_events.delivery_attempts` / `next_attempt_at` / `last_error` when missing, `CREATE TABLE IF NOT EXISTS watch_delivery_attempts`, then `CREATE INDEX IF NOT EXISTS idx_watch_events_due` (that index is **not** created until the column exists). Fresh DBs and already-upgraded DBs are no-ops. No index is created on `detector_state_json`.
+Opening the store runs an idempotent upgrade for Phase 2 volumes: `ALTER TABLE` adds `watchers.consecutive_failures` / `unreachable` / `expiring_emitted` / `detector_state_json` / `chain_balance_atomic` / `chain_spent_atomic` and `watch_events.delivery_attempts` / `next_attempt_at` / `last_error` when missing, `CREATE TABLE IF NOT EXISTS watch_delivery_attempts`, then `CREATE INDEX IF NOT EXISTS idx_watch_events_due` (that index is **not** created until the column exists). Fresh DBs and already-upgraded DBs are no-ops. No index is created on `detector_state_json` or the chain balance columns. **ALTER columns before any index that names them.**
 
 The scheduler is an **in-process** poll (every 15s) started by `npm start` (`src/index.ts`). It runs in the same Fly machine process as HTTP (`processes = ["app"]`). `fly.toml` already keeps that machine up (`auto_stop_machines = "off"`, `min_machines_running = 1`). This is **not** Fly cron and **not** a second `fly machine`. Each tick: (1) emit `expiring` (24h before `expires_at`, once) and `expired` (at/after expiry; watcher status → `expired`); (2) claim due watchers and observe with the `/v1/check` detectors (max **2** concurrent fetches per hostname; **2-of-3 confirmation** on standard — see below); (3) POST any due HMAC callbacks.
 
@@ -260,7 +265,34 @@ function verify(secret, rawBody, header) {
 }
 ```
 
-Example callback JSON (`chain` is `{run:"none"}` until a later chain step):
+### Chain top-up + `on_change.verify`
+
+`POST /v1/watch/{id}/chain/topup` is a separate paid route at **$0.50 USDC** (`"500000"` atomic). One accept. Resource URL is pinned to that watcher (`https://livecheck.fly.dev/v1/watch/{id}/chain/topup`). Auth is **owner token + payment**: send `X-Livecheck-Owner-Token` in addition to the x402 settlement. The $2.50 watch create does not include chain funds.
+
+When `on_change.run=verify` and a confirmed `change` fires:
+
+- If chain balance ≥ **$0.01**, Livecheck runs Verify **internally** (same `verifyUrl` path as `POST /v1/verify`; no public x402, no facilitator fee to self), debits $0.01, and attaches `chain.result` + `chain.receipt` to the event/callback.
+- If balance (or remaining `chain_budget_usd` cap) is too low: `chain: { "skipped": "insufficient_balance" }` and the diff is still delivered.
+
+```http
+POST /v1/watch/wtc_01K4…/chain/topup
+X-Livecheck-Owner-Token: owt_01K4…
+```
+
+Example **200**:
+
+```json
+{
+  "id": "wtc_01K4…",
+  "added_usd": 0.5,
+  "chain_balance_usd": 0.5,
+  "chain_budget_usd": 5,
+  "price_usd": 0.5,
+  "run": "verify"
+}
+```
+
+Example callback JSON (`on_change.run=none` stays `{ "run": "none" }`):
 
 ```json
 {
@@ -276,13 +308,27 @@ Example callback JSON (`chain` is `{run:"none"}` until a later chain step):
   "expires_at": "2026-10-10T18:00:00Z",
   "receipt": { "hash": "…", "verify_url": "https://livecheck.fly.dev/v1/receipt/evt_01K4…" },
   "context": { "listing_id": "job-1" },
-  "chain": { "run": "none" }
+  "chain": {
+    "run": "verify",
+    "result": {
+      "url": "https://boards.greenhouse.io/example/jobs/1842",
+      "canonical_url": "https://boards.greenhouse.io/example/jobs/1842",
+      "status": "closed",
+      "http_status": 404,
+      "checked_at": "2026-09-10T18:00:00Z",
+      "signals": ["http 404"],
+      "confidence": 0.9,
+      "price_usd": 0.01
+    },
+    "receipt": { "hash": "…", "verify_url": "https://livecheck.fly.dev/v1/receipt/evt_01K4…" },
+    "debit_usd": 0.01
+  }
 }
 ```
 
 Retries live on the same in-process worker. After a failed POST (network, timeout, or non-2xx) the event stays in `watch_events` with `delivery_attempts` incremented and `next_attempt_at = now + delay`. Delays after attempts 1–4 are **1m, 5m, 30m, 2h**. The fifth failure marks the delivery exhausted (`next_attempt_at` null) — the event is kept. Each try is also written to `watch_delivery_attempts`. The 15s poll drains any row whose `next_attempt_at` is due.
 
-Health reports `watch: true`, `watch_price_usd: 2.5`, and `public_watch_url`. Paid Verify and Confirm 200 responses include a `watch` suggest (`/v1/watch`, detector `status_change`, `$2.50`) so agents can create a watcher after a one-shot check.
+Health reports `watch: true`, `watch_price_usd: 2.5`, `public_watch_url`, `chain_topup: true`, `chain_topup_price_usd: 0.5`, and `public_chain_topup_url` (`/v1/watch/{id}/chain/topup`). Paid Verify and Confirm 200 responses include a `watch` suggest (`/v1/watch`, detector `status_change`, `$2.50`) so agents can create a watcher after a one-shot check.
 
 ## Confirm (`POST /v1/confirm`)
 

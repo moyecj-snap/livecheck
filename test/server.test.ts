@@ -31,17 +31,20 @@ describe("HTTP surface", () => {
       confirm_price_usd?: number;
       check_price_usd?: number;
       watch_price_usd?: number;
+      chain_topup_price_usd?: number;
       bazaar?: boolean;
       ebay?: boolean;
                       confirm?: boolean;
                       check?: boolean;
                       watch?: boolean;
+                      chain_topup?: boolean;
                       receipt_signing?: boolean;
       public_verify_url?: string;
       public_confirm_url?: string;
       public_confirm_order_url?: string;
       public_check_url?: string;
       public_watch_url?: string;
+      public_chain_topup_url?: string;
       description?: string;
       confirm_description?: string;
     };
@@ -51,7 +54,9 @@ describe("HTTP surface", () => {
     assert.equal(body.confirm_price_usd, 0.1);
     assert.equal(body.check_price_usd, 0.02);
     assert.equal(body.watch_price_usd, 2.5);
+    assert.equal(body.chain_topup_price_usd, 0.5);
     assert.equal(body.watch, true);
+    assert.equal(body.chain_topup, true);
     assert.equal(body.description, VERIFY_DESCRIPTION);
     assert.equal(body.confirm_description, CONFIRM_DESCRIPTION);
     assert.equal(body.bazaar, true);
@@ -64,6 +69,7 @@ describe("HTTP surface", () => {
     assert.ok(body.public_confirm_order_url?.endsWith("/v1/confirm/order"));
     assert.ok(body.public_check_url?.endsWith("/v1/check"));
     assert.ok(body.public_watch_url?.endsWith("/v1/watch"));
+    assert.ok(body.public_chain_topup_url?.endsWith("/v1/watch/{id}/chain/topup"));
   });
 
   it("GET / is a human demo page", async () => {

@@ -5,7 +5,10 @@ function stripTrailingSlash(value: string): string {
 }
 
 function originOnly(value: string): string {
-  return stripTrailingSlash(value).replace(/\/v1\/(verify|check|watch|confirm(\/order)?)$/i, "");
+  return stripTrailingSlash(value).replace(
+    /\/v1\/(verify|check|watch(\/[^/]+\/chain\/topup)?|confirm(\/order)?)$/i,
+    "",
+  );
 }
 
 /** Force https for Fly public hostnames. 402 resource.url must not be http in production. */
@@ -78,7 +81,20 @@ export function publicWatchUrl(requestUrl?: string, host?: string): string {
   return `${publicOrigin(requestUrl, host)}/v1/watch`;
 }
 
-export type PaidResourceKind = "verify" | "confirm" | "confirm_order" | "check" | "watch";
+export const CHAIN_TOPUP_ID_PLACEHOLDER = "{id}";
+
+export function parseWatchChainTopupId(path: string): string | undefined {
+  const normalized = path.replace(/\/+$/, "") || "/";
+  const match = normalized.match(/^\/v1\/watch\/([^/]+)\/chain\/topup$/i);
+  return match?.[1];
+}
+
+export function publicWatchChainTopupUrl(requestUrl?: string, host?: string, watcherId?: string): string {
+  const id = watcherId ?? parseWatchChainTopupId(pathnameOf(requestUrl) ?? "") ?? CHAIN_TOPUP_ID_PLACEHOLDER;
+  return `${publicOrigin(requestUrl, host)}/v1/watch/${id}/chain/topup`;
+}
+
+export type PaidResourceKind = "verify" | "confirm" | "confirm_order" | "check" | "watch" | "chain_topup";
 
 function pathnameOf(requestUrl?: string): string | undefined {
   if (!requestUrl) return undefined;
@@ -109,14 +125,22 @@ export function isCheckRequestPath(requestUrl?: string): boolean {
 }
 
 export function isWatchRequestPath(requestUrl?: string): boolean {
+  if (isChainTopupRequestPath(requestUrl)) return false;
   const pathname = pathnameOf(requestUrl);
   if (pathname) return pathname.endsWith("/v1/watch");
   return Boolean(requestUrl && /\/v1\/watch\/?(\?|$)/i.test(requestUrl));
 }
 
+export function isChainTopupRequestPath(requestUrl?: string): boolean {
+  const pathname = pathnameOf(requestUrl);
+  if (pathname) return Boolean(parseWatchChainTopupId(pathname));
+  return Boolean(requestUrl && /\/v1\/watch\/[^/?#]+\/chain\/topup\/?(\?|$)/i.test(requestUrl));
+}
+
 export function paidResourceKind(requestUrl?: string): PaidResourceKind {
   if (isConfirmOrderRequestPath(requestUrl)) return "confirm_order";
   if (isConfirmRequestPath(requestUrl)) return "confirm";
+  if (isChainTopupRequestPath(requestUrl)) return "chain_topup";
   if (isWatchRequestPath(requestUrl)) return "watch";
   if (isCheckRequestPath(requestUrl)) return "check";
   return "verify";
@@ -129,6 +153,7 @@ export function isPaidPostPath(path: string): boolean {
     normalized === "/v1/check" ||
     normalized === "/v1/watch" ||
     normalized === "/v1/confirm" ||
-    normalized === "/v1/confirm/order"
+    normalized === "/v1/confirm/order" ||
+    Boolean(parseWatchChainTopupId(normalized))
   );
 }
