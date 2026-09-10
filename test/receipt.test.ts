@@ -3,7 +3,7 @@ import { createPublicKey, randomBytes, verify } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import { serve } from "@hono/node-server";
 import { createApp } from "../src/app.js";
-import { isCheckId, isConfirmId, isReceiptId, isWatchId, newCheckId, newConfirmId, newWatchId } from "../src/confirm-id.js";
+import { isCheckId, isConfirmId, isEventId, isReceiptId, isWatchId, newCheckId, newConfirmId, newEventId, newWatchId } from "../src/confirm-id.js";
 import {
   canonicalizeReceiptPayload,
   generateReceiptPrivateKeyPem,
@@ -37,6 +37,14 @@ describe("confirm ids", () => {
     assert.equal(isCheckId(id), false);
     assert.equal(isReceiptId(id), true);
     assert.match(id, /^wtc_[0-9A-HJKMNP-TV-Z]{26}$/);
+  });
+
+  it("emits evt_ + 26-char Crockford ULID for watch events", () => {
+    const id = newEventId();
+    assert.equal(isEventId(id), true);
+    assert.equal(isWatchId(id), false);
+    assert.equal(isReceiptId(id), true);
+    assert.match(id, /^evt_[0-9A-HJKMNP-TV-Z]{26}$/);
   });
 });
 

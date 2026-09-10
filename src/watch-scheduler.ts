@@ -1,18 +1,28 @@
 import {
+  WATCH_EXPIRING_LEAD_MS,
   WATCH_HOST_CONCURRENCY,
   WATCH_SCHEDULER_POLL_MS,
+  WATCH_UNREACHABLE_FAILURES,
 } from "./config.js";
 import { hostnameOnly, isoTs } from "./paid-call.js";
 import { runCheck } from "./check.js";
+import { deliverDueCallbacks } from "./watch-callback.js";
+import {
+  emitChangeIfNeeded,
+  emitExpiredIfNeeded,
+  emitExpiringIfNeeded,
+  emitRecovered,
+  emitUnreachableIfNeeded,
+} from "./watch-events.js";
 import {
   claimWatcher,
   expireOverdueWatchers,
-  insertWatchEvent,
   listDueWatchers,
+  listExpiringWatchers,
   updateWatcherAfterCheck,
   type WatcherRow,
 } from "./watch-store.js";
-import { jitteredDelayMs, newWatchEventId } from "./watch.js";
+import { jitteredDelayMs } from "./watch.js";
 
 let timer: ReturnType<typeof setInterval> | undefined;
 let ticking = false;
@@ -37,28 +47,16 @@ export function stopWatchScheduler(): void {
   timer = undefined;
 }
 
-function enqueueCallbackStub(row: WatcherRow, fired: boolean | null, now: Date): void {
-  const createdAt = isoTs(now);
-  insertWatchEvent({
-    id: newWatchEventId(now.getTime()),
-    watcher_id: row.id,
-    kind: "callback_pending",
-    payload_json: JSON.stringify({
-      deliver: row.callback_deliver,
-      fired,
-      observation_hash: row.last_observation?.hash ?? row.baseline.hash ?? null,
-    }),
-    created_at: createdAt,
-    delivered_at: null,
-  });
-  console.log(
-    JSON.stringify({
-      event: "livecheck.watch_callback_stub",
-      watcher_id: row.id,
-      fired,
-      host: hostnameOnly(row.target_url),
-    }),
-  );
+function emitLifecycleEvents(now: Date): void {
+  const nowIso = isoTs(now);
+  const expired = expireOverdueWatchers(nowIso);
+  for (const watcher of expired) {
+    emitExpiredIfNeeded(watcher, now);
+  }
+  const horizon = isoTs(new Date(now.getTime() + WATCH_EXPIRING_LEAD_MS));
+  for (const watcher of listExpiringWatchers(nowIso, horizon)) {
+    emitExpiringIfNeeded(watcher, now);
+  }
 }
 
 async function runOneWatcher(row: WatcherRow, now: Date, fetcher: typeof fetch): Promise<void> {
@@ -69,6 +67,8 @@ async function runOneWatcher(row: WatcherRow, now: Date, fetcher: typeof fetch):
   const baselineHash = row.last_observation?.hash ?? row.baseline.hash ?? null;
   let observation = row.last_observation;
   let fired: boolean | null = null;
+  let confidence = 0.5;
+  let fetchFailed = false;
   try {
     const result = await runCheck(
       {
@@ -81,7 +81,9 @@ async function runOneWatcher(row: WatcherRow, now: Date, fetcher: typeof fetch):
     );
     observation = result.observation;
     fired = result.fired;
+    confidence = result.confidence;
   } catch (error) {
+    fetchFailed = true;
     const reason = error instanceof Error ? error.message : String(error);
     console.warn(`[watch] observation failed ${row.id}: ${reason}`);
   }
@@ -90,9 +92,25 @@ async function runOneWatcher(row: WatcherRow, now: Date, fetcher: typeof fetch):
   const next = isoTs(new Date(now.getTime() + jitteredDelayMs(row.interval_s)));
   const expired = remaining <= 0 || row.expires_at <= nowIso;
   const baseline =
-    !row.baseline.captured && observation
+    !row.baseline.captured && observation && !fetchFailed
       ? { captured: true, hash: observation.hash, summary: observation.summary }
       : undefined;
+
+  const consecutive_failures = fetchFailed ? row.consecutive_failures + 1 : 0;
+  let unreachable = row.unreachable;
+  if (fetchFailed) {
+    if (consecutive_failures >= WATCH_UNREACHABLE_FAILURES && !row.unreachable) {
+      emitUnreachableIfNeeded(row, remaining, now);
+      unreachable = true;
+    }
+  } else if (row.unreachable && observation) {
+    emitRecovered(row, observation, remaining, now);
+    unreachable = false;
+  }
+
+  if (!fetchFailed && observation) {
+    emitChangeIfNeeded(row, observation, fired, confidence, remaining, now);
+  }
 
   updateWatcherAfterCheck({
     id: row.id,
@@ -101,10 +119,12 @@ async function runOneWatcher(row: WatcherRow, now: Date, fetcher: typeof fetch):
     checks_remaining: remaining,
     next_check_at: next,
     status: expired ? "expired" : "active",
+    consecutive_failures,
+    unreachable,
   });
 
-  if (fired === true) {
-    enqueueCallbackStub({ ...row, last_observation: observation }, fired, now);
+  if (expired) {
+    emitExpiredIfNeeded({ ...row, checks_remaining: remaining, last_observation: observation }, now);
   }
 }
 
@@ -115,8 +135,8 @@ export async function tickDueWatchers(
   if (ticking) return { ran: 0, skipped: 0 };
   ticking = true;
   try {
+    emitLifecycleEvents(now);
     const nowIso = isoTs(now);
-    expireOverdueWatchers(nowIso);
     const due = listDueWatchers(nowIso);
     let ran = 0;
     let skipped = 0;
@@ -143,6 +163,7 @@ export async function tickDueWatchers(
     }
 
     await Promise.all(tasks);
+    await deliverDueCallbacks(now, fetcher);
     return { ran, skipped };
   } finally {
     ticking = false;

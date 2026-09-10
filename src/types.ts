@@ -114,10 +114,38 @@ export type WatchBaseline = {
   summary?: string;
 };
 
+export type WatchCallbackDeliver = "on_change" | "every_check";
+
+export type WatchEventType = "change" | "unreachable" | "recovered" | "expiring" | "expired" | "baseline";
+
+export type WatchObservationSnapshot = {
+  hash: string;
+  status: SourceStatus;
+  http_status: number;
+  http_class: HttpClass;
+  summary: string;
+};
+
+export type WatchCallbackPayload = {
+  id: string;
+  type: WatchEventType;
+  watcher_id: string;
+  created_at: string;
+  previous: WatchObservationSnapshot | null;
+  current: WatchObservationSnapshot | null;
+  diff: { fired: boolean | null; changed: string[] };
+  confidence: number;
+  checks_remaining: number;
+  expires_at: string;
+  receipt: ConfirmReceipt;
+  context: Record<string, unknown> | null;
+  chain: { run: "none" };
+};
+
 export type WatchCallback = {
   url: string;
   secret: string;
-  deliver: "on_change";
+  deliver: WatchCallbackDeliver;
 };
 
 export type WatchCreateResult = {
@@ -154,7 +182,7 @@ export type WatchPublicView = {
   condition: { detector: CheckDetector; params: Record<string, unknown> };
   price_usd: number;
   run: "none";
-  callback: { url: string; deliver: "on_change" };
+  callback: { url: string; deliver: WatchCallbackDeliver };
   label?: string;
 };
 

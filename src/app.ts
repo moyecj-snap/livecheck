@@ -42,7 +42,7 @@ import {
 } from "./receipt.js";
 import { buildStatsDocument, statsHtml } from "./stats.js";
 import { VerifyError, parseTargetUrl, verifyUrl } from "./verify.js";
-import { WatchError, createWatch, deleteWatch, readWatch, watchErrorBody } from "./watch.js";
+import { WatchError, createWatch, deleteWatch, listWatchEventsForOwner, readWatch, watchErrorBody } from "./watch.js";
 import { withWatchHint } from "./watch-hint.js";
 import { resolveWatchPayer, withWatchPayerContext } from "./watch-payer.js";
 
@@ -169,6 +169,7 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
   app.post("/v1/confirm/order", (c) => handlePaidConfirm(c, parseOrderConfirmRequest));
   app.post("/v1/check", handlePaidCheck);
   app.post("/v1/watch", handlePaidWatch);
+  app.get("/v1/watch/:id/events", handleListWatchEvents);
   app.get("/v1/watch/:id", handleGetWatch);
   app.delete("/v1/watch/:id", handleDeleteWatch);
 
@@ -239,6 +240,21 @@ async function handleGetWatch(c: Context) {
   try {
     const view = readWatch(c.req.param("id") ?? "", ownerTokenFrom(c));
     return c.json(view);
+  } catch (error) {
+    if (error instanceof WatchError) {
+      return c.json(watchErrorBody(error), error.status as 400 | 401 | 403 | 404 | 409 | 429);
+    }
+    throw error;
+  }
+}
+
+async function handleListWatchEvents(c: Context) {
+  try {
+    const body = listWatchEventsForOwner(c.req.param("id") ?? "", ownerTokenFrom(c), {
+      limit: c.req.query("limit"),
+      cursor: c.req.query("cursor"),
+    });
+    return c.json(body);
   } catch (error) {
     if (error instanceof WatchError) {
       return c.json(watchErrorBody(error), error.status as 400 | 401 | 403 | 404 | 409 | 429);

@@ -8,6 +8,9 @@ import {
 import {
   WATCH_BASELINE_TIMEOUT_MS,
   WATCH_DEFAULT_INTERVAL_S,
+  WATCH_EVENTS_DEFAULT_LIMIT,
+  WATCH_EVENTS_MAX_LIMIT,
+  WATCH_EVENTS_RETENTION_DAYS,
   WATCH_MAX_ACTIVE_PER_WALLET,
   WATCH_MAX_CHECKS_PER_TERM,
   WATCH_MIN_INTERVAL_S,
@@ -15,7 +18,7 @@ import {
   WATCH_TERM_DAYS,
   WATCH_TERM_SECONDS,
 } from "./config.js";
-import { newOwnerToken, newWatchId, ulid } from "./confirm-id.js";
+import { newOwnerToken, newWatchId } from "./confirm-id.js";
 import { hostnameOnly, isoTs } from "./paid-call.js";
 import { sha256Hex, stableJson } from "./receipt.js";
 import type {
@@ -23,15 +26,20 @@ import type {
   CheckObservation,
   CheckTarget,
   WatchBaseline,
+  WatchCallbackDeliver,
+  WatchCallbackPayload,
   WatchCreateResult,
+  WatchEventType,
   WatchPublicView,
 } from "./types.js";
 import { parseTargetUrl, VerifyError } from "./verify.js";
 import {
   countActiveStandardWatchers,
   findActiveDuplicate,
+  getWatchEvent,
   getWatcher,
   insertWatcher,
+  listWatchEventsPage,
   stopWatcher,
   type WatcherRow,
 } from "./watch-store.js";
@@ -74,7 +82,7 @@ export class WatchError extends Error {
 export type ParsedWatchRequest = {
   target: CheckTarget;
   condition: CheckCondition;
-  callback: { url: string; secret: string; deliver: "on_change" };
+  callback: { url: string; secret: string; deliver: WatchCallbackDeliver };
   interval_s: number;
   label: string | null;
   context: Record<string, unknown> | null;
@@ -164,10 +172,10 @@ function parseCallback(raw: unknown): ParsedWatchRequest["callback"] {
     throw new WatchError("invalid_callback", "callback.secret is required.", 400);
   }
   const deliver = record.deliver === undefined ? "on_change" : record.deliver;
-  if (deliver !== "on_change") {
-    throw new WatchError("invalid_callback", 'callback.deliver must be "on_change" in this phase.', 400);
+  if (deliver !== "on_change" && deliver !== "every_check") {
+    throw new WatchError("invalid_callback", 'callback.deliver must be "on_change" or "every_check".', 400);
   }
-  return { url, secret: record.secret.trim(), deliver: "on_change" };
+  return { url, secret: record.secret.trim(), deliver };
 }
 
 function parseInterval(raw: unknown): number {
@@ -278,7 +286,7 @@ export function publicWatcherView(row: WatcherRow): WatchPublicView {
     condition: row.condition,
     price_usd: WATCH_PRICE_USD,
     run: "none",
-    callback: { url: row.callback_url, deliver: "on_change" },
+    callback: { url: row.callback_url, deliver: row.callback_deliver },
   };
   if (row.label) view.label = row.label;
   return view;
@@ -355,13 +363,16 @@ export async function createWatch(
     last_observation: observation,
     callback_url: parsed.callback.url,
     callback_secret: parsed.callback.secret,
-    callback_deliver: "on_change",
+    callback_deliver: parsed.callback.deliver,
     run: "none",
     chain_budget_usd: parsed.chain_budget_usd,
     label: parsed.label,
     context_json: parsed.context ? JSON.stringify(parsed.context) : null,
     created_at: createdAt,
     claimed_until: null,
+    consecutive_failures: 0,
+    unreachable: false,
+    expiring_emitted: false,
   };
 
   try {
@@ -416,8 +427,80 @@ export function watchErrorBody(error: WatchError): Record<string, unknown> {
   return body;
 }
 
-export function newWatchEventId(now = Date.now()): string {
-  return `wte_${ulid(now)}`;
+export type WatchEventsPage = {
+  id: string;
+  events: Array<WatchCallbackPayload & { delivered_at: string | null; delivery_attempts: number }>;
+  limit: number;
+  has_more: boolean;
+  next_cursor: string | null;
+};
+
+export function listWatchEventsForOwner(
+  watcherId: string,
+  ownerToken: string | undefined,
+  query: { limit?: string; cursor?: string },
+  now = new Date(),
+): WatchEventsPage {
+  const row = requireOwnerToken(ownerToken, getWatcher(watcherId));
+  const limitRaw = query.limit ? Number(query.limit) : WATCH_EVENTS_DEFAULT_LIMIT;
+  const limit = Number.isFinite(limitRaw)
+    ? Math.min(WATCH_EVENTS_MAX_LIMIT, Math.max(1, Math.floor(limitRaw)))
+    : WATCH_EVENTS_DEFAULT_LIMIT;
+
+  let cursor: { created_at: string; id: string } | undefined;
+  if (query.cursor?.trim()) {
+    const cursorRow = getWatchEvent(query.cursor.trim());
+    if (!cursorRow || cursorRow.watcher_id !== row.id) {
+      throw new WatchError("not_found", "Unknown events cursor.", 404);
+    }
+    cursor = { created_at: cursorRow.created_at, id: cursorRow.id };
+  }
+
+  const since = isoTs(new Date(now.getTime() - WATCH_EVENTS_RETENTION_DAYS * 86_400_000));
+  const rows = listWatchEventsPage({
+    watcherId: row.id,
+    sinceIso: since,
+    limit: limit + 1,
+    cursor,
+  });
+  const has_more = rows.length > limit;
+  const page = has_more ? rows.slice(0, limit) : rows;
+  const events = page.map((event) => {
+    let payload: WatchCallbackPayload;
+    try {
+      payload = JSON.parse(event.payload_json) as WatchCallbackPayload;
+    } catch {
+      payload = {
+        id: event.id,
+        type: event.kind as WatchEventType,
+        watcher_id: event.watcher_id,
+        created_at: event.created_at,
+        previous: null,
+        current: null,
+        diff: { fired: null, changed: [] },
+        confidence: 0,
+        checks_remaining: row.checks_remaining,
+        expires_at: row.expires_at,
+        receipt: { hash: "", verify_url: "" },
+        context: null,
+        chain: { run: "none" },
+      };
+    }
+    return {
+      ...payload,
+      id: event.id,
+      type: (payload.type ?? event.kind) as WatchEventType,
+      delivered_at: event.delivered_at,
+      delivery_attempts: event.delivery_attempts,
+    };
+  });
+  return {
+    id: row.id,
+    events,
+    limit,
+    has_more,
+    next_cursor: has_more ? (page[page.length - 1]?.id ?? null) : null,
+  };
 }
 
 export function watcherHost(row: WatcherRow): string {

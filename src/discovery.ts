@@ -210,11 +210,12 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
                     },
                     callback: {
                       type: "object",
-                      description: "HTTPS callback. deliver=on_change. HMAC retry is a later step.",
+                      description:
+                        "HTTPS callback. deliver=on_change or every_check. HMAC-SHA256 over the raw JSON body; header X-Sentinel-Signature: t=<unix>,v1=<hex>.",
                       properties: {
                         url: { type: "string", format: "uri" },
                         secret: { type: "string" },
-                        deliver: { type: "string", enum: ["on_change"] },
+                        deliver: { type: "string", enum: ["on_change", "every_check"] },
                       },
                       required: ["url", "secret"],
                     },
@@ -317,6 +318,50 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
             "401": { description: "Missing owner token" },
             "403": { description: "Wrong owner token" },
             "404": { description: "Unknown id" },
+          },
+        },
+      },
+      "/v1/watch/{id}/events": {
+        get: {
+          operationId: "listSentinelWatchEvents",
+          summary: "Paginated watcher event history (30 days, free)",
+          description:
+            "Free. Requires X-Livecheck-Owner-Token. Returns change, unreachable, recovered, expiring, and expired events from the last 30 days. Query limit (default 50, max 100) and cursor (event id). Bad owner token → 403.",
+          tags: ["Sentinel", "watch"],
+          parameters: [
+            {
+              name: "id",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+              description: "Watcher id (wtc_ + ULID).",
+            },
+            {
+              name: "X-Livecheck-Owner-Token",
+              in: "header",
+              required: true,
+              schema: { type: "string" },
+              description: "owt_ token returned once on POST /v1/watch.",
+            },
+            {
+              name: "limit",
+              in: "query",
+              required: false,
+              schema: { type: "integer", minimum: 1, maximum: 100, default: 50 },
+            },
+            {
+              name: "cursor",
+              in: "query",
+              required: false,
+              schema: { type: "string" },
+              description: "Event id (evt_). Returns events older than this id.",
+            },
+          ],
+          responses: {
+            "200": { description: "Paginated events with next_cursor when has_more" },
+            "401": { description: "Missing owner token" },
+            "403": { description: "Wrong owner token" },
+            "404": { description: "Unknown watcher or cursor" },
           },
         },
       },
@@ -451,7 +496,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
           operationId: "getConfirmReceipt",
           summary: "Fetch a Confirm receipt by id",
           description:
-            "Free. Returns the stored receipt, canonical payload, and verify metadata. Accepts Confirm ids (cfm_), Sentinel check ids (chk_), and watcher ids (wtc_). Unsigned when CONFIRM_RECEIPT_PRIVATE_KEY is unset.",
+            "Free. Returns the stored receipt, canonical payload, and verify metadata. Accepts Confirm ids (cfm_), Sentinel check ids (chk_), watcher ids (wtc_), and watch event ids (evt_). Unsigned when CONFIRM_RECEIPT_PRIVATE_KEY is unset.",
           tags: ["Confirm", "Sentinel"],
           parameters: [
             {
@@ -459,7 +504,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
               in: "path",
               required: true,
               schema: { type: "string" },
-              description: "Confirm id (cfm_ + ULID), check id (chk_ + ULID), or watcher id (wtc_ + ULID).",
+              description: "Confirm id (cfm_ + ULID), check id (chk_ + ULID), watcher id (wtc_ + ULID), or event id (evt_ + ULID).",
             },
           ],
           responses: {

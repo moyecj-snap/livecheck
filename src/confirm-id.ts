@@ -51,7 +51,7 @@ export function isCheckId(value: string): boolean {
 }
 
 export function isReceiptId(value: string): boolean {
-  return isConfirmId(value) || isCheckId(value) || isWatchId(value);
+  return isConfirmId(value) || isCheckId(value) || isWatchId(value) || isEventId(value);
 }
 
 /** Sentinel watcher id: `wtc_` + Crockford ULID. Same receipt store as Confirm/check. */
@@ -70,4 +70,13 @@ export function newOwnerToken(now = Date.now()): string {
 
 export function isOwnerToken(value: string): boolean {
   return /^owt_[0-9A-HJKMNP-TV-Z]{26}$/.test(value);
+}
+
+/** Sentinel watch event id: `evt_` + Crockford ULID. Same receipt store as Confirm/check/watch. */
+export function newEventId(now = Date.now()): string {
+  return `evt_${ulid(now)}`;
+}
+
+export function isEventId(value: string): boolean {
+  return /^evt_[0-9A-HJKMNP-TV-Z]{26}$/.test(value);
 }

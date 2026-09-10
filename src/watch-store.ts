@@ -1,7 +1,14 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { CheckCondition, CheckObservation, CheckTarget, WatchBaseline, WatchStatus } from "./types.js";
+import type {
+  CheckCondition,
+  CheckObservation,
+  CheckTarget,
+  WatchBaseline,
+  WatchCallbackDeliver,
+  WatchStatus,
+} from "./types.js";
 
 export type WatcherRow = {
   id: string;
@@ -22,13 +29,16 @@ export type WatcherRow = {
   last_observation: CheckObservation | null;
   callback_url: string;
   callback_secret: string;
-  callback_deliver: "on_change";
+  callback_deliver: WatchCallbackDeliver;
   run: "none";
   chain_budget_usd: number | null;
   label: string | null;
   context_json: string | null;
   created_at: string;
   claimed_until: string | null;
+  consecutive_failures: number;
+  unreachable: boolean;
+  expiring_emitted: boolean;
 };
 
 export type WatchEventRow = {
@@ -38,6 +48,18 @@ export type WatchEventRow = {
   payload_json: string;
   created_at: string;
   delivered_at: string | null;
+  delivery_attempts: number;
+  next_attempt_at: string | null;
+  last_error: string | null;
+};
+
+export type WatchDeliveryAttemptRow = {
+  event_id: string;
+  attempt: number;
+  at: string;
+  ok: boolean;
+  http_status: number | null;
+  error: string | null;
 };
 
 const SCHEMA = `
@@ -66,7 +88,10 @@ CREATE TABLE IF NOT EXISTS watchers (
   label TEXT,
   context_json TEXT,
   created_at TEXT NOT NULL,
-  claimed_until TEXT
+  claimed_until TEXT,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  unreachable INTEGER NOT NULL DEFAULT 0,
+  expiring_emitted INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_watchers_due ON watchers(status, next_check_at);
 CREATE INDEX IF NOT EXISTS idx_watchers_payer_status ON watchers(payer, status);
@@ -79,9 +104,26 @@ CREATE TABLE IF NOT EXISTS watch_events (
   kind TEXT NOT NULL,
   payload_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  delivered_at TEXT
+  delivered_at TEXT,
+  delivery_attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TEXT,
+  last_error TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_watch_events_watcher ON watch_events(watcher_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_watch_events_due
+  ON watch_events(next_attempt_at) WHERE delivered_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS watch_delivery_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL,
+  attempt INTEGER NOT NULL,
+  at TEXT NOT NULL,
+  ok INTEGER NOT NULL,
+  http_status INTEGER,
+  error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_watch_delivery_attempts_event
+  ON watch_delivery_attempts(event_id, attempt);
 `;
 
 type OpenStore = { ok: true; path: string; db: DatabaseSync };
@@ -109,7 +151,28 @@ function prepareDatabase(path: string): DatabaseSync {
     db.exec("PRAGMA synchronous = NORMAL;");
   }
   db.exec(SCHEMA);
+  migrateWatchStore(db);
   return db;
+}
+
+function tableColumns(db: DatabaseSync, table: string): Set<string> {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
+  return new Set(rows.map((row) => String(row.name)));
+}
+
+function ensureColumn(db: DatabaseSync, table: string, name: string, ddl: string): void {
+  if (tableColumns(db, table).has(name)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+}
+
+/** Existing Fly volume DBs created in Phase 2 lack callback-delivery columns. */
+function migrateWatchStore(db: DatabaseSync): void {
+  ensureColumn(db, "watchers", "consecutive_failures", "consecutive_failures INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "watchers", "unreachable", "unreachable INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "watchers", "expiring_emitted", "expiring_emitted INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "watch_events", "delivery_attempts", "delivery_attempts INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "watch_events", "next_attempt_at", "next_attempt_at TEXT");
+  ensureColumn(db, "watch_events", "last_error", "last_error TEXT");
 }
 
 export function initWatchStore(path = defaultWatchDbPath()): StoreState {
@@ -199,20 +262,24 @@ function fromSql(item: Record<string, unknown>): WatcherRow | undefined {
     last_observation,
     callback_url: String(item.callback_url),
     callback_secret: String(item.callback_secret),
-    callback_deliver: "on_change",
+    callback_deliver: item.callback_deliver === "every_check" ? "every_check" : "on_change",
     run: "none",
     chain_budget_usd: item.chain_budget_usd == null ? null : Number(item.chain_budget_usd),
     label: item.label == null ? null : String(item.label),
     context_json: item.context_json == null ? null : String(item.context_json),
     created_at: String(item.created_at),
     claimed_until: item.claimed_until == null ? null : String(item.claimed_until),
+    consecutive_failures: Number(item.consecutive_failures ?? 0),
+    unreachable: Number(item.unreachable ?? 0) === 1,
+    expiring_emitted: Number(item.expiring_emitted ?? 0) === 1,
   };
 }
 
 const SELECT_COLS = `id, payer, owner_token_hash, status, tier, target_url, target_json, condition_json,
   condition_key, interval_s, checks_remaining, expires_at, first_check_at, next_check_at,
   baseline_json, last_observation_json, callback_url, callback_secret, callback_deliver,
-  run, chain_budget_usd, label, context_json, created_at, claimed_until`;
+  run, chain_budget_usd, label, context_json, created_at, claimed_until,
+  consecutive_failures, unreachable, expiring_emitted`;
 
 export function insertWatcher(row: WatcherRow): void {
   const db = requireDb();
@@ -221,8 +288,9 @@ export function insertWatcher(row: WatcherRow): void {
       id, payer, owner_token_hash, status, tier, target_url, target_json, condition_json,
       condition_key, interval_s, checks_remaining, expires_at, first_check_at, next_check_at,
       baseline_json, last_observation_json, callback_url, callback_secret, callback_deliver,
-      run, chain_budget_usd, label, context_json, created_at, claimed_until
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      run, chain_budget_usd, label, context_json, created_at, claimed_until,
+      consecutive_failures, unreachable, expiring_emitted
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     row.id,
     row.payer,
@@ -249,6 +317,9 @@ export function insertWatcher(row: WatcherRow): void {
     row.context_json,
     row.created_at,
     row.claimed_until,
+    row.consecutive_failures ?? 0,
+    row.unreachable ? 1 : 0,
+    row.expiring_emitted ? 1 : 0,
   );
 }
 
@@ -326,6 +397,8 @@ export function updateWatcherAfterCheck(input: {
   checks_remaining: number;
   next_check_at: string;
   status: WatchStatus;
+  consecutive_failures?: number;
+  unreachable?: boolean;
 }): void {
   const db = requireDb();
   db.prepare(
@@ -335,7 +408,9 @@ export function updateWatcherAfterCheck(input: {
          checks_remaining = ?,
          next_check_at = ?,
          status = ?,
-         claimed_until = NULL
+         claimed_until = NULL,
+         consecutive_failures = COALESCE(?, consecutive_failures),
+         unreachable = COALESCE(?, unreachable)
      WHERE id = ?`,
   ).run(
     input.last_observation ? JSON.stringify(input.last_observation) : null,
@@ -343,8 +418,34 @@ export function updateWatcherAfterCheck(input: {
     input.checks_remaining,
     input.next_check_at,
     input.status,
+    input.consecutive_failures ?? null,
+    input.unreachable == null ? null : input.unreachable ? 1 : 0,
     input.id,
   );
+}
+
+export function setWatcherNextCheckAt(id: string, nextCheckAt: string): void {
+  const db = requireDb();
+  db.prepare(`UPDATE watchers SET next_check_at = ?, claimed_until = NULL WHERE id = ?`).run(nextCheckAt, id);
+}
+
+export function markExpiringEmitted(id: string): void {
+  const db = requireDb();
+  db.prepare(`UPDATE watchers SET expiring_emitted = 1 WHERE id = ?`).run(id);
+}
+
+export function listExpiringWatchers(nowIso: string, horizonIso: string): WatcherRow[] {
+  const db = requireDb();
+  const rows = db
+    .prepare(
+      `SELECT ${SELECT_COLS} FROM watchers
+       WHERE status = 'active'
+         AND expiring_emitted = 0
+         AND expires_at > ?
+         AND expires_at <= ?`,
+    )
+    .all(nowIso, horizonIso) as Record<string, unknown>[];
+  return rows.map(fromSql).filter((row): row is WatcherRow => Boolean(row));
 }
 
 export function stopWatcher(id: string): boolean {
@@ -355,31 +456,177 @@ export function stopWatcher(id: string): boolean {
   return Number(result.changes) > 0;
 }
 
+function eventFromSql(item: Record<string, unknown>): WatchEventRow {
+  return {
+    id: String(item.id),
+    watcher_id: String(item.watcher_id),
+    kind: String(item.kind),
+    payload_json: String(item.payload_json),
+    created_at: String(item.created_at),
+    delivered_at: item.delivered_at == null ? null : String(item.delivered_at),
+    delivery_attempts: Number(item.delivery_attempts ?? 0),
+    next_attempt_at: item.next_attempt_at == null ? null : String(item.next_attempt_at),
+    last_error: item.last_error == null ? null : String(item.last_error),
+  };
+}
+
+const EVENT_COLS = `id, watcher_id, kind, payload_json, created_at, delivered_at,
+  delivery_attempts, next_attempt_at, last_error`;
+
 export function insertWatchEvent(row: WatchEventRow): void {
   const db = requireDb();
   db.prepare(
-    `INSERT INTO watch_events (id, watcher_id, kind, payload_json, created_at, delivered_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(row.id, row.watcher_id, row.kind, row.payload_json, row.created_at, row.delivered_at);
+    `INSERT INTO watch_events (
+      id, watcher_id, kind, payload_json, created_at, delivered_at,
+      delivery_attempts, next_attempt_at, last_error
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    row.id,
+    row.watcher_id,
+    row.kind,
+    row.payload_json,
+    row.created_at,
+    row.delivered_at,
+    row.delivery_attempts ?? 0,
+    row.next_attempt_at ?? row.created_at,
+    row.last_error ?? null,
+  );
+}
+
+export function getWatchEvent(id: string): WatchEventRow | undefined {
+  const db = requireDb();
+  const item = db.prepare(`SELECT ${EVENT_COLS} FROM watch_events WHERE id = ?`).get(id) as
+    | Record<string, unknown>
+    | undefined;
+  if (!item) return undefined;
+  return eventFromSql(item);
 }
 
 export function listWatchEvents(watcherId: string): WatchEventRow[] {
   const db = requireDb();
-  return db
+  return (db
     .prepare(
-      `SELECT id, watcher_id, kind, payload_json, created_at, delivered_at
-       FROM watch_events WHERE watcher_id = ? ORDER BY created_at ASC`,
+      `SELECT ${EVENT_COLS}
+       FROM watch_events WHERE watcher_id = ? ORDER BY created_at ASC, id ASC`,
     )
-    .all(watcherId) as WatchEventRow[];
+    .all(watcherId) as Record<string, unknown>[]).map(eventFromSql);
 }
 
-export function expireOverdueWatchers(nowIso: string): number {
+export function listWatchEventsPage(input: {
+  watcherId: string;
+  sinceIso: string;
+  limit: number;
+  cursor?: { created_at: string; id: string };
+}): WatchEventRow[] {
   const db = requireDb();
-  const result = db
+  if (input.cursor) {
+    return (db
+      .prepare(
+        `SELECT ${EVENT_COLS}
+         FROM watch_events
+         WHERE watcher_id = ?
+           AND created_at >= ?
+           AND (created_at < ? OR (created_at = ? AND id < ?))
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?`,
+      )
+      .all(
+        input.watcherId,
+        input.sinceIso,
+        input.cursor.created_at,
+        input.cursor.created_at,
+        input.cursor.id,
+        input.limit,
+      ) as Record<string, unknown>[]).map(eventFromSql);
+  }
+  return (db
     .prepare(
-      `UPDATE watchers SET status = 'expired'
+      `SELECT ${EVENT_COLS}
+       FROM watch_events
+       WHERE watcher_id = ? AND created_at >= ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`,
+    )
+    .all(input.watcherId, input.sinceIso, input.limit) as Record<string, unknown>[]).map(eventFromSql);
+}
+
+export function hasWatchEventKind(watcherId: string, kind: string): boolean {
+  const db = requireDb();
+  const row = db
+    .prepare(`SELECT 1 AS n FROM watch_events WHERE watcher_id = ? AND kind = ? LIMIT 1`)
+    .get(watcherId, kind) as { n?: number } | undefined;
+  return Boolean(row);
+}
+
+export function listDueCallbackEvents(nowIso: string, maxAttempts: number, limit = 25): WatchEventRow[] {
+  const db = requireDb();
+  return (db
+    .prepare(
+      `SELECT ${EVENT_COLS}
+       FROM watch_events
+       WHERE delivered_at IS NULL
+         AND delivery_attempts < ?
+         AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+       ORDER BY next_attempt_at ASC, created_at ASC
+       LIMIT ?`,
+    )
+    .all(maxAttempts, nowIso, limit) as Record<string, unknown>[]).map(eventFromSql);
+}
+
+export function updateWatchEventDelivery(input: {
+  id: string;
+  delivery_attempts: number;
+  delivered_at: string | null;
+  next_attempt_at: string | null;
+  last_error: string | null;
+}): void {
+  const db = requireDb();
+  db.prepare(
+    `UPDATE watch_events
+     SET delivery_attempts = ?, delivered_at = ?, next_attempt_at = ?, last_error = ?
+     WHERE id = ?`,
+  ).run(input.delivery_attempts, input.delivered_at, input.next_attempt_at, input.last_error, input.id);
+}
+
+export function insertDeliveryAttempt(row: WatchDeliveryAttemptRow): void {
+  const db = requireDb();
+  db.prepare(
+    `INSERT INTO watch_delivery_attempts (event_id, attempt, at, ok, http_status, error)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(row.event_id, row.attempt, row.at, row.ok ? 1 : 0, row.http_status, row.error);
+}
+
+export function listDeliveryAttempts(eventId: string): WatchDeliveryAttemptRow[] {
+  const db = requireDb();
+  return (db
+    .prepare(
+      `SELECT event_id, attempt, at, ok, http_status, error
+       FROM watch_delivery_attempts WHERE event_id = ? ORDER BY attempt ASC`,
+    )
+    .all(eventId) as Record<string, unknown>[]).map((item) => ({
+    event_id: String(item.event_id),
+    attempt: Number(item.attempt),
+    at: String(item.at),
+    ok: Number(item.ok) === 1,
+    http_status: item.http_status == null ? null : Number(item.http_status),
+    error: item.error == null ? null : String(item.error),
+  }));
+}
+
+export function expireOverdueWatchers(nowIso: string): WatcherRow[] {
+  const db = requireDb();
+  const rows = db
+    .prepare(
+      `SELECT ${SELECT_COLS} FROM watchers
        WHERE status = 'active' AND (expires_at <= ? OR checks_remaining <= 0)`,
     )
-    .run(nowIso);
-  return Number(result.changes);
+    .all(nowIso) as Record<string, unknown>[];
+  const expired = rows.map(fromSql).filter((row): row is WatcherRow => Boolean(row));
+  if (expired.length > 0) {
+    db.prepare(
+      `UPDATE watchers SET status = 'expired', claimed_until = NULL
+       WHERE status = 'active' AND (expires_at <= ? OR checks_remaining <= 0)`,
+    ).run(nowIso);
+  }
+  return expired;
 }

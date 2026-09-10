@@ -72,12 +72,15 @@ function stubWatcher(overrides: Partial<WatcherRow> = {}): WatcherRow {
     context_json: null,
     created_at: now,
     claimed_until: null,
+    consecutive_failures: 0,
+    unreachable: false,
+    expiring_emitted: false,
     ...overrides,
   };
 }
 
 describe("watch parsers", () => {
-  it("defaults interval and accepts on_change / chain_budget_usd", () => {
+  it("defaults interval and accepts on_change / every_check / chain_budget_usd", () => {
     const parsed = parseWatchRequest({
       target: { type: "url", url: "https://example.com/job", render: "never" },
       condition: { detector: "status_change", params: {} },
@@ -87,6 +90,12 @@ describe("watch parsers", () => {
     assert.equal(parsed.interval_s, 900);
     assert.equal(parsed.callback.deliver, "on_change");
     assert.equal(parsed.chain_budget_usd, 5);
+    const every = parseWatchRequest({
+      target: { type: "url", url: "https://example.com/job", render: "never" },
+      condition: { detector: "status_change", params: {} },
+      callback: { url: "https://example.com/hook", secret: "whsec_x", deliver: "every_check" },
+    });
+    assert.equal(every.callback.deliver, "every_check");
     assert.equal(checksRemainingForInterval(900), 2880);
     assert.equal(checksRemainingForInterval(300), 2880);
   });
@@ -444,7 +453,7 @@ describe("POST /v1/watch receipt + rate limit + scheduler", () => {
     assert.equal(body.limit, 200);
   });
 
-  it("scheduler runs due watchers, respects host concurrency, and stubs callbacks", async () => {
+  it("scheduler runs due watchers, respects host concurrency, and emits change events", async () => {
     const due = "2026-01-01T00:00:00Z";
     const hostUrl = `${origin}/fixtures/live-apply-now`;
     insertWatcher(
@@ -480,13 +489,21 @@ describe("POST /v1/watch receipt + rate limit + scheduler", () => {
       }),
     );
 
-    const first = await tickDueWatchers(new Date("2026-09-10T18:00:00Z"));
+    const hookOk: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url.includes("/hooks/") || url.includes("example.com/hooks")) {
+        return new Response("ok", { status: 200 });
+      }
+      return fetch(input, init);
+    };
+    const first = await tickDueWatchers(new Date("2026-09-10T18:00:00Z"), hookOk);
     assert.equal(first.ran, 2);
     assert.equal(first.skipped, 1);
-    const second = await tickDueWatchers(new Date("2026-09-10T18:00:01Z"));
+    const second = await tickDueWatchers(new Date("2026-09-10T18:00:01Z"), hookOk);
     assert.ok(first.ran + second.ran >= 3);
 
     const events = listWatchEvents("wtc_01SCHEDULER00000000000001");
-    assert.ok(events.some((event) => event.kind === "callback_pending"));
+    assert.ok(events.some((event) => event.kind === "change"));
+    assert.equal(events.some((event) => event.kind === "callback_pending"), false);
   });
 });

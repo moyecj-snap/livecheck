@@ -536,7 +536,7 @@ export const WATCH_INPUT_SCHEMA = {
     },
     callback: {
       type: "object",
-      description: "url + secret. deliver=on_change. HMAC delivery is a later step; Phase 2 stores the event.",
+      description: "url + secret. deliver=on_change or every_check. HMAC-SHA256 over the raw JSON body (X-Sentinel-Signature).",
     },
     interval_s: {
       type: "number",

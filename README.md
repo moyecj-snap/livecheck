@@ -42,9 +42,9 @@ After payment verifies and settles:
 
 v1 reads HTML + status only. It does not execute page JavaScript. Redirects are followed; `canonical_url` is the final URL. User-Agent identifies Livecheck.
 
-Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, `GET /.well-known/x402`, `GET /.well-known/livecheck-keys.json`, `GET /stats`, `GET /v1/receipt/{id}`, `GET /v1/watch/{id}`, and `DELETE /v1/watch/{id}` (owner token required). Paid: `POST /v1/verify` ($0.01), `POST /v1/check` ($0.02, one-shot Sentinel condition), `POST /v1/watch` ($2.50, 30-day standard watcher), `POST /v1/confirm` ($0.10, `lead_submit` / `listing_published`), and `POST /v1/confirm/order` ($0.25, `order_placed`). `GET /v1/judge` is a 501 stub. `/v1/watch/fast`, renew, and HMAC callback delivery are not in this phase.
+Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, `GET /.well-known/x402`, `GET /.well-known/livecheck-keys.json`, `GET /stats`, `GET /v1/receipt/{id}`, `GET /v1/watch/{id}`, `GET /v1/watch/{id}/events`, and `DELETE /v1/watch/{id}` (owner token required). Paid: `POST /v1/verify` ($0.01), `POST /v1/check` ($0.02, one-shot Sentinel condition), `POST /v1/watch` ($2.50, 30-day standard watcher), `POST /v1/confirm` ($0.10, `lead_submit` / `listing_published`), and `POST /v1/confirm/order` ($0.25, `order_placed`). `GET /v1/judge` is a 501 stub. `/v1/watch/fast`, renew, text_diff/numeric, and chain top-up are not in this phase.
 
-Agent crawlers (x402scan, AgentCash, Circle OpenAPI discovery) read the free JSON docs. `GET /openapi.json` is the canonical contract: `POST /v1/verify` with JSON `{ "url": "https://..." }`, `x-payment-info` fixed **$0.01** USD (decimal; runtime 402 `accepts[].amount` stays `"10000"` atomic USDC), and a 200 schema of `live | closed | unknown`. It lists `POST /v1/check` at fixed **$0.02** (`"20000"` atomic) for a one-shot condition (no watcher), `POST /v1/watch` at fixed **$2.50** (`"2500000"` atomic) for a 30-day standard watcher, `POST /v1/confirm` at fixed **$0.10** USD (`"100000"` atomic) for `lead_submit` / `listing_published` (no `intent_prices`), and `POST /v1/confirm/order` at fixed **$0.25** (`"250000"` atomic) for `order_placed`. `GET /.well-known/x402` lists `https://livecheck.fly.dev/v1/verify`, `https://livecheck.fly.dev/v1/check`, `https://livecheck.fly.dev/v1/watch`, `https://livecheck.fly.dev/v1/confirm`, and `https://livecheck.fly.dev/v1/confirm/order`. Neither discovery route returns 402.
+Agent crawlers (x402scan, AgentCash, Circle OpenAPI discovery) read the free JSON docs. `GET /openapi.json` is the canonical contract: `POST /v1/verify` with JSON `{ "url": "https://..." }`, `x-payment-info` fixed **$0.01** USD (decimal; runtime 402 `accepts[].amount` stays `"10000"` atomic USDC), and a 200 schema of `live | closed | unknown`. It lists `POST /v1/check` at fixed **$0.02** (`"20000"` atomic) for a one-shot condition (no watcher), `POST /v1/watch` at fixed **$2.50** (`"2500000"` atomic) for a 30-day standard watcher, `GET /v1/watch/{id}/events` (free, owner token), `POST /v1/confirm` at fixed **$0.10** USD (`"100000"` atomic) for `lead_submit` / `listing_published` (no `intent_prices`), and `POST /v1/confirm/order` at fixed **$0.25** (`"250000"` atomic) for `order_placed`. `GET /.well-known/x402` lists `https://livecheck.fly.dev/v1/verify`, `https://livecheck.fly.dev/v1/check`, `https://livecheck.fly.dev/v1/watch`, `https://livecheck.fly.dev/v1/confirm`, and `https://livecheck.fly.dev/v1/confirm/order`. Neither discovery route returns 402.
 
 Unpaid `POST /v1/verify` includes x402 v2 Bazaar discovery metadata (`extensions.bazaar` via `bazaarResourceServerExtension` + `declareDiscoveryExtension`). Listing in [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) is free to browse; CDP catalogs this route after a successful paid request that carries the extension. The 402 `resource.description` (and health `description`) is: Before you scrape a job posting, Shopify or HTML product page, or eBay item, POST the specific URL you already have and Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404); not a search engine.
 
@@ -125,12 +125,14 @@ Content-Type: application/json
 Create semantics:
 
 - Detectors reuse `/v1/check` (`status_change`, `keyword`). Do not send `text_diff` / `numeric`.
-- `callback.deliver=on_change` is accepted. `chain_budget_usd` is accepted and ignored (`run` stays `none`). HMAC retry delivery is a later step — Phase 2 logs + enqueues a `callback_pending` event.
+- `callback.deliver=on_change` or `every_check` is accepted. Standard still skips `baseline` spam (`every_check` is stored for a later fast tier). `chain_budget_usd` is accepted and ignored (`run` stays `none`).
+- HMAC-signed POSTs go to `callback.url`. Failed deliveries retry **1m, 5m, 30m, 2h** (5 attempts). The event row is never dropped.
+- `GET /v1/watch/{id}/events` is free (owner token). Last 30 days, paginated (`limit`, `cursor`).
 - `render: always` → **400** `render_not_available` with `use: "/v1/watch/fast"` (that route is not shipped yet).
 - `interval_s` min **300**, default **900**. Max **2880** checks per 30-day term.
 - Baseline is captured synchronously via the existing check/verify fetch path (≤10s). Fetch failure still returns **201** with `baseline.captured=false` (never 422 on watch).
-- Response **201**: `id` prefix `wtc_` + Crockford ULID, `tier: standard`, `owner_token` (`owt_…`, returned once, SHA-256 at rest), `expires_at` (+30d), `checks_remaining`, `interval_s`, `first_check_at`, `baseline`, `price_usd: 2.50`, Confirm-style `receipt`. `GET /v1/receipt/{id}` resolves `wtc_` with the same Ed25519 family as Confirm/check.
-- `GET /v1/watch/{id}` and `DELETE /v1/watch/{id}` are free. Send `X-Livecheck-Owner-Token` (header only). DELETE stops early with **no refund**.
+- Response **201**: `id` prefix `wtc_` + Crockford ULID, `tier: standard`, `owner_token` (`owt_…`, returned once, SHA-256 at rest), `expires_at` (+30d), `checks_remaining`, `interval_s`, `first_check_at`, `baseline`, `price_usd: 2.50`, Confirm-style `receipt`. `GET /v1/receipt/{id}` resolves `wtc_` and `evt_` with the same Ed25519 family as Confirm/check.
+- `GET /v1/watch/{id}`, `GET /v1/watch/{id}/events`, and `DELETE /v1/watch/{id}` are free. Send `X-Livecheck-Owner-Token` (header only). DELETE stops early with **no refund**.
 - Duplicate active watcher for the same paying wallet + `target.url` + condition → **409** `duplicate_watch` (includes existing `id`). Soft cap **200** active standard watchers per wallet → **429** `rate_limited`.
 
 The 402 `resource.url` is pinned to `https://livecheck.fly.dev/v1/watch`. Payment description is ASCII-only. `advertisePaymentRequired` does not change `amount` / `asset` / `payTo` / `network` / `scheme` / `extra` / `maxTimeoutSeconds`. `extra` is Verify's USDC domain `{name:"USD Coin", version:"2"}`. Bazaar is slim / verify-shaped like check.
@@ -172,7 +174,62 @@ No Postgres / `DATABASE_URL` on this Fly app. Watchers persist in **SQLite** on 
 
 Same volume as `paid-calls.sqlite`. State survives machine restarts. If Postgres is added later, dump the `watchers` + `watch_events` tables and point `WATCH_DB_PATH` at a migrator — the row shape is the migration contract.
 
-The scheduler is an **in-process** poll (every 15s) started by `npm start` (`src/index.ts`). It runs in the same Fly machine process as HTTP (`processes = ["app"]`). `fly.toml` already keeps that machine up (`auto_stop_machines = "off"`, `min_machines_running = 1`). This is **not** Fly cron and **not** a second `fly machine`. Due watchers are claimed, observed with the `/v1/check` detectors (max **2** concurrent fetches per hostname), then `checks_remaining` / `next_check_at` update with ±10% jitter. Fired observations enqueue a `callback_pending` event (HMAC delivery is the next phase).
+The scheduler is an **in-process** poll (every 15s) started by `npm start` (`src/index.ts`). It runs in the same Fly machine process as HTTP (`processes = ["app"]`). `fly.toml` already keeps that machine up (`auto_stop_machines = "off"`, `min_machines_running = 1`). This is **not** Fly cron and **not** a second `fly machine`. Each tick: (1) emit `expiring` (24h before `expires_at`, once) and `expired` (at/after expiry; watcher status → `expired`); (2) claim due watchers and observe with the `/v1/check` detectors (max **2** concurrent fetches per hostname; **single-check** — 2-of-3 confirm is a later step); (3) POST any due HMAC callbacks.
+
+Event types stored and delivered:
+
+| type | when |
+| --- | --- |
+| `change` | detector `fired`, or observation hash/status differs from baseline/last |
+| `unreachable` | 3 consecutive fetch failures; once until recovery |
+| `recovered` | first success after `unreachable` |
+| `expiring` | 24h before `expires_at` (once) |
+| `expired` | at/after expiry or `checks_remaining` hits 0 |
+| `baseline` | only if `deliver=every_check` — skipped on standard to avoid spam |
+
+Event ids are `evt_` + Crockford ULID. Same Ed25519 receipt family; `GET /v1/receipt/{id}` resolves `evt_`.
+
+### HMAC callback recipe
+
+POST the stored JSON body to `callback.url` (10s timeout). Header:
+
+```http
+X-Sentinel-Signature: t=<unix>,v1=<hex>
+```
+
+`v1` is **lowercase hex HMAC-SHA256 of the raw body** using `callback.secret`. `t` is the unix time of that delivery attempt and is **not** part of the MAC — receivers should reject stale `t` (for example older than 5 minutes).
+
+```js
+import { createHmac } from "node:crypto";
+
+function verify(secret, rawBody, header) {
+  const parts = Object.fromEntries(header.split(",").map((p) => p.trim().split("=")));
+  const expected = createHmac("sha256", secret).update(rawBody, "utf8").digest("hex");
+  return parts.v1 === expected;
+}
+```
+
+Example callback JSON (`chain` is `{run:"none"}` until a later chain step):
+
+```json
+{
+  "id": "evt_01K4…",
+  "type": "change",
+  "watcher_id": "wtc_01K4…",
+  "created_at": "2026-09-10T18:00:00Z",
+  "previous": { "hash": "…", "status": "live", "http_status": 200, "http_class": "2xx", "summary": "live 2xx (200)" },
+  "current": { "hash": "…", "status": "closed", "http_status": 404, "http_class": "4xx", "summary": "closed 4xx (404)" },
+  "diff": { "fired": true, "changed": ["status", "http_class", "hash"] },
+  "confidence": 0.82,
+  "checks_remaining": 2879,
+  "expires_at": "2026-10-10T18:00:00Z",
+  "receipt": { "hash": "…", "verify_url": "https://livecheck.fly.dev/v1/receipt/evt_01K4…" },
+  "context": { "listing_id": "job-1" },
+  "chain": { "run": "none" }
+}
+```
+
+Retries live on the same in-process worker. After a failed POST (network, timeout, or non-2xx) the event stays in `watch_events` with `delivery_attempts` incremented and `next_attempt_at = now + delay`. Delays after attempts 1–4 are **1m, 5m, 30m, 2h**. The fifth failure marks the delivery exhausted (`next_attempt_at` null) — the event is kept. Each try is also written to `watch_delivery_attempts`. The 15s poll drains any row whose `next_attempt_at` is due.
 
 Health reports `watch: true`, `watch_price_usd: 2.5`, and `public_watch_url`. Paid Verify and Confirm 200 responses include a `watch` suggest (`/v1/watch`, detector `status_change`, `$2.50`) so agents can create a watcher after a one-shot check.
 
