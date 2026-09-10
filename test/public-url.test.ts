@@ -30,6 +30,10 @@ describe("public verify URL", () => {
         publicWatchChainTopupUrl("http://127.0.0.1:43127/", undefined, "wtc_01TEST"),
         "http://127.0.0.1:43127/v1/watch/wtc_01TEST/chain/topup",
       );
+      assert.equal(
+        publicWatchChainTopupUrl("http://127.0.0.1:43127/v1/watch/wtc_01FROMREQ/chain/topup"),
+        "http://127.0.0.1:43127/v1/watch/wtc_01FROMREQ/chain/topup",
+      );
     });
   });
 

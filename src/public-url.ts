@@ -83,14 +83,24 @@ export function publicWatchUrl(requestUrl?: string, host?: string): string {
 
 export const CHAIN_TOPUP_ID_PLACEHOLDER = "{id}";
 
-export function parseWatchChainTopupId(path: string): string | undefined {
-  const normalized = path.replace(/\/+$/, "") || "/";
-  const match = normalized.match(/^\/v1\/watch\/([^/]+)\/chain\/topup$/i);
-  return match?.[1];
+export function parseWatchChainTopupId(pathOrUrl: string): string | undefined {
+  const trimmed = pathOrUrl.trim();
+  const match = trimmed.match(/\/v1\/watch\/([^/?#]+)\/chain\/topup\/?(\?|#|$)/i);
+  if (match?.[1]) return match[1];
+  try {
+    return parseWatchChainTopupId(new URL(trimmed).pathname);
+  } catch {
+    const normalized = trimmed.replace(/\/+$/, "") || "/";
+    return normalized.match(/^\/v1\/watch\/([^/]+)\/chain\/topup$/i)?.[1];
+  }
 }
 
 export function publicWatchChainTopupUrl(requestUrl?: string, host?: string, watcherId?: string): string {
-  const id = watcherId ?? parseWatchChainTopupId(pathnameOf(requestUrl) ?? "") ?? CHAIN_TOPUP_ID_PLACEHOLDER;
+  const id =
+    watcherId ??
+    parseWatchChainTopupId(requestUrl ?? "") ??
+    parseWatchChainTopupId(pathnameOf(requestUrl) ?? "") ??
+    CHAIN_TOPUP_ID_PLACEHOLDER;
   return `${publicOrigin(requestUrl, host)}/v1/watch/${id}/chain/topup`;
 }
 

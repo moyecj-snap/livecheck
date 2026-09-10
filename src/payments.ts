@@ -26,7 +26,7 @@ import {
   missingLiveKeyNames,
   readLiveKeys,
 } from "./config.js";
-import { isPaidPostPath, parseWatchChainTopupId, publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl, publicWatchChainTopupUrl, publicWatchUrl } from "./public-url.js";
+import { isPaidPostPath, parseWatchChainTopupId, publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicOrigin, publicVerifyUrl, publicWatchChainTopupUrl, publicWatchUrl } from "./public-url.js";
 import {
   advertisePaymentRequired,
   chainTopupPaymentRequiredBody,
@@ -150,19 +150,28 @@ export function verifyPaymentRoutes(payTo: string): RoutesConfig {
 export function withAdvertised402(inner: MiddlewareHandler): MiddlewareHandler {
   return async (c, next) => {
     const result = await inner(c, next);
-    const current = c.res ?? (result instanceof Response ? result : undefined);
+    const returned = result instanceof Response ? result : undefined;
+    const current =
+      (returned?.status === 402 ? returned : undefined) ??
+      (c.res?.status === 402 ? c.res : undefined) ??
+      returned ??
+      c.res;
     if (!current || current.status !== 402) {
       return result;
     }
     const raw = current.headers.get("payment-required") ?? current.headers.get("PAYMENT-REQUIRED");
-    if (!raw) return result;
+    if (!raw) return result ?? current;
     let decoded: Record<string, unknown>;
     try {
       decoded = decodePaymentRequired(raw);
     } catch {
-      return result;
+      return result ?? current;
     }
-    const advertised = advertisePaymentRequired(decoded, c.req.url, c.req.header("host"));
+    const topupId = parseWatchChainTopupId(c.req.path) ?? parseWatchChainTopupId(c.req.url);
+    const requestUrl = topupId
+      ? `${publicOrigin(c.req.url, c.req.header("host"))}/v1/watch/${topupId}/chain/topup`
+      : c.req.url;
+    const advertised = advertisePaymentRequired(decoded, requestUrl, c.req.header("host"));
     const encoded = encodePaymentRequired(advertised);
     // Re-emit via Hono so payment-required is not stuck on an immutable Fetch header map.
     return c.body(await current.text(), 402, {
