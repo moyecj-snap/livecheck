@@ -6,7 +6,9 @@ import {
 } from "./config.js";
 import { hostnameOnly, isoTs } from "./paid-call.js";
 import { runCheck } from "./check.js";
+import { numericFromSignals } from "./numeric.js";
 import { deliverDueCallbacks } from "./watch-callback.js";
+import { confirmationNextCheckAt, decideConfirmation } from "./watch-confirm.js";
 import {
   emitChangeIfNeeded,
   emitExpiredIfNeeded,
@@ -65,16 +67,23 @@ async function runOneWatcher(row: WatcherRow, now: Date, fetcher: typeof fetch):
   if (!claimWatcher(row.id, claimedUntil, nowIso)) return;
 
   const baselineHash = row.last_observation?.hash ?? row.baseline.hash ?? null;
+  const usesHashBaseline =
+    row.condition.detector === "status_change" ||
+    row.condition.detector === "text_diff" ||
+    (row.condition.detector === "numeric_threshold" && row.condition.params.op === "change_pct");
   let observation = row.last_observation;
   let fired: boolean | null = null;
   let confidence = 0.5;
+  let content: string | undefined;
   let fetchFailed = false;
   try {
     const result = await runCheck(
       {
         target: row.target,
         condition: row.condition,
-        baseline_hash: row.condition.detector === "status_change" ? baselineHash : null,
+        baseline_hash: usesHashBaseline ? baselineHash : null,
+        baseline_text: row.detector_state?.last_content ?? row.detector_state?.pending?.content ?? null,
+        baseline_value: numericFromSignals(row.last_observation?.signals),
       },
       fetcher,
       now,
@@ -82,14 +91,15 @@ async function runOneWatcher(row: WatcherRow, now: Date, fetcher: typeof fetch):
     observation = result.observation;
     fired = result.fired;
     confidence = result.confidence;
+    content = result.content;
   } catch (error) {
     fetchFailed = true;
     const reason = error instanceof Error ? error.message : String(error);
     console.warn(`[watch] observation failed ${row.id}: ${reason}`);
   }
 
-  const remaining = Math.max(0, row.checks_remaining - 1);
-  const next = isoTs(new Date(now.getTime() + jitteredDelayMs(row.interval_s)));
+  const isConfirmRefetch = Boolean(row.detector_state?.pending);
+  const remaining = isConfirmRefetch ? row.checks_remaining : Math.max(0, row.checks_remaining - 1);
   const expired = remaining <= 0 || row.expires_at <= nowIso;
   const baseline =
     !row.baseline.captured && observation && !fetchFailed
@@ -108,19 +118,31 @@ async function runOneWatcher(row: WatcherRow, now: Date, fetcher: typeof fetch):
     unreachable = false;
   }
 
+  let next = isoTs(new Date(now.getTime() + jitteredDelayMs(row.interval_s)));
+  let lastObservation = observation;
+  let detectorState = row.detector_state ?? {};
   if (!fetchFailed && observation) {
-    emitChangeIfNeeded(row, observation, fired, confidence, remaining, now);
+    const decision = decideConfirmation({ row, observation, fired, content, now });
+    detectorState = decision.detector_state;
+    lastObservation = decision.update_last_observation ? observation : row.last_observation;
+    if (decision.next_is_confirm_refetch && !expired) {
+      next = confirmationNextCheckAt(now);
+    }
+    if (decision.emit) {
+      emitChangeIfNeeded(row, observation, fired, confidence, remaining, now);
+    }
   }
 
   updateWatcherAfterCheck({
     id: row.id,
-    last_observation: observation,
+    last_observation: lastObservation,
     baseline,
     checks_remaining: remaining,
     next_check_at: next,
     status: expired ? "expired" : "active",
     consecutive_failures,
     unreachable,
+    detector_state: detectorState,
   });
 
   if (expired) {

@@ -94,6 +94,7 @@ function stubWatcher(id: string, conditionKey = "phase2-migrate-b".padEnd(64, "0
     consecutive_failures: 0,
     unreachable: false,
     expiring_emitted: false,
+    detector_state: {},
   };
 }
 
@@ -175,6 +176,7 @@ describe("watch store Phase 2 → step 3 migrate", () => {
     assert.equal(watcherCols.has("consecutive_failures"), true);
     assert.equal(watcherCols.has("unreachable"), true);
     assert.equal(watcherCols.has("expiring_emitted"), true);
+    assert.equal(watcherCols.has("detector_state_json"), true);
     const tables = opened.db
       .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'watch_delivery_attempts'`)
       .get() as { name?: string } | undefined;

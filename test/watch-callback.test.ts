@@ -69,6 +69,7 @@ function stubWatcher(overrides: Partial<WatcherRow> = {}): WatcherRow {
     consecutive_failures: overrides.consecutive_failures ?? 0,
     unreachable: overrides.unreachable ?? false,
     expiring_emitted: overrides.expiring_emitted ?? false,
+    detector_state: {},
     ...overrides,
   };
 }

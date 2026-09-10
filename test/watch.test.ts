@@ -75,6 +75,7 @@ function stubWatcher(overrides: Partial<WatcherRow> = {}): WatcherRow {
     consecutive_failures: 0,
     unreachable: false,
     expiring_emitted: false,
+    detector_state: {},
     ...overrides,
   };
 }
@@ -132,6 +133,18 @@ describe("watch parsers", () => {
         }),
       (error: unknown) => error instanceof WatchError && error.code === "invalid_condition",
     );
+    const textDiff = parseWatchRequest({
+      target: { type: "url", url: "https://example.com", render: "never" },
+      condition: { detector: "text_diff", params: { selector: "h1", min_change_ratio: 0.05 } },
+      callback: { url: "https://example.com/hook", secret: "whsec_x" },
+    });
+    assert.equal(textDiff.condition.detector, "text_diff");
+    const numeric = parseWatchRequest({
+      target: { type: "url", url: "https://example.com", render: "never" },
+      condition: { detector: "numeric_threshold", params: { selector: ".price", op: "lt", value: 1000 } },
+      callback: { url: "https://example.com/hook", secret: "whsec_x" },
+    });
+    assert.equal(numeric.condition.detector, "numeric_threshold");
   });
 
   it("jitter stays within ±10%", () => {
@@ -356,6 +369,37 @@ describe("POST /v1/watch HTTP", () => {
     assert.equal(renderBody.use, "/v1/watch/fast");
   });
 
+  it("accepts text_diff and numeric_threshold on create", async () => {
+    const headers = { "content-type": "application/json", "x-livecheck-mock": "1" };
+    const textDiff = await fetch(`${origin}/v1/watch`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        target: { type: "url", url: `${origin}/fixtures/products/price-usd`, render: "never" },
+        condition: { detector: "text_diff", params: { selector: "h1" } },
+        callback: { url: "https://example.com/hook-text", secret: "whsec_x" },
+        interval_s: 900,
+      }),
+    });
+    assert.equal(textDiff.status, 201);
+    const textBody = (await textDiff.json()) as { condition: { detector: string }; baseline: { captured: boolean } };
+    assert.equal(textBody.condition.detector, "text_diff");
+    assert.equal(textBody.baseline.captured, true);
+
+    const numeric = await fetch(`${origin}/v1/watch`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        target: { type: "url", url: `${origin}/fixtures/products/price-usd`, render: "never" },
+        condition: { detector: "numeric_threshold", params: { selector: ".price", op: "lt", value: 2000 } },
+        callback: { url: "https://example.com/hook-num", secret: "whsec_x" },
+        interval_s: 900,
+      }),
+    });
+    assert.equal(numeric.status, 201);
+    assert.equal(((await numeric.json()) as { condition: { detector: string } }).condition.detector, "numeric_threshold");
+  });
+
   it("unreachable baseline is 201 captured=false, never 422", async () => {
     const res = await fetch(`${origin}/v1/watch`, {
       method: "POST",
@@ -502,6 +546,11 @@ describe("POST /v1/watch receipt + rate limit + scheduler", () => {
     const second = await tickDueWatchers(new Date("2026-09-10T18:00:01Z"), hookOk);
     assert.ok(first.ran + second.ran >= 3);
 
+    const beforeConfirm = listWatchEvents("wtc_01SCHEDULER00000000000001");
+    assert.equal(beforeConfirm.some((event) => event.kind === "change"), false);
+
+    const confirm = await tickDueWatchers(new Date("2026-09-10T18:00:20Z"), hookOk);
+    assert.ok(confirm.ran >= 1);
     const events = listWatchEvents("wtc_01SCHEDULER00000000000001");
     assert.ok(events.some((event) => event.kind === "change"));
     assert.equal(events.some((event) => event.kind === "callback_pending"), false);

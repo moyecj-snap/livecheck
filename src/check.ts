@@ -1,18 +1,30 @@
 import { createHash } from "node:crypto";
 import { CHECK_PRICE_USD } from "./config.js";
 import { classify } from "./classify.js";
+import {
+  compareNumeric,
+  extractJsonPath,
+  jsonPathToNumber,
+  NUMERIC_OPS,
+  pickAmount,
+  type NumericOp,
+} from "./numeric.js";
+import { DEFAULT_MIN_CHANGE_RATIO, normalizeForTextDiff, textDiffConfidence, textDiffFired, textDiffHash } from "./text-diff.js";
 import type {
   CheckCondition,
   CheckObservation,
   CheckTarget,
   HttpClass,
   KeywordParams,
+  NumericThresholdParams,
   SourceStatus,
+  TextDiffParams,
 } from "./types.js";
 import { VerifyError, fetchPage, parseTargetUrl, verifyUrl } from "./verify.js";
 
 export const CHECK_INTENT = "check" as const;
 export const PHASE1_DETECTORS = ["status_change", "keyword"] as const;
+export const CHECK_DETECTORS = ["status_change", "keyword", "text_diff", "numeric_threshold"] as const;
 export const BASELINE_HASH_RE = /^[a-f0-9]{64}$/i;
 
 export type CheckErrorCode = "invalid_target" | "invalid_condition" | "baseline_unreachable";
@@ -33,6 +45,8 @@ export type ParsedCheckRequest = {
   target: CheckTarget;
   condition: CheckCondition;
   baseline_hash: string | null;
+  baseline_text?: string | null;
+  baseline_value?: number | null;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -173,15 +187,100 @@ export function parseCheckTarget(raw: unknown): CheckTarget {
   return { type: "url", url, render: "never", selector };
 }
 
+function optionalParamSelector(params: Record<string, unknown>): string | null {
+  if (params.selector === undefined || params.selector === null) return null;
+  if (typeof params.selector !== "string") {
+    throw new CheckError("invalid_condition", "condition.params.selector must be a string or null.", 400);
+  }
+  return params.selector.trim() || null;
+}
+
+function parseIgnoreRegexes(value: unknown): string[] {
+  const patterns = stringArray(value, "ignore");
+  for (const pattern of patterns) {
+    try {
+      new RegExp(pattern, "gi");
+    } catch {
+      throw new CheckError("invalid_condition", `condition.params.ignore has an invalid regex: ${pattern}`, 400);
+    }
+  }
+  return patterns;
+}
+
+function parseTextDiffParams(params: Record<string, unknown>): TextDiffParams {
+  const selector = optionalParamSelector(params);
+  const ignore = params.ignore === undefined ? [] : parseIgnoreRegexes(params.ignore);
+  let min_change_ratio = DEFAULT_MIN_CHANGE_RATIO;
+  if (params.min_change_ratio !== undefined && params.min_change_ratio !== null) {
+    if (typeof params.min_change_ratio !== "number" || !Number.isFinite(params.min_change_ratio)) {
+      throw new CheckError("invalid_condition", "condition.params.min_change_ratio must be a number.", 400);
+    }
+    if (params.min_change_ratio < 0 || params.min_change_ratio > 1) {
+      throw new CheckError("invalid_condition", "condition.params.min_change_ratio must be between 0 and 1.", 400);
+    }
+    min_change_ratio = params.min_change_ratio;
+  }
+  return { selector, ignore, min_change_ratio };
+}
+
+function parseNumericThresholdParams(params: Record<string, unknown>): NumericThresholdParams {
+  const selector = optionalParamSelector(params);
+  let jsonpath: string | null = null;
+  if (params.jsonpath !== undefined && params.jsonpath !== null) {
+    if (typeof params.jsonpath !== "string") {
+      throw new CheckError("invalid_condition", "condition.params.jsonpath must be a string or null.", 400);
+    }
+    jsonpath = params.jsonpath.trim() || null;
+  }
+  if (!selector && !jsonpath) {
+    throw new CheckError(
+      "invalid_condition",
+      "numeric_threshold requires condition.params.selector or condition.params.jsonpath.",
+      400,
+    );
+  }
+  const op = params.op;
+  if (typeof op !== "string" || !NUMERIC_OPS.includes(op as NumericOp)) {
+    throw new CheckError(
+      "invalid_condition",
+      'condition.params.op must be "lt", "lte", "gt", "gte", "eq", or "change_pct".',
+      400,
+    );
+  }
+  if (typeof params.value !== "number" || !Number.isFinite(params.value)) {
+    throw new CheckError("invalid_condition", "condition.params.value must be a finite number.", 400);
+  }
+  let currency: string | null = null;
+  if (params.currency !== undefined && params.currency !== null) {
+    if (typeof params.currency !== "string") {
+      throw new CheckError("invalid_condition", "condition.params.currency must be a string or null.", 400);
+    }
+    currency = params.currency.trim() || null;
+  }
+  let baseline_value: number | null = null;
+  if (params.baseline_value !== undefined && params.baseline_value !== null) {
+    if (typeof params.baseline_value !== "number" || !Number.isFinite(params.baseline_value)) {
+      throw new CheckError("invalid_condition", "condition.params.baseline_value must be a finite number.", 400);
+    }
+    baseline_value = params.baseline_value;
+  }
+  return { selector, jsonpath, op: op as NumericOp, value: params.value, currency, baseline_value };
+}
+
 export function parseCheckCondition(raw: unknown): CheckCondition {
   if (!isRecord(raw)) {
     throw new CheckError("invalid_condition", "condition must be { detector, params? }.", 400);
   }
   const detector = raw.detector;
-  if (detector !== "status_change" && detector !== "keyword") {
+  if (
+    detector !== "status_change" &&
+    detector !== "keyword" &&
+    detector !== "text_diff" &&
+    detector !== "numeric_threshold"
+  ) {
     throw new CheckError(
       "invalid_condition",
-      'condition.detector must be "status_change" or "keyword".',
+      'condition.detector must be "status_change", "keyword", "text_diff", or "numeric_threshold".',
       400,
     );
   }
@@ -191,6 +290,12 @@ export function parseCheckCondition(raw: unknown): CheckCondition {
   const params = raw.params ?? {};
   if (detector === "status_change") {
     return { detector: "status_change", params: {} };
+  }
+  if (detector === "text_diff") {
+    return { detector: "text_diff", params: parseTextDiffParams(params) };
+  }
+  if (detector === "numeric_threshold") {
+    return { detector: "numeric_threshold", params: parseNumericThresholdParams(params) };
   }
   const any = stringArray(params.any, "any");
   const all = stringArray(params.all, "all");
@@ -205,20 +310,13 @@ export function parseCheckCondition(raw: unknown): CheckCondition {
   if (params.case_sensitive !== undefined && typeof params.case_sensitive !== "boolean") {
     throw new CheckError("invalid_condition", "condition.params.case_sensitive must be a boolean.", 400);
   }
-  let selector: string | null = null;
-  if (params.selector !== undefined && params.selector !== null) {
-    if (typeof params.selector !== "string") {
-      throw new CheckError("invalid_condition", "condition.params.selector must be a string or null.", 400);
-    }
-    selector = params.selector.trim() || null;
-  }
   return {
     detector: "keyword",
     params: {
       any,
       all,
       none,
-      selector,
+      selector: optionalParamSelector(params),
       case_sensitive: params.case_sensitive === true,
     },
   };
@@ -231,7 +329,21 @@ export function parseCheckRequest(body: unknown): ParsedCheckRequest {
   const target = parseCheckTarget(body.target);
   const condition = parseCheckCondition(body.condition);
   const baseline_hash = parseBaselineHash(body.baseline_hash);
-  return { target, condition, baseline_hash };
+  let baseline_text: string | null = null;
+  if (body.baseline_text !== undefined && body.baseline_text !== null) {
+    if (typeof body.baseline_text !== "string") {
+      throw new CheckError("invalid_condition", "baseline_text must be a string.", 400);
+    }
+    baseline_text = body.baseline_text;
+  }
+  let baseline_value: number | null = null;
+  if (body.baseline_value !== undefined && body.baseline_value !== null) {
+    if (typeof body.baseline_value !== "number" || !Number.isFinite(body.baseline_value)) {
+      throw new CheckError("invalid_condition", "baseline_value must be a finite number.", 400);
+    }
+    baseline_value = body.baseline_value;
+  }
+  return { target, condition, baseline_hash, baseline_text, baseline_value };
 }
 
 function asObservation(
@@ -260,6 +372,36 @@ export function classifyKeywordFired(haystack: string, params: KeywordParams): b
   return keywordPresenceMatches(haystack, params);
 }
 
+function contentObservation(
+  status: SourceStatus,
+  httpStatus: number,
+  signals: string[],
+  checkedAt: string,
+  canonicalUrl: string,
+  hash: string,
+  summary: string,
+  title?: string,
+): CheckObservation {
+  const http_class = httpClassOf(httpStatus);
+  return {
+    status,
+    signals,
+    http_status: httpStatus,
+    http_class,
+    hash,
+    summary,
+    checked_at: checkedAt,
+    canonical_url: canonicalUrl,
+    ...(title ? { title } : {}),
+  };
+}
+
+function numericObservationHash(value: number, currency: string | null): string {
+  return createHash("sha256")
+    .update(JSON.stringify({ detector: "numeric_threshold", value, currency }), "utf8")
+    .digest("hex");
+}
+
 export async function runCheck(
   parsed: ParsedCheckRequest,
   fetcher: typeof fetch = fetch,
@@ -271,6 +413,7 @@ export async function runCheck(
   fired: boolean | null;
   confidence: number;
   price_usd: number;
+  content?: string;
 }> {
   const { target, condition, baseline_hash } = parsed;
   try {
@@ -297,6 +440,80 @@ export async function runCheck(
 
     const page = await fetchPage(target.url, fetcher);
     const verdict = classify(page, now);
+
+    if (condition.detector === "text_diff") {
+      const selector = condition.params.selector ?? target.selector;
+      const extracted = selector ? extractBySelector(page.html, selector) : page.text;
+      const normalized = normalizeForTextDiff(extracted, condition.params.ignore);
+      const hash = textDiffHash(normalized);
+      const fired = textDiffFired({
+        currentNormalized: normalized,
+        currentHash: hash,
+        baselineHash: baseline_hash,
+        baselineText: parsed.baseline_text,
+        minChangeRatio: condition.params.min_change_ratio,
+      });
+      const observation = contentObservation(
+        verdict.status,
+        verdict.http_status,
+        [...verdict.signals, selector ? "text_diff:selector" : "text_diff:full_page"],
+        verdict.checked_at,
+        verdict.canonical_url,
+        hash,
+        `${verdict.status} text_diff chars=${normalized.length}`,
+        verdict.title,
+      );
+      return {
+        target,
+        condition,
+        observation,
+        fired,
+        confidence: textDiffConfidence(Boolean(selector)),
+        price_usd: CHECK_PRICE_USD,
+        content: normalized,
+      };
+    }
+
+    if (condition.detector === "numeric_threshold") {
+      const selector = condition.params.selector ?? target.selector;
+      let current: number | null = null;
+      if (condition.params.jsonpath) {
+        current = jsonPathToNumber(extractJsonPath(page.html, condition.params.jsonpath), condition.params.currency);
+      }
+      if (current == null) {
+        const haystack = selector ? extractBySelector(page.html, selector) : page.text;
+        current = pickAmount(haystack, condition.params.currency);
+      }
+      if (current == null) {
+        throw new CheckError("baseline_unreachable", "numeric_threshold could not parse a number from the target.", 422);
+      }
+      const previous = parsed.baseline_value ?? condition.params.baseline_value ?? null;
+      const fired =
+        condition.params.op === "change_pct" && previous == null
+          ? null
+          : compareNumeric(condition.params.op, current, condition.params.value, previous);
+      const hash = numericObservationHash(current, condition.params.currency);
+      const observation = contentObservation(
+        verdict.status,
+        verdict.http_status,
+        [...verdict.signals, `numeric:${current}`, `numeric_op:${condition.params.op}`],
+        verdict.checked_at,
+        verdict.canonical_url,
+        hash,
+        `numeric ${current}${condition.params.currency ? ` ${condition.params.currency}` : ""}`,
+        verdict.title,
+      );
+      return {
+        target,
+        condition,
+        observation,
+        fired,
+        confidence: 0.88,
+        price_usd: CHECK_PRICE_USD,
+        content: String(current),
+      };
+    }
+
     const observation = asObservation(
       verdict.status,
       verdict.http_status,

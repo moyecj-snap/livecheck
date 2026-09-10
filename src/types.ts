@@ -59,7 +59,7 @@ export type ConfirmResult = {
   next_step?: ConfirmNextStep;
 };
 
-export type CheckDetector = "status_change" | "keyword";
+export type CheckDetector = "status_change" | "keyword" | "text_diff" | "numeric_threshold";
 
 export type CheckTarget = {
   type: "url";
@@ -76,9 +76,28 @@ export type KeywordParams = {
   case_sensitive: boolean;
 };
 
+export type TextDiffParams = {
+  selector: string | null;
+  ignore: string[];
+  min_change_ratio: number;
+};
+
+export type NumericOp = "lt" | "lte" | "gt" | "gte" | "eq" | "change_pct";
+
+export type NumericThresholdParams = {
+  selector: string | null;
+  jsonpath: string | null;
+  op: NumericOp;
+  value: number;
+  currency: string | null;
+  baseline_value: number | null;
+};
+
 export type CheckCondition =
   | { detector: "status_change"; params: Record<string, never> }
-  | { detector: "keyword"; params: KeywordParams };
+  | { detector: "keyword"; params: KeywordParams }
+  | { detector: "text_diff"; params: TextDiffParams }
+  | { detector: "numeric_threshold"; params: NumericThresholdParams };
 
 export type HttpClass = "1xx" | "2xx" | "3xx" | "4xx" | "5xx" | "other";
 

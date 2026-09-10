@@ -382,7 +382,7 @@ export const CHECK_OUTPUT_SCHEMA = {
     condition: {
       type: "object",
       properties: {
-        detector: { type: "string", enum: ["status_change", "keyword"] },
+        detector: { type: "string", enum: ["status_change", "keyword", "text_diff", "numeric_threshold"] },
         params: { type: "object" },
       },
       required: ["detector"],
@@ -427,7 +427,8 @@ export const CHECK_INPUT_SCHEMA = {
     },
     condition: {
       type: "object",
-      description: "detector status_change or keyword. keyword params: any/all/none, selector?, case_sensitive?",
+      description:
+        "detector status_change, keyword, text_diff, or numeric_threshold. text_diff: selector?, ignore[], min_change_ratio. numeric_threshold: selector or jsonpath, op, value, currency?",
     },
     baseline_hash: {
       type: ["string", "null"],
@@ -532,7 +533,7 @@ export const WATCH_INPUT_SCHEMA = {
     },
     condition: {
       type: "object",
-      description: "detector status_change or keyword. Same as POST /v1/check.",
+      description: "detector status_change, keyword, text_diff, or numeric_threshold. Same as POST /v1/check.",
     },
     callback: {
       type: "object",

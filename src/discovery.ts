@@ -128,9 +128,12 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
                     condition: {
                       type: "object",
                       description:
-                        "detector status_change or keyword. keyword params: any/all/none arrays, optional selector, case_sensitive default false.",
+                        "detector status_change, keyword, text_diff, or numeric_threshold. text_diff: selector?, ignore[], min_change_ratio default 0.02. numeric_threshold: selector or jsonpath, op, value, currency?.",
                       properties: {
-                        detector: { type: "string", enum: ["status_change", "keyword"] },
+                        detector: {
+                          type: "string",
+                          enum: ["status_change", "keyword", "text_diff", "numeric_threshold"],
+                        },
                         params: { type: "object" },
                       },
                       required: ["detector"],
@@ -201,9 +204,12 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
                     },
                     condition: {
                       type: "object",
-                      description: "detector status_change or keyword. Same detectors as POST /v1/check.",
+                      description: "detector status_change, keyword, text_diff, or numeric_threshold. Same detectors as POST /v1/check.",
                       properties: {
-                        detector: { type: "string", enum: ["status_change", "keyword"] },
+                        detector: {
+                          type: "string",
+                          enum: ["status_change", "keyword", "text_diff", "numeric_threshold"],
+                        },
                         params: { type: "object" },
                       },
                       required: ["detector"],

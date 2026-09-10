@@ -400,6 +400,82 @@ const PRODUCT_404 = `<!doctype html>
 </html>
 `;
 
+const PRODUCT_USD_PRICE = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Ridge Wallet – $1,299.00</title>
+</head>
+<body>
+  <h1>Ridge Wallet</h1>
+  <p class="price">$1,299.00</p>
+  <p class="viewers">23 watching</p>
+  <p class="stamp">Posted 2 hours ago · 2026-09-10T18:00:00Z</p>
+  <p class="desc">Aluminum wallet. Ships today.</p>
+  <form action="/cart/add" method="post">
+    <button type="submit">Add to cart</button>
+  </form>
+</body>
+</html>
+`;
+
+const PRODUCT_EUR_PRICE = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Ridge Wallet – 1 299,00 €</title>
+</head>
+<body>
+  <h1>Ridge Wallet</h1>
+  <p class="price">1 299,00 €</p>
+  <form action="/cart/add" method="post">
+    <button type="submit">Add to cart</button>
+  </form>
+</body>
+</html>
+`;
+
+const PRODUCT_PRICE_149 = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Ridge Card Case – 149</title>
+</head>
+<body>
+  <h1>Ridge Card Case</h1>
+  <p class="price">149</p>
+  <form action="/cart/add" method="post">
+    <button type="submit">Add to cart</button>
+  </form>
+</body>
+</html>
+`;
+
+const PRODUCT_JSON_PRICE = `{
+  "name": "Ridge Card Case",
+  "offers": { "price": 149, "priceCurrency": "USD" }
+}
+`;
+
+const PRODUCT_TEXT_CHANGED = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Ridge Wallet – new copy</title>
+</head>
+<body>
+  <h1>Ridge Wallet Titanium</h1>
+  <p class="price">$1,299.00</p>
+  <p class="viewers">88 watching</p>
+  <p class="stamp">Posted 1 minute ago · 2026-09-10T19:00:00Z</p>
+  <p class="desc">Titanium wallet. Limited drop. Completely rewritten product story for collectors.</p>
+  <form action="/cart/add" method="post">
+    <button type="submit">Add to cart</button>
+  </form>
+</body>
+</html>
+`;
+
 export const FIXTURES: Record<FixtureId, FixtureSpec> = {
   "live-apply-now": {
     id: "live-apply-now",
@@ -568,6 +644,37 @@ export const FIXTURES: Record<FixtureId, FixtureSpec> = {
     status: 200,
     body: ORDER_LOGINWALL,
     label: "Login wall on an order confirmation URL",
+  },
+  "products/price-usd": {
+    id: "products/price-usd",
+    status: 200,
+    body: PRODUCT_USD_PRICE,
+    label: "Product page with $1,299.00 and viewer/timestamp noise",
+  },
+  "products/price-eur": {
+    id: "products/price-eur",
+    status: 200,
+    body: PRODUCT_EUR_PRICE,
+    label: "Product page with 1 299,00 euro price",
+  },
+  "products/price-149": {
+    id: "products/price-149",
+    status: 200,
+    body: PRODUCT_PRICE_149,
+    label: "Product page with bare 149 price",
+  },
+  "products/price.json": {
+    id: "products/price.json",
+    status: 200,
+    contentType: "application/json",
+    body: PRODUCT_JSON_PRICE,
+    label: "JSON product payload with offers.price 149",
+  },
+  "products/price-usd-changed": {
+    id: "products/price-usd-changed",
+    status: 200,
+    body: PRODUCT_TEXT_CHANGED,
+    label: "Same product with rewritten description (noise counters changed too)",
   },
 };
 

@@ -9,6 +9,7 @@ import type {
   WatchCallbackDeliver,
   WatchStatus,
 } from "./types.js";
+import { parseDetectorState, type DetectorState } from "./watch-state.js";
 
 export type WatcherRow = {
   id: string;
@@ -39,6 +40,7 @@ export type WatcherRow = {
   consecutive_failures: number;
   unreachable: boolean;
   expiring_emitted: boolean;
+  detector_state: DetectorState;
 };
 
 export type WatchEventRow = {
@@ -91,7 +93,8 @@ CREATE TABLE IF NOT EXISTS watchers (
   claimed_until TEXT,
   consecutive_failures INTEGER NOT NULL DEFAULT 0,
   unreachable INTEGER NOT NULL DEFAULT 0,
-  expiring_emitted INTEGER NOT NULL DEFAULT 0
+  expiring_emitted INTEGER NOT NULL DEFAULT 0,
+  detector_state_json TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_watchers_due ON watchers(status, next_check_at);
 CREATE INDEX IF NOT EXISTS idx_watchers_payer_status ON watchers(payer, status);
@@ -196,6 +199,7 @@ export function migrateWatchStore(db: DatabaseSync): void {
   ensureColumn(db, "watch_events", "delivery_attempts", "delivery_attempts INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "watch_events", "next_attempt_at", "next_attempt_at TEXT");
   ensureColumn(db, "watch_events", "last_error", "last_error TEXT");
+  ensureColumn(db, "watchers", "detector_state_json", "detector_state_json TEXT");
   ensureTable(
     db,
     `CREATE TABLE IF NOT EXISTS watch_delivery_attempts (
@@ -313,6 +317,9 @@ function fromSql(item: Record<string, unknown>): WatcherRow | undefined {
     consecutive_failures: Number(item.consecutive_failures ?? 0),
     unreachable: Number(item.unreachable ?? 0) === 1,
     expiring_emitted: Number(item.expiring_emitted ?? 0) === 1,
+    detector_state: parseDetectorState(
+      item.detector_state_json == null ? null : String(item.detector_state_json),
+    ),
   };
 }
 
@@ -320,7 +327,7 @@ const SELECT_COLS = `id, payer, owner_token_hash, status, tier, target_url, targ
   condition_key, interval_s, checks_remaining, expires_at, first_check_at, next_check_at,
   baseline_json, last_observation_json, callback_url, callback_secret, callback_deliver,
   run, chain_budget_usd, label, context_json, created_at, claimed_until,
-  consecutive_failures, unreachable, expiring_emitted`;
+  consecutive_failures, unreachable, expiring_emitted, detector_state_json`;
 
 export function insertWatcher(row: WatcherRow): void {
   const db = requireDb();
@@ -330,8 +337,8 @@ export function insertWatcher(row: WatcherRow): void {
       condition_key, interval_s, checks_remaining, expires_at, first_check_at, next_check_at,
       baseline_json, last_observation_json, callback_url, callback_secret, callback_deliver,
       run, chain_budget_usd, label, context_json, created_at, claimed_until,
-      consecutive_failures, unreachable, expiring_emitted
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      consecutive_failures, unreachable, expiring_emitted, detector_state_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     row.id,
     row.payer,
@@ -361,6 +368,9 @@ export function insertWatcher(row: WatcherRow): void {
     row.consecutive_failures ?? 0,
     row.unreachable ? 1 : 0,
     row.expiring_emitted ? 1 : 0,
+    row.detector_state && Object.keys(row.detector_state).length > 0
+      ? JSON.stringify(row.detector_state)
+      : null,
   );
 }
 
@@ -440,6 +450,7 @@ export function updateWatcherAfterCheck(input: {
   status: WatchStatus;
   consecutive_failures?: number;
   unreachable?: boolean;
+  detector_state?: DetectorState;
 }): void {
   const db = requireDb();
   db.prepare(
@@ -451,7 +462,8 @@ export function updateWatcherAfterCheck(input: {
          status = ?,
          claimed_until = NULL,
          consecutive_failures = COALESCE(?, consecutive_failures),
-         unreachable = COALESCE(?, unreachable)
+         unreachable = COALESCE(?, unreachable),
+         detector_state_json = COALESCE(?, detector_state_json)
      WHERE id = ?`,
   ).run(
     input.last_observation ? JSON.stringify(input.last_observation) : null,
@@ -461,6 +473,7 @@ export function updateWatcherAfterCheck(input: {
     input.status,
     input.consecutive_failures ?? null,
     input.unreachable == null ? null : input.unreachable ? 1 : 0,
+    input.detector_state ? JSON.stringify(input.detector_state) : null,
     input.id,
   );
 }

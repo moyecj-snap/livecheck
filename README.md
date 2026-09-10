@@ -42,7 +42,7 @@ After payment verifies and settles:
 
 v1 reads HTML + status only. It does not execute page JavaScript. Redirects are followed; `canonical_url` is the final URL. User-Agent identifies Livecheck.
 
-Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, `GET /.well-known/x402`, `GET /.well-known/livecheck-keys.json`, `GET /stats`, `GET /v1/receipt/{id}`, `GET /v1/watch/{id}`, `GET /v1/watch/{id}/events`, and `DELETE /v1/watch/{id}` (owner token required). Paid: `POST /v1/verify` ($0.01), `POST /v1/check` ($0.02, one-shot Sentinel condition), `POST /v1/watch` ($2.50, 30-day standard watcher), `POST /v1/confirm` ($0.10, `lead_submit` / `listing_published`), and `POST /v1/confirm/order` ($0.25, `order_placed`). `GET /v1/judge` is a 501 stub. `/v1/watch/fast`, renew, text_diff/numeric, and chain top-up are not in this phase.
+Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, `GET /.well-known/x402`, `GET /.well-known/livecheck-keys.json`, `GET /stats`, `GET /v1/receipt/{id}`, `GET /v1/watch/{id}`, `GET /v1/watch/{id}/events`, and `DELETE /v1/watch/{id}` (owner token required). Paid: `POST /v1/verify` ($0.01), `POST /v1/check` ($0.02, one-shot Sentinel condition), `POST /v1/watch` ($2.50, 30-day standard watcher), `POST /v1/confirm` ($0.10, `lead_submit` / `listing_published`), and `POST /v1/confirm/order` ($0.25, `order_placed`). `GET /v1/judge` is a 501 stub. `/v1/watch/fast`, renew, and chain top-up are not in this phase.
 
 Agent crawlers (x402scan, AgentCash, Circle OpenAPI discovery) read the free JSON docs. `GET /openapi.json` is the canonical contract: `POST /v1/verify` with JSON `{ "url": "https://..." }`, `x-payment-info` fixed **$0.01** USD (decimal; runtime 402 `accepts[].amount` stays `"10000"` atomic USDC), and a 200 schema of `live | closed | unknown`. It lists `POST /v1/check` at fixed **$0.02** (`"20000"` atomic) for a one-shot condition (no watcher), `POST /v1/watch` at fixed **$2.50** (`"2500000"` atomic) for a 30-day standard watcher, `GET /v1/watch/{id}/events` (free, owner token), `POST /v1/confirm` at fixed **$0.10** USD (`"100000"` atomic) for `lead_submit` / `listing_published` (no `intent_prices`), and `POST /v1/confirm/order` at fixed **$0.25** (`"250000"` atomic) for `order_placed`. `GET /.well-known/x402` lists `https://livecheck.fly.dev/v1/verify`, `https://livecheck.fly.dev/v1/check`, `https://livecheck.fly.dev/v1/watch`, `https://livecheck.fly.dev/v1/confirm`, and `https://livecheck.fly.dev/v1/confirm/order`. Neither discovery route returns 402.
 
@@ -88,10 +88,12 @@ Content-Type: application/json
 }
 ```
 
-Phase 1 detectors:
+Detectors:
 
 - **status_change** — same fetch/classify path as Verify. `observation.hash` is SHA-256 of `{status, http_class}`. When `baseline_hash` is the prior hash, `fired` is true iff status or HTTP class changed. Omit or null `baseline_hash` on the first call (`fired` is then `null`).
 - **keyword** — `params.any` / `all` / `none` string arrays, optional `selector`, `case_sensitive` default false. `fired` is true when the presence set matches.
+- **text_diff** — `params.selector` (recommended), `params.ignore` (regex array), `params.min_change_ratio` (default `0.02`). Hashes text after the ignore-by-default list plus any caller `ignore` patterns. Without a selector, `confidence` is capped at **0.6**. With `baseline_hash` (or `baseline_text`), `fired` is true when the remaining text changed enough.
+- **numeric_threshold** — `params.selector` or `params.jsonpath` (one required), `params.op` (`lt`, `lte`, `gt`, `gte`, `eq`, `change_pct`), `params.value`, optional `params.currency`. Parses `$1,299.00`, `1 299,00 €`, and `149`. `change_pct` needs `params.baseline_value` (or `baseline_value` on the body) or `fired` is `null`.
 
 Successful JSON includes `observation` (status, signals, http_status, http_class, hash, summary), `fired`, `confidence`, `price_usd: 0.02`, and Confirm-style additive `id` + `receipt`. Check ids use prefix **`chk_`** + ULID. `GET /v1/receipt/{id}` resolves both `chk_` and `cfm_`. Same Ed25519 key as Confirm (`CONFIRM_RECEIPT_PRIVATE_KEY`).
 
@@ -104,6 +106,29 @@ curl -s http://127.0.0.1:43127/v1/check \
   -H 'content-type: application/json' \
   -H 'X-Livecheck-Mock: 1' \
   -d '{"target":{"type":"url","url":"http://127.0.0.1:43127/fixtures/live-apply-now","render":"never"},"condition":{"detector":"status_change","params":{}}}'
+```
+
+Example **text_diff** / **numeric_threshold** bodies:
+
+```json
+{
+  "target": { "type": "url", "url": "https://shop.example.com/products/wallet", "render": "never" },
+  "condition": {
+    "detector": "text_diff",
+    "params": { "selector": "h1", "ignore": ["sku-\\d+"], "min_change_ratio": 0.02 }
+  },
+  "baseline_hash": null
+}
+```
+
+```json
+{
+  "target": { "type": "url", "url": "https://shop.example.com/products/wallet", "render": "never" },
+  "condition": {
+    "detector": "numeric_threshold",
+    "params": { "selector": ".price", "op": "lt", "value": 1000, "currency": "USD" }
+  }
+}
 ```
 
 ## Sentinel watch (`POST /v1/watch`)
@@ -124,7 +149,7 @@ Content-Type: application/json
 
 Create semantics:
 
-- Detectors reuse `/v1/check` (`status_change`, `keyword`). Do not send `text_diff` / `numeric`.
+- Detectors reuse `/v1/check` (`status_change`, `keyword`, `text_diff`, `numeric_threshold`).
 - `callback.deliver=on_change` or `every_check` is accepted. Standard still skips `baseline` spam (`every_check` is stored for a later fast tier). `chain_budget_usd` is accepted and ignored (`run` stays `none`).
 - HMAC-signed POSTs go to `callback.url`. Failed deliveries retry **1m, 5m, 30m, 2h** (5 attempts). The event row is never dropped.
 - `GET /v1/watch/{id}/events` is free (owner token). Last 30 days, paginated (`limit`, `cursor`).
@@ -174,9 +199,33 @@ No Postgres / `DATABASE_URL` on this Fly app. Watchers persist in **SQLite** on 
 
 Same volume as `paid-calls.sqlite`. State survives machine restarts. If Postgres is added later, dump the `watchers` + `watch_events` tables and point `WATCH_DB_PATH` at a migrator — the row shape is the migration contract.
 
-Opening the store runs an idempotent upgrade for Phase 2 volumes: `ALTER TABLE` adds `watchers.consecutive_failures` / `unreachable` / `expiring_emitted` and `watch_events.delivery_attempts` / `next_attempt_at` / `last_error` when missing, `CREATE TABLE IF NOT EXISTS watch_delivery_attempts`, then `CREATE INDEX IF NOT EXISTS idx_watch_events_due` (that index is **not** created until the column exists). Fresh DBs and already-upgraded DBs are no-ops.
+Opening the store runs an idempotent upgrade for Phase 2 volumes: `ALTER TABLE` adds `watchers.consecutive_failures` / `unreachable` / `expiring_emitted` / `detector_state_json` and `watch_events.delivery_attempts` / `next_attempt_at` / `last_error` when missing, `CREATE TABLE IF NOT EXISTS watch_delivery_attempts`, then `CREATE INDEX IF NOT EXISTS idx_watch_events_due` (that index is **not** created until the column exists). Fresh DBs and already-upgraded DBs are no-ops. No index is created on `detector_state_json`.
 
-The scheduler is an **in-process** poll (every 15s) started by `npm start` (`src/index.ts`). It runs in the same Fly machine process as HTTP (`processes = ["app"]`). `fly.toml` already keeps that machine up (`auto_stop_machines = "off"`, `min_machines_running = 1`). This is **not** Fly cron and **not** a second `fly machine`. Each tick: (1) emit `expiring` (24h before `expires_at`, once) and `expired` (at/after expiry; watcher status → `expired`); (2) claim due watchers and observe with the `/v1/check` detectors (max **2** concurrent fetches per hostname; **single-check** — 2-of-3 confirm is a later step); (3) POST any due HMAC callbacks.
+The scheduler is an **in-process** poll (every 15s) started by `npm start` (`src/index.ts`). It runs in the same Fly machine process as HTTP (`processes = ["app"]`). `fly.toml` already keeps that machine up (`auto_stop_machines = "off"`, `min_machines_running = 1`). This is **not** Fly cron and **not** a second `fly machine`. Each tick: (1) emit `expiring` (24h before `expires_at`, once) and `expired` (at/after expiry; watcher status → `expired`); (2) claim due watchers and observe with the `/v1/check` detectors (max **2** concurrent fetches per hostname; **2-of-3 confirmation** on standard — see below); (3) POST any due HMAC callbacks.
+
+#### 2-of-3 confirmation (standard tier)
+
+A `change` event is **not** emitted on the first candidate observation. Standard watchers confirm with 2-of-3:
+
+1. **One check + ~20s re-fetch** — the first candidate stores a pending snapshot and schedules a confirmation fetch ~20 seconds later. If that re-fetch is still a candidate, `change` fires. The confirmation re-fetch does not decrement `checks_remaining`.
+2. **Two consecutive checks** — if the ~20s re-fetch fails or is skipped, the next successful candidate check against the last *confirmed* observation confirms the same way.
+
+A flicker (candidate, then back to the last confirmed snapshot) clears pending and does not emit `change`. `unreachable` / `recovered` / `expiring` / `expired` are unchanged.
+
+Opening the store also ALTERs `watchers.detector_state_json` when missing (pending confirmation + last normalized text). Same rule as Phase 2: **ALTER columns before any index that names them**. This column has no extra index.
+
+#### Ignore-by-default (before hashing)
+
+`text_diff` (and any content hash that goes through `normalizeForTextDiff`) strips this noise **before** SHA-256 / `min_change_ratio`:
+
+- timestamps (ISO-8601, common date stamps, “N hours ago”)
+- viewers / sold counters
+- session IDs (`session_id`, `jsessionid`, `phpsessid`, …)
+- CSRF / authenticity tokens
+- ad slots (`adsbygoogle`, `data-ad-slot`, `doubleclick`, …)
+- cookie banners (“we use cookies”, “accept all cookies”, …)
+
+Caller `condition.params.ignore` regexes run after that list.
 
 Event types stored and delivered:
 

@@ -7,6 +7,7 @@ import type {
   WatchEventType,
   WatchObservationSnapshot,
 } from "./types.js";
+import { isChangeCandidate } from "./watch-confirm.js";
 import { hasWatchEventKind, insertWatchEvent, markExpiringEmitted, type WatcherRow } from "./watch-store.js";
 
 export function snapshotObservation(obs: CheckObservation | null | undefined): WatchObservationSnapshot | null {
@@ -37,22 +38,15 @@ export function observationDiff(
 }
 
 /**
- * Step 3 is single-check (no 2-of-3). A change fires when the /v1/check
- * detector reports `fired`, or when hash/status differs from baseline/last.
+ * Candidate change vs last confirmed observation. Standard tier still
+ * requires 2-of-3 (`decideConfirmation`) before emitChangeIfNeeded runs.
  */
 export function shouldEmitChange(
   row: WatcherRow,
   observation: CheckObservation,
   fired: boolean | null,
 ): boolean {
-  if (fired === true) return true;
-  const previous = row.last_observation;
-  if (previous) {
-    if (previous.hash !== observation.hash || previous.status !== observation.status) return true;
-  } else if (row.baseline.hash) {
-    if (row.baseline.hash !== observation.hash) return true;
-  }
-  return false;
+  return isChangeCandidate(row, observation, fired);
 }
 
 function parseContext(raw: string | null): Record<string, unknown> | null {

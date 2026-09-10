@@ -247,7 +247,12 @@ export async function captureBaseline(
   parsed: ParsedWatchRequest,
   fetcher: typeof fetch = fetch,
   now = new Date(),
-): Promise<{ baseline: WatchBaseline; observation: CheckObservation | null }> {
+): Promise<{
+  baseline: WatchBaseline;
+  observation: CheckObservation | null;
+  content?: string;
+  fired: boolean | null;
+}> {
   try {
     const result = await withTimeout(
       runCheck({ target: parsed.target, condition: parsed.condition, baseline_hash: null }, fetcher, now),
@@ -260,9 +265,11 @@ export async function captureBaseline(
         summary: result.observation.summary,
       },
       observation: result.observation,
+      content: result.content,
+      fired: result.fired,
     };
   } catch {
-    return { baseline: { captured: false }, observation: null };
+    return { baseline: { captured: false }, observation: null, fired: null };
   }
 }
 
@@ -335,7 +342,7 @@ export async function createWatch(
     });
   }
 
-  const { baseline, observation } = await captureBaseline(parsed, ctx.fetcher, now);
+  const { baseline, observation, content, fired } = await captureBaseline(parsed, ctx.fetcher, now);
   const id = newWatchId(now.getTime());
   const ownerToken = newOwnerToken(now.getTime());
   const createdAt = isoTs(now);
@@ -373,6 +380,10 @@ export async function createWatch(
     consecutive_failures: 0,
     unreachable: false,
     expiring_emitted: false,
+    detector_state: {
+      ...(content ? { last_content: content } : {}),
+      last_fired: fired,
+    },
   };
 
   try {
