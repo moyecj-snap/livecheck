@@ -380,7 +380,7 @@ Unknown intents return HTTP **400** `{ "error": "unsupported_intent" }` after pa
 
 **Payment (one fixed price per resource):** `@x402/hono` prices the *route*, not the JSON `intent`. Unpaid `POST /v1/confirm` 402s with exactly one accept at **$0.10 / 100000 atomic**. Unpaid `POST /v1/confirm/order` 402s with exactly one accept at **$0.25 / 250000 atomic**. Dual/dynamic `accepts[]` on one path made purl report "Payment was not accepted" because facilitator verify failed when settle-time `paymentRequirements` drifted from the first 402. `advertisePaymentRequired` must not change matching fields (`amount`, `asset`, `payTo`, `network`, `scheme`, `extra`, `maxTimeoutSeconds`). `extra` stays Verify's USDC domain `{name, version}`. Route config pins `resource` URL + ASCII description to the public values so that rewrite is a no-op for signing fields. Mock pay (`X-Livecheck-Mock: 1`) still bypasses the gate. Successful JSON still returns `price_usd: 0.25` for `order_placed`.
 
-Free Confirm extras: `GET /v1/receipt/{id}`, `GET /.well-known/livecheck-keys.json`, `GET /stats` (JSON; HTML if `Accept: text/html`). `GET /stats` publishes lead_submit, listing_published, and order_placed rolling counts and explicitly **null** false-confirmed rate (no published bench number on the live route), plus a **Sentinel** section (below). Local honesty benches: `npm run bench:listing-published` and `npm run bench:order-placed` (gate: `false_confirmed = 0`).
+Free Confirm extras: `GET /v1/receipt/{id}`, `GET /.well-known/livecheck-keys.json`, `GET /stats` (JSON; HTML if `Accept: text/html`). `GET /stats` publishes lead_submit, listing_published, and order_placed rolling counts and explicitly **null** false-confirmed rate (no published bench number on the live route), plus a **Sentinel** section (below). Local honesty benches: `npm run bench:listing-published` and `npm run bench:order-placed` (gate: `false_confirmed = 0`). Sentinel honesty + latency (CI/local, not a 1000-watcher soak): `npm run bench:sentinel` — report at [`docs/sentinel-benches.md`](docs/sentinel-benches.md).
 
 ### Sentinel on `GET /stats`
 
@@ -392,8 +392,8 @@ JSON and HTML include `sentinel` next to Confirm intents. Counts come from `watc
 | `checks_run` | one-shot `POST /v1/check` receipts + scheduled observations (`term quota − checks_remaining`) |
 | `change_events` | `watch_events` rows with `kind=change` |
 | `by_detector.{status_change,keyword,text_diff,numeric_threshold}` | watcher counts and change-event counts per detector |
-| `benches.false_positive_rate` | structured **null** until dispute + benches land |
-| `benches.median_latency_ms` | structured **null** until benches land |
+| `benches.false_positive_rate` | structured **null** on the live route (no dispute endpoint). Local/CI: `docs/sentinel-benches.md` |
+| `benches.median_latency_ms` | structured **null** on the live route. Local/CI: `docs/sentinel-benches.md` |
 
 Prices on that object stay `$0.02` / `$2.50` / `$0.50`. `status` is `payable` (Bazaar GA held). Missing is not zero.
 
@@ -443,7 +443,7 @@ curl -s http://127.0.0.1:43127/v1/verify \
   -d '{"url":"http://127.0.0.1:43127/fixtures/closed-to-new-applications"}'
 ```
 
-`npm test` runs fixture-based classifier, HTTP, MCP, discovery, and mocked eBay Browse tests. Unit tests never call the live eBay network.
+`npm test` runs fixture-based classifier, HTTP, MCP, discovery, mocked eBay Browse, and Sentinel bench-gate tests. Unit tests never call the live eBay network. `npm run bench:sentinel` writes `docs/sentinel-benches.md` and `bench/sentinel-report.json` (false-positive rates, latency p50/p95 vs `interval_s + 60s` / `2×interval_s`, HMAC recipe, chain Verify). No real $2.50 spends.
 
 ## Stripe + Coinbase setup (live settlement)
 
@@ -715,8 +715,8 @@ Spec §8 — not in this slice. Do not treat these as shipped or priced:
 
 - Playwright / `POST /v1/watch/fast` / JS render (`render: always` stays `400 render_not_available`)
 - Watcher renew
-- Confirm chain (`on_change.run=confirm`) — Verify chain via `POST /v1/watch/{id}/chain/topup` is live
-- Dispute endpoint or a published Sentinel false-positive rate
+- Confirm chain (`on_change.run=confirm`) — deferred. Verify chain via `POST /v1/watch/{id}/chain/topup` is live
+- Dispute endpoint or a published Sentinel false-positive rate on `GET /stats` (local benches live in `docs/sentinel-benches.md`)
 - Bazaar GA listing push (402 bazaar metadata on Verify stays; do not treat catalog index as GA)
 - Dual accepts or dynamic pricing on one 402
 - Postgres watcher spine (SQLite on the Fly volume)

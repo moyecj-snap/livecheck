@@ -73,7 +73,7 @@ const BENCH_NOTE =
   "Accuracy benches are not published. Do not infer a false-confirmed rate from these counts; missing is not zero.";
 
 const SENTINEL_BENCH_NOTE =
-  "Sentinel false-positive rate and median latency are not published until dispute + benches land. Missing is not zero.";
+  "Sentinel false-positive rate and median latency are not published on this route (no dispute endpoint). Local/CI benches: docs/sentinel-benches.md. Missing is not zero.";
 
 export function emptyIntentWindow(): IntentWindow {
   return {
