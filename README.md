@@ -174,6 +174,8 @@ No Postgres / `DATABASE_URL` on this Fly app. Watchers persist in **SQLite** on 
 
 Same volume as `paid-calls.sqlite`. State survives machine restarts. If Postgres is added later, dump the `watchers` + `watch_events` tables and point `WATCH_DB_PATH` at a migrator — the row shape is the migration contract.
 
+Opening the store runs an idempotent upgrade for Phase 2 volumes: `ALTER TABLE` adds `watchers.consecutive_failures` / `unreachable` / `expiring_emitted` and `watch_events.delivery_attempts` / `next_attempt_at` / `last_error` when missing, `CREATE TABLE IF NOT EXISTS watch_delivery_attempts`, then `CREATE INDEX IF NOT EXISTS idx_watch_events_due` (that index is **not** created until the column exists). Fresh DBs and already-upgraded DBs are no-ops.
+
 The scheduler is an **in-process** poll (every 15s) started by `npm start` (`src/index.ts`). It runs in the same Fly machine process as HTTP (`processes = ["app"]`). `fly.toml` already keeps that machine up (`auto_stop_machines = "off"`, `min_machines_running = 1`). This is **not** Fly cron and **not** a second `fly machine`. Each tick: (1) emit `expiring` (24h before `expires_at`, once) and `expired` (at/after expiry; watcher status → `expired`); (2) claim due watchers and observe with the `/v1/check` detectors (max **2** concurrent fetches per hostname; **single-check** — 2-of-3 confirm is a later step); (3) POST any due HMAC callbacks.
 
 Event types stored and delivered:

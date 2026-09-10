@@ -110,8 +110,6 @@ CREATE TABLE IF NOT EXISTS watch_events (
   last_error TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_watch_events_watcher ON watch_events(watcher_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_watch_events_due
-  ON watch_events(next_attempt_at) WHERE delivered_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS watch_delivery_attempts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -124,6 +122,17 @@ CREATE TABLE IF NOT EXISTS watch_delivery_attempts (
 );
 CREATE INDEX IF NOT EXISTS idx_watch_delivery_attempts_event
   ON watch_delivery_attempts(event_id, attempt);
+`;
+
+/**
+ * Indexes that reference columns added in step 3. Must run AFTER ALTER TABLE.
+ * Creating them in SCHEMA blows up Phase 2 Fly volumes: CREATE TABLE IF NOT EXISTS
+ * is a no-op on the old watch_events shape, then CREATE INDEX on next_attempt_at
+ * throws and initWatchStore never reaches migrate.
+ */
+const INDEXES_AFTER_MIGRATE = `
+CREATE INDEX IF NOT EXISTS idx_watch_events_due
+  ON watch_events(next_attempt_at) WHERE delivered_at IS NULL;
 `;
 
 type OpenStore = { ok: true; path: string; db: DatabaseSync };
@@ -155,24 +164,56 @@ function prepareDatabase(path: string): DatabaseSync {
   return db;
 }
 
-function tableColumns(db: DatabaseSync, table: string): Set<string> {
+export function watchStoreTableColumns(db: DatabaseSync, table: string): Set<string> {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
   return new Set(rows.map((row) => String(row.name)));
 }
 
 function ensureColumn(db: DatabaseSync, table: string, name: string, ddl: string): void {
-  if (tableColumns(db, table).has(name)) return;
-  db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  if (watchStoreTableColumns(db, table).has(name)) return;
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/duplicate column/i.test(message)) return;
+    throw error;
+  }
 }
 
-/** Existing Fly volume DBs created in Phase 2 lack callback-delivery columns. */
-function migrateWatchStore(db: DatabaseSync): void {
+function ensureTable(db: DatabaseSync, sql: string): void {
+  db.exec(sql);
+}
+
+/**
+ * Idempotent step-3 upgrade. Safe on a fresh DB and on a Phase 2 Fly volume
+ * whose watch_events table has only (id, watcher_id, kind, payload_json,
+ * created_at, delivered_at).
+ */
+export function migrateWatchStore(db: DatabaseSync): void {
   ensureColumn(db, "watchers", "consecutive_failures", "consecutive_failures INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "watchers", "unreachable", "unreachable INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "watchers", "expiring_emitted", "expiring_emitted INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "watch_events", "delivery_attempts", "delivery_attempts INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "watch_events", "next_attempt_at", "next_attempt_at TEXT");
   ensureColumn(db, "watch_events", "last_error", "last_error TEXT");
+  ensureTable(
+    db,
+    `CREATE TABLE IF NOT EXISTS watch_delivery_attempts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id TEXT NOT NULL,
+      attempt INTEGER NOT NULL,
+      at TEXT NOT NULL,
+      ok INTEGER NOT NULL,
+      http_status INTEGER,
+      error TEXT
+    );`,
+  );
+  ensureTable(
+    db,
+    `CREATE INDEX IF NOT EXISTS idx_watch_delivery_attempts_event
+     ON watch_delivery_attempts(event_id, attempt);`,
+  );
+  db.exec(INDEXES_AFTER_MIGRATE);
 }
 
 export function initWatchStore(path = defaultWatchDbPath()): StoreState {

@@ -14,7 +14,7 @@
     "paid-call:cos": "tsx scripts/paid-call-cos.ts",
     "bench:listing-published": "tsx scripts/listing-published-bench.ts",
     "bench:order-placed": "tsx scripts/order-placed-bench.ts",
-    "test": "tsx --test --test-concurrency=1 test/classify.test.ts test/verify.test.ts test/check.test.ts test/watch.test.ts test/watch-callback.test.ts test/watch-hint.test.ts test/server.test.ts test/mcp-client.test.ts test/mcp-stdio.test.ts test/config.test.ts test/public-url.test.ts test/bazaar.test.ts test/live-402.test.ts test/catalog-payload.test.ts test/discovery.test.ts test/ebay.test.ts test/confirm.test.ts test/listing-published.test.ts test/listing-published-bench.test.ts test/order-placed.test.ts test/order-placed-bench.test.ts test/confirm-payment.test.ts test/paid-call.test.ts test/paid-call-store.test.ts test/receipt.test.ts test/stats.test.ts",
+    "test": "tsx --test --test-concurrency=1 test/classify.test.ts test/verify.test.ts test/check.test.ts test/watch.test.ts test/watch-callback.test.ts test/watch-store-migrate.test.ts test/watch-hint.test.ts test/server.test.ts test/mcp-client.test.ts test/mcp-stdio.test.ts test/config.test.ts test/public-url.test.ts test/bazaar.test.ts test/live-402.test.ts test/catalog-payload.test.ts test/discovery.test.ts test/ebay.test.ts test/confirm.test.ts test/listing-published.test.ts test/listing-published-bench.test.ts test/order-placed.test.ts test/order-placed-bench.test.ts test/confirm-payment.test.ts test/paid-call.test.ts test/paid-call-store.test.ts test/receipt.test.ts test/stats.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
