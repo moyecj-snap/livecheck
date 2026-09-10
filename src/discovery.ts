@@ -562,7 +562,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
           operationId: "getConfirmReceipt",
           summary: "Fetch a Confirm receipt by id",
           description:
-            "Free. Returns the stored receipt, canonical payload, and verify metadata. Accepts Confirm ids (cfm_), Sentinel check ids (chk_), watcher ids (wtc_), and watch event ids (evt_). Unsigned when CONFIRM_RECEIPT_PRIVATE_KEY is unset.",
+            "Free. Returns the stored receipt, canonical payload, and verify metadata. Accepts Confirm ids (cfm_), Sentinel check ids (chk_), watcher ids (wtc_), and watch event ids (evt_). Rows persist in receipts.sqlite on the same Fly volume as watchers and survive redeploy. Unsigned when CONFIRM_RECEIPT_PRIVATE_KEY is unset.",
           tags: ["Confirm", "Sentinel"],
           parameters: [
             {

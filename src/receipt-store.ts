@@ -1,4 +1,6 @@
-import type { DatabaseSync } from "node:sqlite";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { EvidenceLevel } from "./types.js";
 
 export type ConfirmReceiptRow = {
@@ -23,11 +25,26 @@ export type ReceiptVerdictCounts = {
   unknown: number;
 };
 
+export type ReceiptStoreStatus =
+  | { kind: "sqlite"; path: string }
+  | { kind: "memory-fallback"; path?: string; reason: string }
+  | { kind: "uninitialized" };
+
+type OpenStore = { ok: true; path: string; db: DatabaseSync };
+type ClosedStore = { ok: false; path?: string; reason: string };
+type StoreState = OpenStore | ClosedStore;
+
 const memory = new Map<string, ConfirmReceiptRow>();
+let state: StoreState | undefined;
 
-let sqliteAccessor: (() => DatabaseSync | undefined) | undefined;
-
-export const CONFIRM_RECEIPTS_SCHEMA = `
+/**
+ * CREATE TABLE only. Indexes that name columns (created_at) must run AFTER
+ * migrate ALTER TABLE — same Fly-volume rule as watchers. Putting CREATE INDEX
+ * in this string blows up an older confirm_receipts shape: CREATE TABLE IF NOT
+ * EXISTS is a no-op, then CREATE INDEX on a missing column throws and init
+ * never reaches migrate.
+ */
+export const CONFIRM_RECEIPTS_TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS confirm_receipts (
   id TEXT PRIMARY KEY,
   intent TEXT NOT NULL,
@@ -43,20 +60,114 @@ CREATE TABLE IF NOT EXISTS confirm_receipts (
   claim_hash TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+`;
+
+/** Indexes that reference columns added in migrate. Run AFTER ALTER TABLE. */
+const INDEXES_AFTER_MIGRATE = `
 CREATE INDEX IF NOT EXISTS idx_confirm_receipts_created ON confirm_receipts(created_at);
 CREATE INDEX IF NOT EXISTS idx_confirm_receipts_intent_created ON confirm_receipts(intent, created_at);
 `;
 
-export function bindReceiptSqlite(accessor: () => DatabaseSync | undefined): void {
-  sqliteAccessor = accessor;
+/** @deprecated Use CONFIRM_RECEIPTS_TABLE_SQL + migrateReceiptStore. Kept for callers that only need CREATE TABLE. */
+export const CONFIRM_RECEIPTS_SCHEMA = CONFIRM_RECEIPTS_TABLE_SQL;
+
+export function defaultReceiptDbPath(): string {
+  const fromEnv = process.env.RECEIPT_DB_PATH?.trim();
+  if (fromEnv) return fromEnv;
+  if (process.env.FLY_APP_NAME?.trim() && existsSync("/data")) {
+    return "/data/receipts.sqlite";
+  }
+  return resolve(process.cwd(), "data/receipts.sqlite");
+}
+
+export function receiptStoreTableColumns(db: DatabaseSync, table: string): Set<string> {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
+  return new Set(rows.map((row) => String(row.name)));
+}
+
+function ensureColumn(db: DatabaseSync, table: string, name: string, ddl: string): void {
+  if (receiptStoreTableColumns(db, table).has(name)) return;
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/duplicate column/i.test(message)) return;
+    throw error;
+  }
+}
+
+/**
+ * Idempotent upgrade. Safe on a fresh DB and on a volume whose confirm_receipts
+ * table is missing later columns (claim_hash, created_at, …).
+ * ALTER columns before any index that names them.
+ */
+export function migrateReceiptStore(db: DatabaseSync): void {
+  db.exec(CONFIRM_RECEIPTS_TABLE_SQL);
+  ensureColumn(db, "confirm_receipts", "intent", "intent TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "confirm_receipts", "verdict", "verdict TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "confirm_receipts", "confidence", "confidence REAL NOT NULL DEFAULT 0");
+  ensureColumn(db, "confirm_receipts", "evidence_level", "evidence_level INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "confirm_receipts", "canonical_json", "canonical_json TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "confirm_receipts", "payload_hash", "payload_hash TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "confirm_receipts", "signature", "signature TEXT");
+  ensureColumn(db, "confirm_receipts", "signer", "signer TEXT");
+  ensureColumn(db, "confirm_receipts", "observed_at", "observed_at TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "confirm_receipts", "url_hash", "url_hash TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "confirm_receipts", "claim_hash", "claim_hash TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "confirm_receipts", "created_at", "created_at TEXT NOT NULL DEFAULT ''");
+  db.exec(INDEXES_AFTER_MIGRATE);
+}
+
+function prepareDatabase(path: string): DatabaseSync {
+  if (path !== ":memory:") {
+    mkdirSync(dirname(path), { recursive: true });
+  }
+  const db = new DatabaseSync(path);
+  if (path !== ":memory:") {
+    db.exec("PRAGMA journal_mode = WAL;");
+    db.exec("PRAGMA synchronous = NORMAL;");
+  }
+  db.exec(CONFIRM_RECEIPTS_TABLE_SQL);
+  migrateReceiptStore(db);
+  return db;
+}
+
+export function initReceiptStore(path = defaultReceiptDbPath()): StoreState {
+  closeReceiptStore();
+  try {
+    const db = prepareDatabase(path);
+    state = { ok: true, path, db };
+    return state;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    state = { ok: false, path, reason };
+    return state;
+  }
+}
+
+export function closeReceiptStore(): void {
+  if (state?.ok) {
+    try {
+      state.db.close();
+    } catch {
+      // ignore close errors in tests / shutdown
+    }
+  }
+  state = undefined;
+}
+
+export function receiptStoreStatus(): ReceiptStoreStatus {
+  if (!state) return { kind: "uninitialized" };
+  if (state.ok) return { kind: "sqlite", path: state.path };
+  return { kind: "memory-fallback", path: state.path, reason: state.reason };
 }
 
 export function clearConfirmReceiptMemory(): void {
   memory.clear();
 }
 
-function db(): DatabaseSync | undefined {
-  return sqliteAccessor?.();
+function sqliteDb(): DatabaseSync | undefined {
+  return state?.ok ? state.db : undefined;
 }
 
 function fromSqlRow(item: {
@@ -95,7 +206,7 @@ function fromSqlRow(item: {
 
 export function rememberConfirmReceipt(row: ConfirmReceiptRow): boolean {
   memory.set(row.id, row);
-  const database = db();
+  const database = sqliteDb();
   if (!database) return true;
   try {
     insertConfirmReceiptRow(database, row);
@@ -135,7 +246,7 @@ export function insertConfirmReceiptRow(database: DatabaseSync, row: ConfirmRece
 export function getConfirmReceipt(id: string): ConfirmReceiptRow | undefined {
   const cached = memory.get(id);
   if (cached) return cached;
-  const database = db();
+  const database = sqliteDb();
   if (!database) return undefined;
   const item = database
     .prepare(
@@ -174,7 +285,7 @@ export function countReceiptsSince(
   sinceIso: string,
   intent = "lead_submit",
 ): { receipts: number; by_verdict: ReceiptVerdictCounts } {
-  const database = db();
+  const database = sqliteDb();
   if (database) {
     try {
       return queryReceiptsSince(database, sinceIso, intent);

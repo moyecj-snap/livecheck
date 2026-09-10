@@ -95,7 +95,7 @@ Detectors:
 - **text_diff** — `params.selector` (recommended), `params.ignore` (regex array), `params.min_change_ratio` (default `0.02`). Hashes text after the ignore-by-default list plus any caller `ignore` patterns. Without a selector, `confidence` is capped at **0.6**. With `baseline_hash` (or `baseline_text`), `fired` is true when the remaining text changed enough.
 - **numeric_threshold** — `params.selector` or `params.jsonpath` (one required), `params.op` (`lt`, `lte`, `gt`, `gte`, `eq`, `change_pct`), `params.value`, optional `params.currency`. Parses `$1,299.00`, `1 299,00 €`, and `149`. `change_pct` needs `params.baseline_value` (or `baseline_value` on the body) or `fired` is `null`.
 
-Successful JSON includes `observation` (status, signals, http_status, http_class, hash, summary), `fired`, `confidence`, `price_usd: 0.02`, and Confirm-style additive `id` + `receipt`. Check ids use prefix **`chk_`** + ULID. `GET /v1/receipt/{id}` resolves both `chk_` and `cfm_`. Same Ed25519 key as Confirm (`CONFIRM_RECEIPT_PRIVATE_KEY`).
+Successful JSON includes `observation` (status, signals, http_status, http_class, hash, summary), `fired`, `confidence`, `price_usd: 0.02`, and Confirm-style additive `id` + `receipt`. Check ids use prefix **`chk_`** + ULID. `GET /v1/receipt/{id}` resolves `chk_`, `cfm_`, `wtc_`, and `evt_` from SQLite (`RECEIPT_DB_PATH`) after restart. Same Ed25519 key as Confirm (`CONFIRM_RECEIPT_PRIVATE_KEY`).
 
 Errors: **400** `invalid_target` / `invalid_condition`; **422** `baseline_unreachable` (unusable `baseline_hash` or the target could not be fetched); unpaid → **402**.
 
@@ -159,7 +159,7 @@ Create semantics:
 - `interval_s` min **300**, default **900**. Max **2880** checks per 30-day term.
 - Baseline is captured synchronously via the existing check/verify fetch path (≤10s). Fetch failure still returns **201** with `baseline.captured=false` (never 422 on watch).
 - Response **201**: `id` prefix `wtc_` + Crockford ULID, `tier: standard`, `owner_token` (`owt_…`, returned once, SHA-256 at rest), `expires_at` (+30d), `checks_remaining`, `interval_s`, `first_check_at`, `baseline`, `price_usd: 2.50`, Confirm-style `receipt`. `GET /v1/receipt/{id}` resolves `wtc_` and `evt_` with the same Ed25519 family as Confirm/check.
-- `GET /v1/watch/{id}`, `GET /v1/watch/{id}/events`, and `DELETE /v1/watch/{id}` are free. Send `X-Livecheck-Owner-Token` (header only). DELETE stops early with **no refund**.
+- `GET /v1/watch/{id}`, `GET /v1/watch/{id}/events`, and `DELETE /v1/watch/{id}` are free. Send `X-Livecheck-Owner-Token` (header only). DELETE stops early with **no refund**. Watcher rows live in `watchers.sqlite`; the signed `wtc_` / `evt_` receipts live in `receipts.sqlite` on the same volume.
 - Duplicate active watcher for the same paying wallet + `target.url` + condition → **409** `duplicate_watch` (includes existing `id`). Soft cap **200** active standard watchers per wallet → **429** `rate_limited`.
 
 The 402 `resource.url` is pinned to `https://livecheck.fly.dev/v1/watch`. Payment description is ASCII-only. `advertisePaymentRequired` does not change `amount` / `asset` / `payTo` / `network` / `scheme` / `extra` / `maxTimeoutSeconds`. `extra` is Verify's USDC domain `{name:"USD Coin", version:"2"}`. Bazaar is slim / verify-shaped like check.
@@ -202,7 +202,7 @@ No Postgres / `DATABASE_URL` on this Fly app. Watchers persist in **SQLite** on 
 | Fly | `/data/watchers.sqlite` (`WATCH_DB_PATH` in `fly.toml`) |
 | Local | `./data/watchers.sqlite` |
 
-Same volume as `paid-calls.sqlite`. State survives machine restarts. If Postgres is added later, dump the `watchers` + `watch_events` tables and point `WATCH_DB_PATH` at a migrator — the row shape is the migration contract.
+Same volume as `paid-calls.sqlite` and `receipts.sqlite`. State survives machine restarts. If Postgres is added later, dump the `watchers` + `watch_events` tables and point `WATCH_DB_PATH` at a migrator — the row shape is the migration contract.
 
 Opening the store runs an idempotent upgrade for Phase 2 volumes: `ALTER TABLE` adds `watchers.consecutive_failures` / `unreachable` / `expiring_emitted` / `detector_state_json` / `chain_balance_atomic` / `chain_spent_atomic` and `watch_events.delivery_attempts` / `next_attempt_at` / `last_error` when missing, `CREATE TABLE IF NOT EXISTS watch_delivery_attempts`, then `CREATE INDEX IF NOT EXISTS idx_watch_events_due` (that index is **not** created until the column exists). Fresh DBs and already-upgraded DBs are no-ops. No index is created on `detector_state_json` or the chain balance columns. **ALTER columns before any index that names them.**
 
@@ -390,7 +390,14 @@ Set `CONFIRM_RECEIPT_PRIVATE_KEY` to an Ed25519 **PKCS#8 PEM** (recommended) or 
 node --input-type=module -e "import { generateKeyPairSync } from 'node:crypto'; process.stdout.write(generateKeyPairSync('ed25519').privateKey.export({ type: 'pkcs8', format: 'pem' }).toString())"
 ```
 
-The signature is Ed25519 over canonical JSON `{id,intent,verdict,confidence,evidence_level,evidence_summary_or_hash,observed_at,url_hash,claim_hash}` (that key order). `evidence_summary_or_hash` is a SHA-256 of signals/verdict (not the raw confirmation id). Receipts persist on the same SQLite volume as paid_calls (`PAID_CALL_DB_PATH`). If the key is unset, Confirm still returns `id` plus an unsigned receipt stub (`hash` + `verify_url`); the paid path does not crash.
+The signature is Ed25519 over canonical JSON `{id,intent,verdict,confidence,evidence_level,evidence_summary_or_hash,observed_at,url_hash,claim_hash}` (that key order). `evidence_summary_or_hash` is a SHA-256 of signals/verdict (not the raw confirmation id). Receipts persist in **SQLite** on the same Fly volume as watchers (`livecheck_data` → `/data`):
+
+| Process | Path |
+| --- | --- |
+| Fly | `/data/receipts.sqlite` (`RECEIPT_DB_PATH` in `fly.toml`) |
+| Local | `./data/receipts.sqlite` |
+
+Table `confirm_receipts` holds every signed (or unsigned-stub) receipt: Confirm `cfm_`, Sentinel check `chk_`, watcher `wtc_`, and watch event `evt_`. Opening the store is idempotent: `CREATE TABLE IF NOT EXISTS`, then `ALTER TABLE` for any missing columns, **then** indexes on `created_at` (ALTER columns before any index that names them). Fresh DBs and already-upgraded DBs are no-ops. `GET /v1/receipt/{id}` reads this file after a Fly redeploy — receipts are not process-memory only. If the key is unset, Confirm still returns `id` plus an unsigned receipt stub (`hash` + `verify_url`); the paid path does not crash. The stub is still written to SQLite so GET resolves after restart.
 
 Verify: `GET /v1/receipt/{id}` and `GET /.well-known/livecheck-keys.json` (`kid` `livecheck-confirm-v1`).
 
@@ -670,10 +677,11 @@ fly ssh console -a livecheck -C "chown node:node /data"
 
 # confirm retention
 fly ssh console -a livecheck -C "ls -l /data/paid-calls.sqlite"
+fly ssh console -a livecheck -C "ls -l /data/receipts.sqlite"
 fly ssh console -a livecheck -C "npm run paid-call:cos"
 ```
 
-No new secrets. `PAID_CALL_DB_PATH` is public/path config (`/data/paid-calls.sqlite` in `fly.toml` `[env]`). Local default is `./data/paid-calls.sqlite`.
+No new secrets. `PAID_CALL_DB_PATH`, `WATCH_DB_PATH`, and `RECEIPT_DB_PATH` are public/path config (`/data/paid-calls.sqlite`, `/data/watchers.sqlite`, `/data/receipts.sqlite` in `fly.toml` `[env]`). Local defaults are `./data/*.sqlite`.
 
 ## How agents find this
 

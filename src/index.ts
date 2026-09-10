@@ -4,6 +4,7 @@ import { DEFAULT_PORT, isLiveSettlement, missingLiveKeyNames, port } from "./con
 import { isEbayAdapterEnabled, logEbayAdapterDisabled } from "./ebay.js";
 import { loadDotEnvIfPresent } from "./env.js";
 import { initPaidCallStore } from "./paid-call-store.js";
+import { initReceiptStore } from "./receipt-store.js";
 import { startWatchScheduler } from "./watch-scheduler.js";
 import { initWatchStore } from "./watch-store.js";
 
@@ -15,6 +16,15 @@ if (store.ok) {
 } else {
   console.warn(
     `paid_call retention: stdout-only (${store.reason}). CoS interim: npm run paid-call:cos -- --from-logs`,
+  );
+}
+
+const receiptStore = initReceiptStore();
+if (receiptStore.ok) {
+  console.log(`receipt persistence: sqlite ${receiptStore.path} (Fly volume /data, survives restarts)`);
+} else {
+  console.warn(
+    `receipt persistence failed (${receiptStore.reason}). GET /v1/receipt/{id} will 404 after this process exits.`,
   );
 }
 

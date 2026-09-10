@@ -166,14 +166,14 @@ describe("GET /v1/receipt round-trip with key", () => {
     );
   });
 
-  it("persists the receipt on the paid-call sqlite volume", async () => {
+  it("persists the receipt on the receipts sqlite volume", async () => {
     const { mkdtempSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
-    const { closePaidCallStore, initPaidCallStore } = await import("../src/paid-call-store.js");
-    const { clearConfirmReceiptMemory, getConfirmReceipt } = await import("../src/receipt-store.js");
+    const { clearConfirmReceiptMemory, closeReceiptStore, getConfirmReceipt, initReceiptStore } =
+      await import("../src/receipt-store.js");
     const dir = mkdtempSync(join(tmpdir(), "livecheck-receipt-"));
-    initPaidCallStore(join(dir, "paid-calls.sqlite"));
+    initReceiptStore(join(dir, "receipts.sqlite"));
     try {
       const res = await fetch(`${origin}/v1/confirm`, {
         method: "POST",
@@ -192,7 +192,7 @@ describe("GET /v1/receipt round-trip with key", () => {
       assert.equal(row.intent, "lead_submit");
       assert.ok(row.signature);
     } finally {
-      closePaidCallStore();
+      closeReceiptStore();
     }
   });
 });
