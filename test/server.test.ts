@@ -80,6 +80,8 @@ describe("HTTP surface", () => {
     assert.match(html, /payment-required/);
     assert.match(html, /Before you scrape a job posting, Shopify or HTML product page, or eBay item/);
     assert.match(html, /\$0\.01 USDC/);
+    assert.match(html, /\/stats\?format=json/);
+    assert.match(html, /https:\/\/livecheck\.fly\.dev\/stats\?format=json/);
   });
 
   it("POST /v1/verify without payment returns HTTP 402 and payment-required", async () => {

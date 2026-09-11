@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicOrigin, publicVerifyUrl, publicWatchChainTopupUrl, publicWatchUrl } from "../src/public-url.js";
+import { originOnly, publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicOrigin, publicVerifyUrl, publicWatchChainTopupUrl, publicWatchUrl } from "../src/public-url.js";
 
 function withoutPublicUrl(fn: () => void) {
   const previous = process.env.LIVECHECK_PUBLIC_URL;
@@ -18,6 +18,13 @@ function withoutPublicUrl(fn: () => void) {
 }
 
 describe("public verify URL", () => {
+  it("strips paid paths so MCP can keep LIVECHECK_URL=/v1/verify", () => {
+    assert.equal(originOnly("https://livecheck.fly.dev/v1/verify"), "https://livecheck.fly.dev");
+    assert.equal(originOnly("https://livecheck.fly.dev/v1/confirm/order"), "https://livecheck.fly.dev");
+    assert.equal(originOnly("http://127.0.0.1:43127/v1/watch"), "http://127.0.0.1:43127");
+    assert.equal(originOnly("https://livecheck.fly.dev"), "https://livecheck.fly.dev");
+  });
+
   it("defaults to local http when unset", () => {
     withoutPublicUrl(() => {
       assert.equal(publicOrigin("http://127.0.0.1:43127/v1/verify"), "http://127.0.0.1:43127");

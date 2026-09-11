@@ -255,6 +255,13 @@ X-Sentinel-Signature: t=<unix>,v1=<hex>
 
 `v1` is **lowercase hex HMAC-SHA256 of the raw body** using `callback.secret`. `t` is the unix time of that delivery attempt and is **not** part of the MAC — receivers should reject stale `t` (for example older than 5 minutes).
 
+Runnable receiver (recipes: check is request/response; watch → this callback): [`examples/sentinel-webhook.ts`](examples/sentinel-webhook.ts).
+
+```bash
+LIVECHECK_WEBHOOK_SECRET=whsec_example npx tsx examples/sentinel-webhook.ts
+# listens on http://127.0.0.1:8788
+```
+
 ```js
 import { createHmac } from "node:crypto";
 
@@ -380,7 +387,7 @@ Unknown intents return HTTP **400** `{ "error": "unsupported_intent" }` after pa
 
 **Payment (one fixed price per resource):** `@x402/hono` prices the *route*, not the JSON `intent`. Unpaid `POST /v1/confirm` 402s with exactly one accept at **$0.10 / 100000 atomic**. Unpaid `POST /v1/confirm/order` 402s with exactly one accept at **$0.25 / 250000 atomic**. Dual/dynamic `accepts[]` on one path made purl report "Payment was not accepted" because facilitator verify failed when settle-time `paymentRequirements` drifted from the first 402. `advertisePaymentRequired` must not change matching fields (`amount`, `asset`, `payTo`, `network`, `scheme`, `extra`, `maxTimeoutSeconds`). `extra` stays Verify's USDC domain `{name, version}`. Route config pins `resource` URL + ASCII description to the public values so that rewrite is a no-op for signing fields. Mock pay (`X-Livecheck-Mock: 1`) still bypasses the gate. Successful JSON still returns `price_usd: 0.25` for `order_placed`.
 
-Free Confirm extras: `GET /v1/receipt/{id}`, `GET /.well-known/livecheck-keys.json`, `GET /stats` (JSON; HTML if `Accept: text/html`). `GET /stats` publishes lead_submit, listing_published, and order_placed rolling counts and explicitly **null** false-confirmed rate (no published bench number on the live route), plus a **Sentinel** section (below). `paid_calls` are confirm-route SQLite rows **with that intent stored** on **this machine's** `livecheck_data` volume (`store.scope=this_machine_volume`). Confirm rows written before the intent column stay in `store.confirm_unscoped_paid_calls` and are **not** counted as `lead_submit`. Two Fly machines with two volumes are not summed — see CoS below. Local honesty benches: `npm run bench:listing-published` and `npm run bench:order-placed` (gate: `false_confirmed = 0`). Sentinel honesty + latency (CI/local, not a 1000-watcher soak): `npm run bench:sentinel` — report at [`docs/sentinel-benches.md`](docs/sentinel-benches.md).
+Free Confirm extras: `GET /v1/receipt/{id}`, `GET /.well-known/livecheck-keys.json`, `GET /stats` (JSON; HTML if `Accept: text/html`). Public landing source of truth is **`GET https://livecheck.fly.dev/stats?format=json`** (same document locally at `/stats?format=json`). The human demo (`GET /`) fetches that JSON; Gil's locked drafts are [`docs/gap7/recipes.md`](docs/gap7/recipes.md) and [`docs/gap7/landing-copy.md`](docs/gap7/landing-copy.md). `GET /stats` publishes lead_submit, listing_published, and order_placed rolling counts and explicitly **null** false-confirmed rate (no published bench number on the live route), plus a **Sentinel** section (below). `paid_calls` are confirm-route SQLite rows **with that intent stored** on **this machine's** `livecheck_data` volume (`store.scope=this_machine_volume`). Confirm rows written before the intent column stay in `store.confirm_unscoped_paid_calls` and are **not** counted as `lead_submit`. Two Fly machines with two volumes are not summed — see CoS below. Local honesty benches: `npm run bench:listing-published` and `npm run bench:order-placed` (gate: `false_confirmed = 0`). Sentinel honesty + latency (CI/local, not a 1000-watcher soak): `npm run bench:sentinel` — report at [`docs/sentinel-benches.md`](docs/sentinel-benches.md).
 
 ### Sentinel on `GET /stats`
 
@@ -447,7 +454,7 @@ curl -s http://127.0.0.1:43127/v1/verify \
   -d '{"url":"http://127.0.0.1:43127/fixtures/closed-to-new-applications"}'
 ```
 
-`npm test` runs fixture-based classifier, HTTP, MCP, discovery, mocked eBay Browse, and Sentinel bench-gate tests. Unit tests never call the live eBay network. `npm run bench:sentinel` writes `docs/sentinel-benches.md` and `bench/sentinel-report.json` (false-positive rates, latency p50/p95 vs `interval_s + 60s` / `2×interval_s`, HMAC recipe, chain Verify). No real $2.50 spends.
+`npm test` runs fixture-based classifier, HTTP, MCP (tool registration + 402-without-payment), discovery, mocked eBay Browse, webhook-sample HMAC, and Sentinel bench-gate tests. Unit tests never call the live eBay network. `npm run bench:sentinel` writes `docs/sentinel-benches.md` and `bench/sentinel-report.json` (false-positive rates, latency p50/p95 vs `interval_s + 60s` / `2×interval_s`, HMAC recipe, chain Verify). No real $2.50 spends.
 
 ## Stripe + Coinbase setup (live settlement)
 
@@ -508,10 +515,66 @@ purl http://127.0.0.1:43127/v1/verify \
 
 ## Cursor MCP (local agent)
 
-A stdio MCP in this repo exposes one tool, `verify_listing(url)`. It POSTs `{ "url": "..." }` to `LIVECHECK_URL` (default `http://127.0.0.1:43127/v1/verify`). There is no wallet, no private key, and no x402 spender in the MCP. Cursor MCP stdio still does not pay. `verify_listing` reports HTTP 402 and the decoded `payment-required` fields. Paying is x402 — Stripe `purl` or an agent wallet that can settle USDC on Base. The MCP does not send `X-Livecheck-Mock` (that header is ignored in live settlement mode anyway).
+Stdio MCP (`src/mcp.ts` / `npm run mcp`). **No wallet, no private key, no x402 spender.** Cursor stdio still does not pay. If Fly (or local) returns **402**, the tool result is structured: `paid: false`, `http: 402`, plus decoded `payment-required` / x402 accept info. That is payment required — not a successful settle.
 
-- Unpaid API → tool result is structured: `paid: false`, `http: 402`, plus the decoded `payment-required` fields (x402 v2). Not a vague throw.
-- HTTP 200 → the verify JSON is returned as-is.
+Paid path only when the caller already has an envelope and supplies it as tool arg `payment_signature` or env `LIVECHECK_PAYMENT_SIGNATURE` (forwarded as `PAYMENT-SIGNATURE` / `X-PAYMENT`). The MCP never sends `X-Livecheck-Mock`.
+
+`LIVECHECK_URL` may stay the existing verify URL (`http://127.0.0.1:43127/v1/verify` or `https://livecheck.fly.dev/v1/verify`) — the client strips `/v1/verify` so check / confirm / watch hit the same origin. There is no remote MCP transport in this repo; Cursor uses stdio.
+
+### Tool names + input shapes (Gil recipes)
+
+Canonical paid tools:
+
+| Tool | Fly route | Price | Input |
+| --- | --- | --- | --- |
+| **`verify`** | `POST /v1/verify` | $0.01 | `{ url, payment_signature? }` |
+| **`check`** | `POST /v1/check` | $0.02 | `{ target, condition, baseline_hash?, baseline_text?, baseline_value?, payment_signature? }` |
+| **`confirm`** | `POST /v1/confirm` or `POST /v1/confirm/order` | $0.10 / $0.25 | `{ url, intent, claim?, payment_signature? }` |
+| **`watch`** | `POST /v1/watch` | $2.50 | `{ target, condition, callback, interval_s?, label?, context?, on_change?, chain_budget_usd?, payment_signature? }` |
+
+`intent=lead_submit` / `listing_published` → `/v1/confirm` ($0.10). `intent=order_placed` → `/v1/confirm/order` ($0.25). One price per route.
+
+Compatibility (keep existing Cursor plugin / `mcp.json` working):
+
+- **`verify_listing`** — same as `verify` (`{ url, payment_signature? }`)
+
+Owner-token follow-ups (token returned once on `watch` create; send as `X-Livecheck-Owner-Token`):
+
+| Tool | Fly route | Auth |
+| --- | --- | --- |
+| **`watch_get`** | `GET /v1/watch/{id}` | `{ id, owner_token }` (free) |
+| **`watch_events`** | `GET /v1/watch/{id}/events` | `{ id, owner_token, limit?, cursor? }` (free) |
+| **`watch_stop`** | `DELETE /v1/watch/{id}` | `{ id, owner_token }` (free, no refund) |
+| **`watch_chain_topup`** | `POST /v1/watch/{id}/chain/topup` | `{ id, owner_token, payment_signature? }` ($0.50; unpaid → 402) |
+
+Shapes:
+
+```json
+// verify / verify_listing
+{ "url": "https://boards.greenhouse.io/example/jobs/1842" }
+
+// check
+{
+  "target": { "type": "url", "url": "https://boards.greenhouse.io/example/jobs/1842", "render": "never", "selector": null },
+  "condition": { "detector": "status_change", "params": {} },
+  "baseline_hash": null
+}
+
+// confirm
+{ "url": "https://example.com/thank-you", "intent": "lead_submit", "claim": {} }
+
+// watch
+{
+  "target": { "type": "url", "url": "https://boards.greenhouse.io/example/jobs/1842", "render": "never", "selector": null },
+  "condition": { "detector": "status_change", "params": {} },
+  "callback": { "url": "https://example.com/hooks/livecheck", "secret": "whsec_example", "deliver": "on_change" },
+  "interval_s": 900
+}
+```
+
+`target.render` is HTML-only (`never`). Detectors: `status_change`, `keyword`, `text_diff`, `numeric_threshold`. Watch HMAC receiver: [`examples/sentinel-webhook.ts`](examples/sentinel-webhook.ts). Landing stats: `GET https://livecheck.fly.dev/stats?format=json`.
+
+Unpaid tool result: `{ "paid": false, "http": 402, ...decoded payment-required }`. HTTP 200/201 returns the Fly JSON as-is.
 
 Keep the HTTP server running (`npm start`), then point Cursor at the MCP.
 
@@ -560,9 +623,9 @@ cp examples/cursor-mcp.json ~/.cursor/mcp.json
 }
 ```
 
-3. Reload Cursor (or toggle the server under Customize → MCP). Ask the agent to `verify_listing` a job URL. An unpaid call should come back as HTTP 402 with `paid: false` and the Base USDC requirements. A request that the HTTP server has already settled returns the live/closed/unknown verdict.
+3. Reload Cursor (or toggle the server under Customize → MCP). Ask the agent to `verify` (or `verify_listing`) a job URL, or `check` / `confirm` / `watch`. An unpaid call should come back as HTTP 402 with `paid: false` and the Base USDC requirements for that route. A request that the HTTP server has already settled returns the Fly JSON as-is.
 
-Do not put Stripe or CDP secrets in `mcp.json`. Those stay in the HTTP server’s local `.env`. The MCP only needs `LIVECHECK_URL`.
+Do not put Stripe or CDP secrets in `mcp.json`. Those stay in the HTTP server’s local `.env`. The MCP only needs `LIVECHECK_URL` (optional `LIVECHECK_PAYMENT_SIGNATURE` if a paying host already has an envelope).
 
 ### Cursor plugin (Marketplace later)
 
@@ -571,7 +634,7 @@ Packaging for a later Cursor Marketplace submit lives in this repo:
 - `.cursor-plugin/plugin.json` — plugin name, author, honest description
 - `mcp.json` (repo root; also copied under `.cursor-plugin/`) — stdio MCP pointed at `LIVECHECK_URL=https://livecheck.fly.dev/v1/verify`
 
-No secrets in those files. The plugin does not pay. `verify_listing` against production still reports 402 until a wallet or `purl` settles.
+Existing `LIVECHECK_URL=…/v1/verify` stays valid. The client derives the origin for check / confirm / watch. No secrets in those files. The plugin does not pay. `verify` / `check` / `confirm` / `watch` against production still report 402 until a wallet or `purl` settles.
 
 Cursor Marketplace is human distribution. It requires a **public GitHub repository** at submit time. Origin remains the source of truth. Do not create a GitHub repo from this session. When you want Marketplace, publish a public GitHub copy yourself and submit it.
 
@@ -724,7 +787,7 @@ No new secrets. `PAID_CALL_DB_PATH`, `WATCH_DB_PATH`, and `RECEIPT_DB_PATH` are 
 ## How agents find this
 
 - **Wallet-agents:** [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) / Agentic.market. They search a free catalog of paid APIs, then pay $0.01 USDC on Base to `POST /v1/verify`.
-- **Humans in Cursor:** Cursor Marketplace (later). Needs a public GitHub repository for submit. Do not create one here. Until then, point Cursor at the stdio MCP in this repo. The MCP reports 402; paying is x402.
+- **Humans in Cursor:** Cursor Marketplace (later). Needs a public GitHub repository for submit. Do not create one here. Until then, point Cursor at the stdio MCP in this repo (`verify`, `check`, `confirm`, `watch`; `verify_listing` remains). The MCP reports 402; paying is x402.
 
 ## Honest limits
 

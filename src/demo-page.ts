@@ -154,9 +154,17 @@ curl -s ${origin}/v1/verify -H 'content-type: application/json' \\
   -d '{"url":"${origin}/fixtures/closed-to-new-applications"}'`
 }</pre>
 
+    <h2>Live stats</h2>
+    <p class="muted">
+      Source of truth: <code>GET /stats?format=json</code>
+      (<a href="https://livecheck.fly.dev/stats?format=json">https://livecheck.fly.dev/stats?format=json</a>).
+      Gil owns landing copy — this strip only fetches that JSON.
+    </p>
+    <pre id="stats">Loading /stats?format=json…</pre>
+
     <footer>
       Not a search engine. Not an aggregator copy. HTML + status only — no page JS in v1.
-      Paid route is <code>POST /v1/verify</code>. Free: <code>GET /</code> and <code>GET /health</code>.
+      Paid route is <code>POST /v1/verify</code>. Free: <code>GET /</code>, <code>GET /health</code>, and <code>GET /stats?format=json</code>.
       Mock header <code>${MOCK_PAYMENT_HEADER}</code> is ignored when live keys are set.
     </footer>
   </main>
@@ -192,6 +200,14 @@ curl -s ${origin}/v1/verify -H 'content-type: application/json' \\
     document.getElementById("hit-live")?.addEventListener("click", () => {
       postVerify(location.origin + "/fixtures/live-apply-now", { "X-Livecheck-Mock": "1" });
     });
+    const statsEl = document.getElementById("stats");
+    fetch("/stats?format=json")
+      .then(async (res) => {
+        const raw = await res.text();
+        try { return JSON.stringify(JSON.parse(raw), null, 2); } catch { return raw; }
+      })
+      .then((text) => { if (statsEl) statsEl.textContent = text; })
+      .catch((err) => { if (statsEl) statsEl.textContent = "Could not load /stats?format=json: " + err; });
   </script>
 </body>
 </html>`;

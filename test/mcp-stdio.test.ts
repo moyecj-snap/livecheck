@@ -2,6 +2,13 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
+import {
+  MCP_COMPAT_TOOLS,
+  MCP_PAID_TOOLS,
+  MCP_TOOL_NAMES,
+  MCP_WATCH_FOLLOWUP_TOOLS,
+  MCP_WATCH_PAID_FOLLOWUP_TOOLS,
+} from "../src/mcp-server.js";
 
 function send(child: ReturnType<typeof spawn>, message: unknown): void {
   child.stdin!.write(`${JSON.stringify(message)}\n`);
@@ -40,7 +47,17 @@ async function readJsonLine(
 }
 
 describe("livecheck MCP stdio", () => {
-  it("advertises verify_listing over stdio", async () => {
+  it("exports the Gap 7 tool catalog (compat + paid + watch follow-ups)", () => {
+    assert.deepEqual([...MCP_PAID_TOOLS], ["verify", "check", "confirm", "watch"]);
+    assert.deepEqual([...MCP_COMPAT_TOOLS], ["verify_listing"]);
+    assert.deepEqual([...MCP_WATCH_FOLLOWUP_TOOLS], ["watch_get", "watch_events", "watch_stop"]);
+    assert.deepEqual([...MCP_WATCH_PAID_FOLLOWUP_TOOLS], ["watch_chain_topup"]);
+    for (const name of MCP_TOOL_NAMES) {
+      assert.equal(MCP_TOOL_NAMES.filter((item) => item === name).length, 1);
+    }
+  });
+
+  it("advertises verify_listing plus verify/check/confirm/watch over stdio", async () => {
     const child = spawn(resolve("node_modules/.bin/tsx"), [resolve("src/mcp.ts")], {
       cwd: resolve("."),
       env: { ...process.env, LIVECHECK_URL: "http://127.0.0.1:43127/v1/verify" },
@@ -67,7 +84,10 @@ describe("livecheck MCP stdio", () => {
       const listed = await readJsonLine(child);
       assert.equal(listed.id, 2);
       const tools = (listed.result as { tools?: Array<{ name: string }> })?.tools ?? [];
-      assert.ok(tools.some((tool) => tool.name === "verify_listing"));
+      const names = tools.map((tool) => tool.name);
+      for (const name of MCP_TOOL_NAMES) {
+        assert.ok(names.includes(name), `missing MCP tool ${name}`);
+      }
     } finally {
       child.kill("SIGTERM");
     }

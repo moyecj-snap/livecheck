@@ -4,7 +4,8 @@ function stripTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
-function originOnly(value: string): string {
+/** Strip a paid Livecheck path so MCP can keep LIVECHECK_URL=/v1/verify. */
+export function originOnly(value: string): string {
   return stripTrailingSlash(value).replace(
     /\/v1\/(verify|check|watch(\/[^/]+\/chain\/topup)?|confirm(\/order)?)$/i,
     "",

@@ -1,7 +1,7 @@
 {
   "name": "livecheck",
   "version": "0.1.0",
-  "description": "Agents waste tokens and context fetching job, Shopify/HTML product, and eBay pages that are already closed, sold out, or 404, then hand the user a dead link. Livecheck checks the primary source first: job listings, HTML product stock (Shopify-class), and eBay item availability. It returns live, closed, or unknown plus signals. Not a search engine. Payment is x402: $0.01 USDC on Base via Stripe. The Cursor MCP surfaces the HTTP 402; a wallet agent completes payment.",
+  "description": "Agents waste tokens and context fetching job, Shopify/HTML product, and eBay pages that are already closed, sold out, or 404, then hand the user a dead link. Livecheck checks the primary source first: job listings, HTML product stock (Shopify-class), and eBay item availability. Stdio MCP tools: verify ($0.01), check ($0.02), confirm ($0.10 / $0.25 on /confirm/order), watch ($2.50). Not a search engine. Payment is x402 USDC on Base via Stripe. The Cursor MCP has no wallet; unpaid calls surface HTTP 402; a wallet agent completes payment.",
   "author": {
     "name": "Craig Moye"
   },

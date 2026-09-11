@@ -205,6 +205,16 @@ describe("GET /stats", () => {
     assert.match(body.sentinel?.benches?.note ?? "", /not a 1000-watcher/i);
   });
 
+  it("GET /stats?format=json is the public landing source of truth", async () => {
+    const res = await fetch(`${origin}/stats?format=json`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") ?? "", /application\/json/);
+    const body = (await res.json()) as { ok?: boolean; service?: string; sentinel?: { payable?: boolean } };
+    assert.equal(body.ok, true);
+    assert.equal(body.service, "livecheck");
+    assert.equal(body.sentinel?.payable, true);
+  });
+
   it("returns HTML Sentinel section when Accept: text/html", async () => {
     const res = await fetch(`${origin}/stats`, { headers: { accept: "text/html" } });
     assert.equal(res.status, 200);
