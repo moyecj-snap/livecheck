@@ -3,7 +3,7 @@ import { after, before, describe, it } from "node:test";
 import { serve } from "@hono/node-server";
 import { createApp } from "../src/app.js";
 import { WATCH_PRICE_USD } from "../src/config.js";
-import { VERIFY_EXAMPLE } from "../src/bazaar.js";
+import { VERIFY_EXAMPLE, VERIFY_PAID_EXAMPLE } from "../src/bazaar.js";
 import { openApiDocument } from "../src/discovery.js";
 import { decodePaymentRequired } from "../src/x402-payload.js";
 import { watchHint } from "../src/watch-hint.js";
@@ -66,7 +66,7 @@ describe("paid Verify / Confirm watch hints", () => {
     closeWatchStore();
   });
 
-  it("mock-paid POST /v1/verify 200 includes watch", async () => {
+  it("mock-paid POST /v1/verify 200 includes the same watch hint as Confirm", async () => {
     const res = await fetch(`${origin}/v1/verify`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
@@ -76,6 +76,18 @@ describe("paid Verify / Confirm watch hints", () => {
     const body = (await res.json()) as { status: string; watch?: WatchField };
     assert.equal(body.status, "live");
     assertPaidWatchHint(body);
+    const confirm = await fetch(`${origin}/v1/confirm`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
+      body: JSON.stringify({
+        url: `${origin}/fixtures/confirm/thank-you-id`,
+        intent: "lead_submit",
+      }),
+    });
+    assert.equal(confirm.status, 200);
+    const confirmBody = (await confirm.json()) as { watch?: WatchField };
+    assert.deepEqual(body.watch, confirmBody.watch);
+    assert.deepEqual(body.watch, VERIFY_PAID_EXAMPLE.watch);
   });
 
   it("mock-paid POST /v1/confirm 200 includes watch", async () => {
@@ -177,7 +189,16 @@ describe("OpenAPI + bazaar discovery stay 402-clean", () => {
             responses?: {
               "200"?: {
                 description?: string;
-                content?: { "application/json"?: { schema?: { properties?: { watch?: { properties?: { suggest?: { enum?: string[] } } } } } } };
+                content?: {
+                  "application/json"?: {
+                    example?: { watch?: WatchField };
+                    schema?: {
+                      properties?: {
+                        watch?: { properties?: { suggest?: { enum?: string[] }; detector?: { enum?: string[] } } };
+                      };
+                    };
+                  };
+                };
               };
             };
           };
@@ -187,8 +208,18 @@ describe("OpenAPI + bazaar discovery stay 402-clean", () => {
     for (const path of ["/v1/verify", "/v1/confirm", "/v1/confirm/order"]) {
       const schema = doc.paths?.[path]?.post?.responses?.["200"]?.content?.["application/json"]?.schema;
       assert.deepEqual(schema?.properties?.watch?.properties?.suggest?.enum, ["/v1/watch"], path);
+      assert.deepEqual(schema?.properties?.watch?.properties?.detector?.enum, ["status_change"], path);
       assert.match(doc.paths?.[path]?.post?.responses?.["200"]?.description ?? "", /watch suggest/);
     }
+    const verify200 = doc.paths?.["/v1/verify"]?.post?.responses?.["200"]?.content?.["application/json"] as
+      | { example?: { watch?: WatchField } }
+      | undefined;
+    assert.deepEqual(verify200?.example?.watch, {
+      suggest: "/v1/watch",
+      detector: "status_change",
+      price_usd: 2.5,
+    });
+    assert.match(doc.paths?.["/v1/verify"]?.post?.responses?.["200"]?.description ?? "", /Unpaid 402 has no watch/);
     const checkWatch = (
       doc.paths?.["/v1/check"]?.post?.responses?.["200"]?.content?.["application/json"]?.schema as
         | { properties?: { watch?: unknown } }
@@ -199,5 +230,6 @@ describe("OpenAPI + bazaar discovery stay 402-clean", () => {
 
   it("bazaar verify example used on 402 does not include watch", () => {
     assert.equal("watch" in VERIFY_EXAMPLE, false);
+    assert.equal("watch" in VERIFY_PAID_EXAMPLE, true);
   });
 });

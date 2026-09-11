@@ -13,7 +13,7 @@ import {
   PRICE_USD,
   VERIFY_DESCRIPTION,
 } from "../src/config.js";
-import { PAID_DISCOVERY_ROUTES } from "../src/discovery.js";
+import { PAID_DISCOVERY_ROUTES, WELL_KNOWN_X402_ROUTES } from "../src/discovery.js";
 import { livePaymentMiddlewareFromServer, resourceServerFromFacilitator } from "../src/payments.js";
 
 function stubFacilitator(): FacilitatorClient {
@@ -174,6 +174,12 @@ describe("discovery documents (mock gate)", () => {
     assert.deepEqual(order.requestBody?.content?.["application/json"]?.schema?.properties?.intent?.enum, [
       "order_placed",
     ]);
+    assert.equal(
+      WELL_KNOWN_X402_ROUTES.some((r) => r.path.includes("{id}")),
+      false,
+      "well-known routes must be concrete",
+    );
+    assert.ok(PAID_DISCOVERY_ROUTES.some((r) => r.path === "/v1/watch/{id}/chain/topup"));
     const paid = PAID_DISCOVERY_ROUTES;
     const paths = doc.paths as Record<
       string,
@@ -199,7 +205,7 @@ describe("discovery documents (mock gate)", () => {
     assert.ok(stats?.get?.tags?.includes("Sentinel"));
   });
 
-  it("GET /.well-known/x402 is free 200 JSON listing the verify URL", async () => {
+  it("GET /.well-known/x402 is free 200 JSON listing concrete paid URLs only", async () => {
     const res = await fetch(`${origin}/.well-known/x402`);
     assertJsonDiscovery(res, ".well-known/x402");
     const body = (await res.json()) as { version?: number; resources?: unknown };
@@ -208,12 +214,27 @@ describe("discovery documents (mock gate)", () => {
       "https://livecheck.fly.dev/v1/verify",
       "https://livecheck.fly.dev/v1/check",
       "https://livecheck.fly.dev/v1/watch",
-      "https://livecheck.fly.dev/v1/watch/{id}/chain/topup",
       "https://livecheck.fly.dev/v1/confirm",
       "https://livecheck.fly.dev/v1/confirm/order",
     ]);
     assert.ok(Array.isArray(body.resources));
     assert.equal(typeof body.resources[0], "string");
+    assert.deepEqual(
+      WELL_KNOWN_X402_ROUTES.map((r) => r.path),
+      ["/v1/verify", "/v1/check", "/v1/watch", "/v1/confirm", "/v1/confirm/order"],
+    );
+    for (const url of body.resources as string[]) {
+      assert.equal(url.includes("{"), false, `crawler resource must not be templated: ${url}`);
+      assert.equal(
+        url.includes("/v1/watch/") && url.includes("/chain/topup"),
+        false,
+        `well-known must not list path-param topup: ${url}`,
+      );
+    }
+    assert.equal(
+      (body.resources as string[]).includes("https://livecheck.fly.dev/v1/watch/{id}/chain/topup"),
+      false,
+    );
   });
 
   it("empty POST /v1/verify still reaches a parseable 402 (not 400)", async () => {

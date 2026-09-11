@@ -1,4 +1,4 @@
-import { CHAIN_TOPUP_OUTPUT_SCHEMA, CHECK_OUTPUT_SCHEMA, CONFIRM_OUTPUT_SCHEMA, VERIFY_OUTPUT_SCHEMA, WATCH_OUTPUT_SCHEMA } from "./bazaar.js";
+import { CHAIN_TOPUP_OUTPUT_SCHEMA, CHECK_OUTPUT_SCHEMA, CONFIRM_OUTPUT_SCHEMA, VERIFY_OUTPUT_SCHEMA, VERIFY_PAID_EXAMPLE, WATCH_OUTPUT_SCHEMA } from "./bazaar.js";
 import {
   OPENAPI_CHAIN_TOPUP_DESCRIPTION,
   OPENAPI_CHAIN_TOPUP_SUMMARY,
@@ -16,7 +16,7 @@ import {
   OPENAPI_WATCH_SUMMARY,
   VERIFY_DESCRIPTION,
 } from "./config.js";
-import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicOrigin, publicVerifyUrl, publicWatchChainTopupUrl, publicWatchUrl } from "./public-url.js";
+import { publicOrigin } from "./public-url.js";
 
 const OPENAPI_VERSION = "1.0.0";
 const OPENAPI_PRICE_AMOUNT = "0.01";
@@ -26,7 +26,20 @@ const OPENAPI_CHECK_PRICE_AMOUNT = "0.02";
 const OPENAPI_WATCH_PRICE_AMOUNT = "2.50";
 const OPENAPI_CHAIN_TOPUP_PRICE_AMOUNT = "0.50";
 
-/** Paid routes advertised on OpenAPI + /.well-known/x402. One fixed price each. */
+/**
+ * Concrete paid URLs listed on GET /.well-known/x402.
+ * Crawlers (x402scan, AgentCash) hit these strings literally — no `{id}` templates.
+ * Path-param chain topup stays on OpenAPI only (PAID_DISCOVERY_ROUTES).
+ */
+export const WELL_KNOWN_X402_ROUTES = [
+  { path: "/v1/verify", amount: OPENAPI_PRICE_AMOUNT },
+  { path: "/v1/check", amount: OPENAPI_CHECK_PRICE_AMOUNT },
+  { path: "/v1/watch", amount: OPENAPI_WATCH_PRICE_AMOUNT },
+  { path: "/v1/confirm", amount: OPENAPI_CONFIRM_PRICE_AMOUNT },
+  { path: "/v1/confirm/order", amount: OPENAPI_ORDER_PLACED_PRICE_AMOUNT },
+] as const;
+
+/** Paid routes documented on OpenAPI. One fixed price each. Includes path-param topup. */
 export const PAID_DISCOVERY_ROUTES = [
   { path: "/v1/verify", amount: OPENAPI_PRICE_AMOUNT },
   { path: "/v1/check", amount: OPENAPI_CHECK_PRICE_AMOUNT },
@@ -92,10 +105,11 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
           responses: {
             "200": {
               description:
-                "Primary-source live, closed, or unknown verdict. Paid 200 includes watch suggest for POST /v1/watch.",
+                "Primary-source live, closed, or unknown verdict. Paid 200 includes watch suggest for POST /v1/watch (detector status_change, $2.50). Unpaid 402 has no watch field.",
               content: {
                 "application/json": {
                   schema: VERIFY_OUTPUT_SCHEMA,
+                  example: VERIFY_PAID_EXAMPLE,
                 },
               },
             },
@@ -632,21 +646,18 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
  * x402scan DISCOVERY.md compatibility fan-out.
  * resources must be absolute URL strings (not objects) — @agentcash/discovery
  * WellKnownDocSchema is z.array(z.string()).
- * Six paid routes, one fixed accept each: verify $0.01, check $0.02, watch $2.50,
- * watch/{id}/chain/topup $0.50, confirm $0.10, confirm/order $0.25.
+ * Five concrete paid URLs, one fixed accept each: verify $0.01, check $0.02,
+ * watch $2.50, confirm $0.10, confirm/order $0.25.
+ * POST /v1/watch/{id}/chain/topup ($0.50) stays on OpenAPI as a path-param
+ * implementation detail — listing a literal `{id}` URL makes crawlers probe
+ * https://…/v1/watch/{id}/chain/topup and get a 402 with an empty body.
  */
 export function wellKnownX402(requestUrl?: string, host?: string): Record<string, unknown> {
+  const origin = publicOrigin(requestUrl, host);
   return {
     version: 1,
     x402Version: 2,
-    resources: [
-      publicVerifyUrl(requestUrl, host),
-      publicCheckUrl(requestUrl, host),
-      publicWatchUrl(requestUrl, host),
-      publicWatchChainTopupUrl(requestUrl, host),
-      publicConfirmUrl(requestUrl, host),
-      publicConfirmOrderUrl(requestUrl, host),
-    ],
+    resources: WELL_KNOWN_X402_ROUTES.map((route) => `${origin}${route.path}`),
   };
 }
 

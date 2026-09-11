@@ -37,6 +37,16 @@ export const VERIFY_EXAMPLE = {
   price_usd: PRICE_USD,
 } as const;
 
+/** Paid 200 shape for OpenAPI. Bazaar 402 example stays VERIFY_EXAMPLE (no watch). */
+export const VERIFY_PAID_EXAMPLE = {
+  ...VERIFY_EXAMPLE,
+  watch: {
+    suggest: WATCH_HINT_SUGGEST,
+    detector: WATCH_HINT_DETECTOR,
+    price_usd: WATCH_PRICE_USD,
+  },
+} as const;
+
 export const VERIFY_OUTPUT_SCHEMA = {
   type: "object",
   properties: {

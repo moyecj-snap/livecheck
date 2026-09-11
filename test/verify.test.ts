@@ -62,6 +62,34 @@ describe("verifyUrl against local fixtures", () => {
     assert.ok(verdict.signals.includes("challenge_page"));
   });
 
+  it("mock-paid HTTP 200 includes Confirm-style watch hint; unpaid 402 does not", async () => {
+    const unpaid = await fetch(`${origin}/v1/verify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: `${origin}/fixtures/live-apply-now` }),
+    });
+    assert.equal(unpaid.status, 402);
+    const unpaidBody = (await unpaid.json()) as Record<string, unknown>;
+    assert.equal("watch" in unpaidBody, false);
+
+    const paid = await fetch(`${origin}/v1/verify`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
+      body: JSON.stringify({ url: `${origin}/fixtures/live-apply-now` }),
+    });
+    assert.equal(paid.status, 200);
+    const paidBody = (await paid.json()) as {
+      status: string;
+      watch?: { suggest?: string; detector?: string; price_usd?: number };
+    };
+    assert.equal(paidBody.status, "live");
+    assert.deepEqual(paidBody.watch, {
+      suggest: "/v1/watch",
+      detector: "status_change",
+      price_usd: 2.5,
+    });
+  });
+
   it("classifies Shopify in-stock as live and sold-out as closed", async () => {
     const live = await verifyUrl(`${origin}/fixtures/products/ridge-wallet`);
     const sold = await verifyUrl(`${origin}/fixtures/products/groove-ring`);
