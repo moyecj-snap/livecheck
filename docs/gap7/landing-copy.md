@@ -1,6 +1,6 @@
 # Gap #7 — Landing page copy (DRAFT) + live `/stats` wire-up
 **Fri 11 Sep 2026 · Gil** · for Patty to land on `GET /` or `/trust`  
-**MCP branch:** `cursor/sentinel-gap7-mcp-expansion` @ tip · tools verify/check/confirm/watch · webhook `examples/sentinel-webhook.ts` · stats `?format=json`  
+**MCP branch:** `cursor/sentinel-gap7-mcp-expansion` @ `8fe7c35` · tools verify/check/confirm/watch · webhook `examples/sentinel-webhook.ts` · stats `?format=json`  
 **Data:** client-fetch `GET https://livecheck.fly.dev/stats` every 60s (or SSR on request)
 
 ---

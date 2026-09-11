@@ -1,6 +1,6 @@
 # Gap #7 — 3 copy-paste recipes (LOCKED to MCP)
 **Fri 11 Sep 2026 · Gil**  
-**MCP:** branch `cursor/sentinel-gap7-mcp-expansion` · SHA `0e3ffb9` (update to tip after rebase)  
+**MCP:** branch `cursor/sentinel-gap7-mcp-expansion` · SHA `8fe7c35`  
 **Tools:** `verify` · `check` · `confirm` · `watch` (+ `watch_get` / `watch_events` / `watch_stop` free; `watch_chain_topup` $0.50)  
 **Compat:** `verify_listing` = `verify`  
 **Unpaid:** `{ paid:false, http:402, … }` — no wallet in MCP  
@@ -98,7 +98,7 @@ npx skills add moyecj-snap/livecheck
 ## Install blurb (docs / Wave 1)
 ```
 npx skills add moyecj-snap/livecheck
-# MCP: branch cursor/sentinel-gap7-mcp-expansion @ <tip SHA>
+# MCP: branch cursor/sentinel-gap7-mcp-expansion @ 8fe7c35
 # Tools: verify | check | confirm | watch
 # Webhook: examples/sentinel-webhook.ts
 # Stats: https://livecheck.fly.dev/stats?format=json
