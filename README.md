@@ -380,7 +380,7 @@ Unknown intents return HTTP **400** `{ "error": "unsupported_intent" }` after pa
 
 **Payment (one fixed price per resource):** `@x402/hono` prices the *route*, not the JSON `intent`. Unpaid `POST /v1/confirm` 402s with exactly one accept at **$0.10 / 100000 atomic**. Unpaid `POST /v1/confirm/order` 402s with exactly one accept at **$0.25 / 250000 atomic**. Dual/dynamic `accepts[]` on one path made purl report "Payment was not accepted" because facilitator verify failed when settle-time `paymentRequirements` drifted from the first 402. `advertisePaymentRequired` must not change matching fields (`amount`, `asset`, `payTo`, `network`, `scheme`, `extra`, `maxTimeoutSeconds`). `extra` stays Verify's USDC domain `{name, version}`. Route config pins `resource` URL + ASCII description to the public values so that rewrite is a no-op for signing fields. Mock pay (`X-Livecheck-Mock: 1`) still bypasses the gate. Successful JSON still returns `price_usd: 0.25` for `order_placed`.
 
-Free Confirm extras: `GET /v1/receipt/{id}`, `GET /.well-known/livecheck-keys.json`, `GET /stats` (JSON; HTML if `Accept: text/html`). `GET /stats` publishes lead_submit, listing_published, and order_placed rolling counts and explicitly **null** false-confirmed rate (no published bench number on the live route), plus a **Sentinel** section (below). Local honesty benches: `npm run bench:listing-published` and `npm run bench:order-placed` (gate: `false_confirmed = 0`). Sentinel honesty + latency (CI/local, not a 1000-watcher soak): `npm run bench:sentinel` — report at [`docs/sentinel-benches.md`](docs/sentinel-benches.md).
+Free Confirm extras: `GET /v1/receipt/{id}`, `GET /.well-known/livecheck-keys.json`, `GET /stats` (JSON; HTML if `Accept: text/html`). `GET /stats` publishes lead_submit, listing_published, and order_placed rolling counts and explicitly **null** false-confirmed rate (no published bench number on the live route), plus a **Sentinel** section (below). `paid_calls` are confirm-route SQLite rows **with that intent stored** on **this machine's** `livecheck_data` volume (`store.scope=this_machine_volume`). Confirm rows written before the intent column stay in `store.confirm_unscoped_paid_calls` and are **not** counted as `lead_submit`. Two Fly machines with two volumes are not summed — see CoS below. Local honesty benches: `npm run bench:listing-published` and `npm run bench:order-placed` (gate: `false_confirmed = 0`). Sentinel honesty + latency (CI/local, not a 1000-watcher soak): `npm run bench:sentinel` — report at [`docs/sentinel-benches.md`](docs/sentinel-benches.md).
 
 ### Sentinel on `GET /stats`
 
@@ -405,7 +405,9 @@ Set `CONFIRM_RECEIPT_PRIVATE_KEY` to an Ed25519 **PKCS#8 PEM** (recommended) or 
 node --input-type=module -e "import { generateKeyPairSync } from 'node:crypto'; process.stdout.write(generateKeyPairSync('ed25519').privateKey.export({ type: 'pkcs8', format: 'pem' }).toString())"
 ```
 
-The signature is Ed25519 over canonical JSON `{id,intent,verdict,confidence,evidence_level,evidence_summary_or_hash,observed_at,url_hash,claim_hash}` (that key order). `evidence_summary_or_hash` is a SHA-256 of signals/verdict (not the raw confirmation id). Receipts persist in **SQLite** on the same Fly volume as watchers (`livecheck_data` → `/data`):
+The signature is Ed25519 over canonical JSON `{id,intent,verdict,confidence,evidence_level,evidence_summary_or_hash,observed_at,url_hash,claim_hash}` (that key order). `evidence_summary_or_hash` is a SHA-256 of signals/verdict (not the raw confirmation id). Receipts persist in **SQLite** on the same Fly volume as watchers (`livecheck_data` → `/data`). Live settlement (`@x402/hono`) runs the handler first and settles only when the handler status is below 400. If `receipts.sqlite` does not persist the row, live Confirm returns **503** `receipt_persist_failed` so the facilitator does **not** settle — no orphan `paid_call` without a durable receipt. Mock/dev still 200s from process memory. Historical Confirm settles from before `26c702e` (receipts were process-memory only) cannot be reconstructed into signed rows; see `npm run receipt:backfill`.
+
+Receipts persist at:
 
 | Process | Path |
 | --- | --- |
@@ -655,18 +657,27 @@ Confirm lines add `intent` (`lead_submit`, `listing_published`, or `order_placed
 
 Retained columns (SQLite `paid_calls` at `PAID_CALL_DB_PATH`, default `/data/paid-calls.sqlite` on Fly): `ts`, `route` (`verify` | `confirm`), `payer`, `tx`, `payment_intent`, `host`, `url_sha256` (same digest as log `url_hash`).
 
-CoS pull — L7d / L30d **row counts only** (calls = rows; unique_payers = distinct non-null wallet). No other KPIs:
+CoS pull — L7d / L30d **row counts only** (calls = rows; unique_payers = distinct non-null wallet). No other KPIs. Confirm rows now also print **intent-scoped** counts (`lead_submit` / `listing_published` / `order_placed` / `unscoped`).
+
+**Dual-volume:** production has two machines, each with its own `livecheck_data`. `GET /stats` and a single `fly ssh` are **one volume**. The honesty page 3 paid_calls / 0 receipts was observed on one machine; the other can show 0/0 plus the watcher. Pull both. Do not add the two reports into a new KPI.
 
 ```bash
 # local (after paid mock/live calls have written ./data/paid-calls.sqlite)
 npm run paid-call:cos
 
-# production, from the machine that holds the volume
-fly ssh console -a livecheck -C "npm run paid-call:cos"
+# which machines / how to ssh each volume
+npm run paid-call:cos -- --machines-help
+
+# production — list ids, then one pull per machine
+fly machines list -a livecheck
+fly ssh console -a livecheck --machine <id> -C "npm run paid-call:cos -- --json"
+fly ssh console -a livecheck --machine <id> -C "npm run receipt:backfill -- --json"
 
 # JSON for agents
 npm run paid-call:cos -- --json
 ```
+
+`npm run receipt:backfill` reports intent-scoped paid_calls vs receipt counts on this volume. With `--from-logs` / `--log-file` it copies `intent` + `verdict` from `livecheck.paid_call` lines onto matching unscoped paid_calls (`ts` + `url_sha256`). It **cannot** reconstruct signed `cfm_` receipts (no id, evidence, or signature). Do not invent stub receipts. If a historical charge has a `payment_intent` on the paid_calls row and the client has no receipt, refund is a **manual Stripe ops** decision — this process does not refund.
 
 Interim if the volume is missing or the file is empty — parse the existing stdout lines (same column shape, same counts):
 
@@ -679,7 +690,7 @@ TODO: after the `livecheck_data` volume is attached and `/data/paid-calls.sqlite
 
 #### Patty — Fly volume (required before first deploy of this mount)
 
-`fly.toml` now has `[[mounts]]` `livecheck_data` → `/data`. `fly deploy` fails until the volume exists. Single machine only (`min_machines_running = 1`); do not scale out without another volume.
+`fly.toml` now has `[[mounts]]` `livecheck_data` → `/data`. `fly deploy` fails until the volume exists. Single writer (`min_machines_running = 1`); do not scale out without a **shared** store. A second machine creates a second volume and splits `/stats` (the P0 3/0 vs 0/0 split). Prefer one machine until then.
 
 ```bash
 # once, region must match primary_region (sjc)

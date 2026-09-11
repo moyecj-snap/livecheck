@@ -25,7 +25,7 @@ if (receiptStore.ok) {
   console.log(`receipt persistence: sqlite ${receiptStore.path} (Fly volume /data, survives restarts)`);
 } else {
   console.warn(
-    `receipt persistence failed (${receiptStore.reason}). GET /v1/receipt/{id} will 404 after this process exits.`,
+    `receipt persistence failed (${receiptStore.reason}). GET /v1/receipt/{id} will 404 after this process exits. Live Confirm returns 503 receipt_persist_failed so x402 does not settle without a durable receipt.`,
   );
 }
 

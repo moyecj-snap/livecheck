@@ -5,8 +5,13 @@ import {
   ORDER_PLACED_PRICE_USD,
   WATCH_PRICE_USD,
 } from "./config.js";
-import { isoCutoff, queryRetentionWindowsFromStore } from "./paid-call-store.js";
-import { countReceiptsSince, emptyReceiptVerdictCounts } from "./receipt-store.js";
+import {
+  isoCutoff,
+  paidCallStoreStatus,
+  queryConfirmIntentWindowsFromStore,
+  type ConfirmIntentCounts,
+} from "./paid-call-store.js";
+import { countReceiptsSince, emptyReceiptVerdictCounts, receiptStoreStatus } from "./receipt-store.js";
 import {
   loadSentinelBenches,
   type SentinelBenches,
@@ -42,6 +47,16 @@ export type SentinelStats = {
   benches: SentinelBenches;
 };
 
+export type StatsStoreScope = {
+  scope: "this_machine_volume";
+  fly_app_name: string | null;
+  fly_machine_id: string | null;
+  paid_calls: ReturnType<typeof paidCallStoreStatus>;
+  receipts: ReturnType<typeof receiptStoreStatus>;
+  confirm_unscoped_paid_calls: { l7d: number; l30d: number };
+  note: string;
+};
+
 export type StatsDocument = {
   ok: true;
   service: "livecheck";
@@ -56,6 +71,7 @@ export type StatsDocument = {
     false_confirmed_rate: null;
     note: string;
   };
+  store: StatsStoreScope;
   notes: string[];
 };
 
@@ -82,12 +98,37 @@ export function emptyIntentWindow(): IntentWindow {
 
 function windowFromReceipts(
   receipts: { receipts: number; by_verdict: IntentWindow["by_verdict"] },
-  paidCallsFallback?: number,
+  paidCalls: number | undefined,
 ): IntentWindow {
   return {
-    paid_calls: paidCallsFallback ?? receipts.receipts,
+    // Intent-scoped paid_calls when the store is open. Do not dump all
+    // confirm-route rows onto lead_submit. If the store is closed, keep
+    // the receipt count so missing paid_calls is not shown as 0 volume.
+    paid_calls: paidCalls ?? receipts.receipts,
     receipts: receipts.receipts,
     by_verdict: receipts.by_verdict,
+  };
+}
+
+export function statsMachineId(): string | null {
+  const machine = process.env.FLY_MACHINE_ID?.trim();
+  if (machine) return machine;
+  const alloc = process.env.FLY_ALLOC_ID?.trim();
+  return alloc || null;
+}
+
+const VOLUME_NOTE =
+  "Counts are this Fly machine's livecheck_data volume only. Two machines each with their own volume are not summed. CoS: fly machines list -a livecheck, then fly ssh console -a livecheck --machine <id> -C \"npm run paid-call:cos\".";
+
+function buildStoreScope(unscoped: { l7d: number; l30d: number }): StatsStoreScope {
+  return {
+    scope: "this_machine_volume",
+    fly_app_name: process.env.FLY_APP_NAME?.trim() || null,
+    fly_machine_id: statsMachineId(),
+    paid_calls: paidCallStoreStatus(),
+    receipts: receiptStoreStatus(),
+    confirm_unscoped_paid_calls: unscoped,
+    note: VOLUME_NOTE,
   };
 }
 
@@ -117,13 +158,28 @@ export function buildSentinelStats(): SentinelStats {
 }
 
 export function buildStatsDocument(now = new Date()): StatsDocument {
-  const windows = queryRetentionWindowsFromStore(now);
+  const confirmWindows = queryConfirmIntentWindowsFromStore(now);
   const lead7 = countReceiptsSince(isoCutoff(now, 7), "lead_submit");
   const lead30 = countReceiptsSince(isoCutoff(now, 30), "lead_submit");
   const listing7 = countReceiptsSince(isoCutoff(now, 7), "listing_published");
   const listing30 = countReceiptsSince(isoCutoff(now, 30), "listing_published");
   const order7 = countReceiptsSince(isoCutoff(now, 7), "order_placed");
   const order30 = countReceiptsSince(isoCutoff(now, 30), "order_placed");
+  const scoped7: ConfirmIntentCounts | undefined = confirmWindows?.l7d;
+  const scoped30: ConfirmIntentCounts | undefined = confirmWindows?.l30d;
+  const unscoped = { l7d: scoped7?.unscoped ?? 0, l30d: scoped30?.unscoped ?? 0 };
+  const notes = [
+    "Payable Confirm intents: lead_submit (GA, $0.10) and listing_published ($0.10) on POST /v1/confirm; order_placed ($0.25) on POST /v1/confirm/order.",
+    "Bazaar 402 copy stays lead_submit-primary on /v1/confirm. order_placed is a separate fixed-price resource. Sentinel Bazaar GA is held.",
+    "paid_calls are confirm-route rows with that intent stored. Pre-intent-column confirm rows are store.confirm_unscoped_paid_calls and are not attributed to lead_submit.",
+    "Sentinel checks_run is one-shot POST /v1/check receipts plus scheduled watcher observations (term quota minus checks_remaining). by_detector is SQLite watchers + change events. sentinel.benches are CI/local gate results from bench/sentinel-report.json (fallback: main 590627c), not a live dispute rate.",
+    VOLUME_NOTE,
+  ];
+  if (unscoped.l7d > 0 || unscoped.l30d > 0) {
+    notes.push(
+      `This volume has ${unscoped.l7d} L7d / ${unscoped.l30d} L30d confirm-route paid_calls with no stored intent. Signed receipts cannot be reconstructed from paid_calls alone (no cfm_ id, evidence, or signature). Backfill intent from logs: npm run receipt:backfill.`,
+    );
+  }
   return {
     ok: true,
     service: "livecheck",
@@ -133,22 +189,22 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
         payable: true,
         price_usd: CONFIRM_PRICE_USD,
         status: "ga",
-        l7d: windowFromReceipts(lead7, windows?.l7d.confirm.calls ?? 0),
-        l30d: windowFromReceipts(lead30, windows?.l30d.confirm.calls ?? 0),
+        l7d: windowFromReceipts(lead7, scoped7?.lead_submit),
+        l30d: windowFromReceipts(lead30, scoped30?.lead_submit),
       },
       listing_published: {
         payable: true,
         price_usd: CONFIRM_PRICE_USD,
         status: "ga",
-        l7d: windowFromReceipts(listing7),
-        l30d: windowFromReceipts(listing30),
+        l7d: windowFromReceipts(listing7, scoped7?.listing_published),
+        l30d: windowFromReceipts(listing30, scoped30?.listing_published),
       },
       order_placed: {
         payable: true,
         price_usd: ORDER_PLACED_PRICE_USD,
         status: "ga",
-        l7d: windowFromReceipts(order7),
-        l30d: windowFromReceipts(order30),
+        l7d: windowFromReceipts(order7, scoped7?.order_placed),
+        l30d: windowFromReceipts(order30, scoped30?.order_placed),
       },
     },
     sentinel: buildSentinelStats(),
@@ -156,12 +212,8 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
       false_confirmed_rate: null,
       note: BENCH_NOTE,
     },
-    notes: [
-      "Payable Confirm intents: lead_submit (GA, $0.10) and listing_published ($0.10) on POST /v1/confirm; order_placed ($0.25) on POST /v1/confirm/order.",
-      "Bazaar 402 copy stays lead_submit-primary on /v1/confirm. order_placed is a separate fixed-price resource. Sentinel Bazaar GA is held.",
-      "lead_submit paid_calls are confirm-route volume. listing_published and order_placed paid_calls placeholders are receipt-backed until paid_calls rows store intent.",
-      "Sentinel checks_run is one-shot POST /v1/check receipts plus scheduled watcher observations (term quota minus checks_remaining). by_detector is SQLite watchers + change events. sentinel.benches are CI/local gate results from bench/sentinel-report.json (fallback: main 590627c), not a live dispute rate.",
-    ],
+    store: buildStoreScope(unscoped),
+    notes,
   };
 }
 
@@ -195,6 +247,7 @@ export function statsHtml(doc: StatsDocument): string {
 <body>
   <h1>Livecheck stats</h1>
   <p>Generated ${doc.generated_at}. Payable Confirm intents: <code>lead_submit</code> (GA) and <code>listing_published</code> at $${lead.price_usd.toFixed(2)} USDC; <code>order_placed</code> at $${order.price_usd.toFixed(2)} USDC.</p>
+  <p class="muted">Volume scope: ${doc.store.scope}${doc.store.fly_machine_id ? ` · machine <code>${doc.store.fly_machine_id}</code>` : ""}. Unscoped confirm paid_calls (no stored intent): L7d ${doc.store.confirm_unscoped_paid_calls.l7d} / L30d ${doc.store.confirm_unscoped_paid_calls.l30d}.</p>
   <table>
     <thead>
       <tr><th>Intent</th><th>Window</th><th>Paid calls</th><th>Receipts</th><th>confirmed</th><th>failed</th><th>unknown</th></tr>

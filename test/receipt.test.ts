@@ -13,6 +13,7 @@ import {
   sha256Hex,
   signCanonical,
   verifyCanonical,
+  sealConfirmResultDetailed,
   type ReceiptCanonical,
 } from "../src/receipt.js";
 
@@ -191,6 +192,43 @@ describe("GET /v1/receipt round-trip with key", () => {
       assert.equal(row.id, body.id);
       assert.equal(row.intent, "lead_submit");
       assert.ok(row.signature);
+    } finally {
+      closeReceiptStore();
+    }
+  });
+
+  it("sealConfirmResultDetailed.durable is false without sqlite and true after init", async () => {
+    const { closeReceiptStore, initReceiptStore } = await import("../src/receipt-store.js");
+    closeReceiptStore();
+    const classified = {
+      verdict: "unknown" as const,
+      effect: { type: "lead_submit" as const },
+      evidence_strength: 1,
+      signals: ["thank-you copy"],
+      independent_signals: 1,
+      independent_evidence: true,
+      evidence_id: "",
+      http_status: 200,
+      fetched_at: "2026-09-11T19:00:00Z",
+      url: "https://example.com/thanks",
+      canonical_url: "https://example.com/thanks",
+      price_usd: 0.1,
+      evidence_level: 1 as const,
+      confidence: 0.4,
+    };
+    const memoryOnly = sealConfirmResultDetailed(classified, {
+      intent: "lead_submit",
+      url: "https://example.com/thanks",
+    });
+    assert.equal(memoryOnly.durable, false);
+    assert.ok(memoryOnly.result.id);
+    initReceiptStore(":memory:");
+    try {
+      const durable = sealConfirmResultDetailed(classified, {
+        intent: "lead_submit",
+        url: "https://example.com/thanks",
+      });
+      assert.equal(durable.durable, true);
     } finally {
       closeReceiptStore();
     }

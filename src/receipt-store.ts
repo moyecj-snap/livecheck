@@ -204,17 +204,23 @@ function fromSqlRow(item: {
   };
 }
 
-export function rememberConfirmReceipt(row: ConfirmReceiptRow): boolean {
+export type ReceiptRememberResult = {
+  memory: true;
+  /** True only when the row was written to receipts.sqlite. */
+  durable: boolean;
+};
+
+export function rememberConfirmReceipt(row: ConfirmReceiptRow): ReceiptRememberResult {
   memory.set(row.id, row);
   const database = sqliteDb();
-  if (!database) return true;
+  if (!database) return { memory: true, durable: false };
   try {
     insertConfirmReceiptRow(database, row);
-    return true;
+    return { memory: true, durable: true };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     console.warn(`[confirm_receipt] persist failed: ${reason}`);
-    return false;
+    return { memory: true, durable: false };
   }
 }
 

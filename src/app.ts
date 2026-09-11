@@ -39,7 +39,7 @@ import {
   lookupReceiptResponse,
   receiptSigningEnabled,
   sealCheckResult,
-  sealConfirmResult,
+  sealConfirmResultDetailed,
   sealWatchResult,
 } from "./receipt.js";
 import { buildStatsDocument, statsHtml } from "./stats.js";
@@ -305,13 +305,26 @@ async function handlePaidConfirm(c: Context, parse: typeof parseConfirmRouteRequ
   try {
     const { url, intent, claim } = parse(body);
     const classified = await confirmUrl(url, fetch, new Date(), { intent, claim });
-    const result = sealConfirmResult(classified, {
+    const { result, durable } = sealConfirmResultDetailed(classified, {
       intent,
       url,
       claim,
       requestUrl: c.req.url,
       host: c.req.header("host"),
     });
+    // @x402/hono settles only when the handler returns <400. A live 200
+    // without a durable receipt would charge and leave /stats paid_calls
+    // with receipts=0. Mock/dev still 200 from process memory.
+    if (isLiveSettlement() && !durable) {
+      return c.json(
+        {
+          error: "receipt_persist_failed",
+          message:
+            "Confirm result was computed but receipts.sqlite did not persist. Settlement was not completed. Retry; if this repeats, check RECEIPT_DB_PATH / the livecheck_data volume.",
+        },
+        503,
+      );
+    }
     recordSuccessfulPaidCheck({
       route: "confirm",
       url,

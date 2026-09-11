@@ -252,6 +252,24 @@ export function sealConfirmResult(
     now?: Date;
   },
 ): ConfirmResult {
+  return sealConfirmResultDetailed(result, input).result;
+}
+
+/**
+ * Same as sealConfirmResult, plus whether the receipt row landed in SQLite.
+ * Live settle is after HTTP <400 — a non-durable live Confirm must not 200.
+ */
+export function sealConfirmResultDetailed(
+  result: ConfirmResult,
+  input: {
+    intent: string;
+    url: string;
+    claim?: unknown;
+    requestUrl?: string;
+    host?: string;
+    now?: Date;
+  },
+): { result: ConfirmResult; durable: boolean } {
   const id = result.id ?? newConfirmId(input.now?.getTime());
   const canonicalPayload = buildCanonicalPayload({
     id,
@@ -286,10 +304,10 @@ export function sealConfirmResult(
     claim_hash: canonicalPayload.claim_hash,
     created_at: result.fetched_at,
   };
-  rememberConfirmReceipt(row);
+  const remembered = rememberConfirmReceipt(row);
 
   const sealed: ConfirmResult = { ...result, id, receipt };
-  return sealed;
+  return { result: sealed, durable: remembered.durable };
 }
 
 function checkReceiptVerdict(fired: boolean | null): string {
