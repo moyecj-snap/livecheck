@@ -13,6 +13,12 @@ import {
 
 export const PAID_CALLS_TABLE = "paid_calls" as const;
 
+export const CONFIRM_PAID_INTENTS = ["lead_submit", "listing_published", "order_placed"] as const;
+export type ConfirmPaidIntent = (typeof CONFIRM_PAID_INTENTS)[number];
+
+export const CONFIRM_PAID_VERDICTS = ["confirmed", "failed", "unknown"] as const;
+export type ConfirmPaidVerdict = (typeof CONFIRM_PAID_VERDICTS)[number];
+
 export type PaidCallRow = {
   ts: string;
   route: PaidCallRoute;
@@ -21,6 +27,9 @@ export type PaidCallRow = {
   payment_intent?: string;
   host: string;
   url_sha256: string;
+  /** Confirm only. Absent on verify rows and on pre-intent-column history. */
+  intent?: ConfirmPaidIntent;
+  verdict?: ConfirmPaidVerdict;
 };
 
 export type RouteCounts = {
@@ -38,11 +47,24 @@ export type RetentionWindows = {
   l30d: WindowCounts;
 };
 
+/** Per-intent confirm-route counts. `unscoped` = route=confirm with no stored intent. */
+export type ConfirmIntentCounts = {
+  lead_submit: number;
+  listing_published: number;
+  order_placed: number;
+  unscoped: number;
+};
+
+export type ConfirmIntentWindows = {
+  l7d: ConfirmIntentCounts;
+  l30d: ConfirmIntentCounts;
+};
+
 export type PaidCallStoreStatus =
   | { kind: "sqlite"; path: string }
   | { kind: "stdout"; reason: string };
 
-const SCHEMA = `
+const TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS paid_calls (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts TEXT NOT NULL,
@@ -51,11 +73,20 @@ CREATE TABLE IF NOT EXISTS paid_calls (
   tx TEXT,
   payment_intent TEXT,
   host TEXT NOT NULL,
-  url_sha256 TEXT NOT NULL
+  url_sha256 TEXT NOT NULL,
+  intent TEXT,
+  verdict TEXT
 );
+`;
+
+const INDEXES_AFTER_MIGRATE = `
 CREATE INDEX IF NOT EXISTS idx_paid_calls_ts ON paid_calls(ts);
 CREATE INDEX IF NOT EXISTS idx_paid_calls_route_ts ON paid_calls(route, ts);
+CREATE INDEX IF NOT EXISTS idx_paid_calls_route_intent_ts ON paid_calls(route, intent, ts);
 `;
+
+/** @deprecated CREATE TABLE only; migrate adds intent/verdict then indexes. */
+export const SCHEMA = TABLE_SQL + INDEXES_AFTER_MIGRATE;
 
 type OpenStore = { ok: true; path: string; db: DatabaseSync };
 type ClosedStore = { ok: false; path?: string; reason: string };
@@ -85,6 +116,61 @@ export function emptyWindowCounts(): WindowCounts {
 
 export function emptyRetentionWindows(): RetentionWindows {
   return { l7d: emptyWindowCounts(), l30d: emptyWindowCounts() };
+}
+
+export function emptyConfirmIntentCounts(): ConfirmIntentCounts {
+  return { lead_submit: 0, listing_published: 0, order_placed: 0, unscoped: 0 };
+}
+
+export function emptyConfirmIntentWindows(): ConfirmIntentWindows {
+  return { l7d: emptyConfirmIntentCounts(), l30d: emptyConfirmIntentCounts() };
+}
+
+export function paidCallStoreTableColumns(db: DatabaseSync, table: string): Set<string> {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
+  return new Set(rows.map((row) => String(row.name)));
+}
+
+function ensureColumn(db: DatabaseSync, table: string, name: string, ddl: string): void {
+  if (paidCallStoreTableColumns(db, table).has(name)) return;
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/duplicate column/i.test(message)) return;
+    throw error;
+  }
+}
+
+/**
+ * Idempotent upgrade. Safe on a fresh DB and on a volume whose paid_calls
+ * table predates intent/verdict (those rows stay NULL = unscoped).
+ * ALTER columns before any index that names them.
+ *
+ * Never CREATE confirm_receipts here. Pre-26c702e bound receipts into this
+ * file; rescue copies those rows into receipts.sqlite and drops the stray table.
+ */
+export function migratePaidCallStore(db: DatabaseSync): void {
+  db.exec(TABLE_SQL);
+  ensureColumn(db, "paid_calls", "intent", "intent TEXT");
+  ensureColumn(db, "paid_calls", "verdict", "verdict TEXT");
+  db.exec(INDEXES_AFTER_MIGRATE);
+}
+
+export function isConfirmPaidIntent(value: unknown): value is ConfirmPaidIntent {
+  return value === "lead_submit" || value === "listing_published" || value === "order_placed";
+}
+
+export function isConfirmPaidVerdict(value: unknown): value is ConfirmPaidVerdict {
+  return value === "confirmed" || value === "failed" || value === "unknown";
+}
+
+export function sanitizeConfirmIntent(value: unknown): ConfirmPaidIntent | undefined {
+  return isConfirmPaidIntent(value) ? value : undefined;
+}
+
+export function sanitizeConfirmVerdict(value: unknown): ConfirmPaidVerdict | undefined {
+  return isConfirmPaidVerdict(value) ? value : undefined;
 }
 
 /** Hostname only. Drop anything that looks like a URL, path, query, or email. */
@@ -119,6 +205,12 @@ export function paidCallEventToRow(event: PaidCallEvent): PaidCallRow | undefine
   if (payer) row.payer = payer;
   if (tx) row.tx = tx;
   if (paymentIntent) row.payment_intent = paymentIntent;
+  if (event.route === "confirm") {
+    const intent = sanitizeConfirmIntent(event.intent);
+    const verdict = sanitizeConfirmVerdict(event.verdict);
+    if (intent) row.intent = intent;
+    if (verdict) row.verdict = verdict;
+  }
   return row;
 }
 
@@ -173,7 +265,8 @@ function prepareDatabase(path: string): DatabaseSync {
     db.exec("PRAGMA journal_mode = WAL;");
     db.exec("PRAGMA synchronous = NORMAL;");
   }
-  db.exec(SCHEMA);
+  db.exec(TABLE_SQL);
+  migratePaidCallStore(db);
   return db;
 }
 
@@ -221,13 +314,15 @@ export function insertPaidCallRow(db: DatabaseSync, row: PaidCallRow): void {
     tx: row.tx,
     payment_intent: row.payment_intent,
     ts: row.ts,
+    intent: row.intent,
+    verdict: row.verdict,
   });
   if (!mapped) {
     throw new Error("refusing to insert unsanitized paid_call row");
   }
   db.prepare(
-    `INSERT INTO paid_calls (ts, route, payer, tx, payment_intent, host, url_sha256)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO paid_calls (ts, route, payer, tx, payment_intent, host, url_sha256, intent, verdict)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     mapped.ts,
     mapped.route,
@@ -236,6 +331,8 @@ export function insertPaidCallRow(db: DatabaseSync, row: PaidCallRow): void {
     mapped.payment_intent ?? null,
     mapped.host,
     mapped.url_sha256,
+    mapped.intent ?? null,
+    mapped.verdict ?? null,
   );
 }
 
@@ -256,9 +353,9 @@ export function retainPaidCall(event: PaidCallEvent): boolean {
 
 export function listPaidCallRows(db: DatabaseSync, sinceIso?: string): PaidCallRow[] {
   const sql = sinceIso
-    ? `SELECT ts, route, payer, tx, payment_intent, host, url_sha256
+    ? `SELECT ts, route, payer, tx, payment_intent, host, url_sha256, intent, verdict
        FROM paid_calls WHERE ts >= ? ORDER BY ts ASC`
-    : `SELECT ts, route, payer, tx, payment_intent, host, url_sha256
+    : `SELECT ts, route, payer, tx, payment_intent, host, url_sha256, intent, verdict
        FROM paid_calls ORDER BY ts ASC`;
   const stmt = db.prepare(sql);
   const raw = (sinceIso ? stmt.all(sinceIso) : stmt.all()) as Array<{
@@ -269,6 +366,8 @@ export function listPaidCallRows(db: DatabaseSync, sinceIso?: string): PaidCallR
     payment_intent: string | null;
     host: string;
     url_sha256: string;
+    intent: string | null;
+    verdict: string | null;
   }>;
   const rows: PaidCallRow[] = [];
   for (const item of raw) {
@@ -282,6 +381,10 @@ export function listPaidCallRows(db: DatabaseSync, sinceIso?: string): PaidCallR
     if (item.payer) row.payer = item.payer;
     if (item.tx) row.tx = item.tx;
     if (item.payment_intent) row.payment_intent = item.payment_intent;
+    const intent = sanitizeConfirmIntent(item.intent);
+    const verdict = sanitizeConfirmVerdict(item.verdict);
+    if (intent) row.intent = intent;
+    if (verdict) row.verdict = verdict;
     rows.push(row);
   }
   return rows;
@@ -319,6 +422,76 @@ function queryWindow(db: DatabaseSync, sinceIso: string): WindowCounts {
 export function queryRetentionWindowsFromStore(now = new Date()): RetentionWindows | undefined {
   if (!state?.ok) return undefined;
   return queryRetentionWindows(state.db, now);
+}
+
+export function queryConfirmIntentCounts(db: DatabaseSync, sinceIso: string): ConfirmIntentCounts {
+  const out = emptyConfirmIntentCounts();
+  const rows = db
+    .prepare(
+      `SELECT intent, COUNT(*) AS n
+       FROM paid_calls
+       WHERE route = 'confirm' AND ts >= ?
+       GROUP BY intent`,
+    )
+    .all(sinceIso) as Array<{ intent: string | null; n: number | bigint }>;
+  for (const row of rows) {
+    const n = Number(row.n);
+    const intent = sanitizeConfirmIntent(row.intent);
+    if (intent) out[intent] += n;
+    else out.unscoped += n;
+  }
+  return out;
+}
+
+export function queryConfirmIntentWindows(db: DatabaseSync, now = new Date()): ConfirmIntentWindows {
+  return {
+    l7d: queryConfirmIntentCounts(db, isoCutoff(now, 7)),
+    l30d: queryConfirmIntentCounts(db, isoCutoff(now, 30)),
+  };
+}
+
+export function queryConfirmIntentWindowsFromStore(now = new Date()): ConfirmIntentWindows | undefined {
+  if (!state?.ok) return undefined;
+  return queryConfirmIntentWindows(state.db, now);
+}
+
+export function aggregateConfirmIntentRows(rows: readonly PaidCallRow[], now = new Date()): ConfirmIntentWindows {
+  return {
+    l7d: aggregateConfirmSince(rows, isoCutoff(now, 7)),
+    l30d: aggregateConfirmSince(rows, isoCutoff(now, 30)),
+  };
+}
+
+function aggregateConfirmSince(rows: readonly PaidCallRow[], sinceIso: string): ConfirmIntentCounts {
+  const out = emptyConfirmIntentCounts();
+  for (const row of rows) {
+    if (row.route !== "confirm" || row.ts < sinceIso) continue;
+    if (row.intent) out[row.intent] += 1;
+    else out.unscoped += 1;
+  }
+  return out;
+}
+
+/**
+ * Apply intent/verdict from a log event onto matching paid_calls rows that
+ * lack intent. Match is (ts, url_sha256, route=confirm) — no raw URL.
+ * Returns how many rows were updated.
+ */
+export function backfillPaidCallIntentFromEvent(db: DatabaseSync, event: PaidCallEvent): number {
+  if (event.route !== "confirm") return 0;
+  const intent = sanitizeConfirmIntent(event.intent);
+  const verdict = sanitizeConfirmVerdict(event.verdict);
+  if (!intent) return 0;
+  const url_sha256 = event.url_hash?.trim() ?? "";
+  if (!isSha256Hex(url_sha256)) return 0;
+  const result = db
+    .prepare(
+      `UPDATE paid_calls
+       SET intent = ?, verdict = COALESCE(?, verdict)
+       WHERE route = 'confirm' AND ts = ? AND url_sha256 = ? AND (intent IS NULL OR intent = '')`,
+    )
+    .run(intent, verdict ?? null, event.ts, url_sha256);
+  return Number(result.changes);
 }
 
 export function listPaidCallRowsFromStore(sinceIso?: string): PaidCallRow[] {

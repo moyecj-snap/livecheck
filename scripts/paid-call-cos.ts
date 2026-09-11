@@ -7,12 +7,19 @@
  *   npm run paid-call:cos
  *   fly ssh console -a livecheck -C "npm run paid-call:cos"
  *
+ * Dual-volume: Fly currently has two machines, each with its own
+ * livecheck_data. One ssh is one volume. Pull both:
+ *   npm run paid-call:cos -- --machines-help
+ *   fly machines list -a livecheck
+ *   fly ssh console -a livecheck --machine <id> -C "npm run paid-call:cos -- --json"
+ *
  * Interim (stdout JSON / fly logs) if the volume is empty or missing:
  *   fly logs -a livecheck | npm run paid-call:cos -- --from-logs
  *
  * TODO: once Patty attaches volume `livecheck_data` at /data and the
  * process can write /data/paid-calls.sqlite, drop the --from-logs path
- * for production pulls. Keep it for local exports.
+ * for production pulls. Keep it for local exports. Prefer a single
+ * writer / one volume — do not treat two volumes as one KPI.
  */
 import { existsSync, readFileSync } from "node:fs";
 import {
@@ -21,22 +28,31 @@ import {
   sanitizeTx,
 } from "../src/paid-call.js";
 import {
+  aggregateConfirmIntentRows,
   aggregatePaidCallRows,
   defaultPaidCallDbPath,
   listPaidCallRows,
   openPaidCallDb,
+  queryConfirmIntentWindows,
   queryRetentionWindows,
   rowsFromLogText,
   safeHost,
+  type ConfirmIntentWindows,
   type PaidCallRow,
   type RetentionWindows,
 } from "../src/paid-call-store.js";
 import type { PaidCallRoute } from "../src/paid-call.js";
+import { dualMachineCosHelp } from "../src/receipt-rescue.js";
+
+const DUAL_VOLUME_NOTE =
+  "This report is one volume / one process. Fly app livecheck has two machines each with livecheck_data — sum nothing across pulls; run --machines-help and ssh each id.";
 
 type CosReport = {
   source: { kind: "sqlite" | "logs"; path?: string };
   as_of: string;
+  fly_machine_id: string | null;
   windows: RetentionWindows;
+  confirm_intents: ConfirmIntentWindows;
   rows?: PaidCallRow[];
   note: string;
 };
@@ -64,19 +80,37 @@ function formatWindow(label: string, window: RetentionWindows["l7d"]): string {
   return `${label}\n${body}`;
 }
 
+function formatConfirmIntents(label: string, window: ConfirmIntentWindows["l7d"]): string {
+  return [
+    `${label} confirm intents`,
+    `  lead_submit         calls=${window.lead_submit}`,
+    `  listing_published   calls=${window.listing_published}`,
+    `  order_placed        calls=${window.order_placed}`,
+    `  unscoped            calls=${window.unscoped}`,
+  ].join("\n");
+}
+
 function printHuman(report: CosReport): void {
   const lines = [
     `source=${report.source.kind}${report.source.path ? ` ${report.source.path}` : ""}`,
     `as_of=${report.as_of}`,
+    `fly_machine_id=${report.fly_machine_id ?? "(not on Fly)"}`,
     report.note,
     "",
     formatWindow("L7d", report.windows.l7d),
+    formatConfirmIntents("L7d", report.confirm_intents.l7d),
     formatWindow("L30d", report.windows.l30d),
+    formatConfirmIntents("L30d", report.confirm_intents.l30d),
   ];
   console.log(lines.join("\n"));
 }
 
 async function main(): Promise<void> {
+  if (argFlag("--machines-help")) {
+    console.log(dualMachineCosHelp());
+    return;
+  }
+
   const fromLogs = argFlag("--from-logs");
   const jsonOut = argFlag("--json");
   const includeRows = argFlag("--rows");
@@ -86,12 +120,14 @@ async function main(): Promise<void> {
 
   let source: CosReport["source"];
   let windows: RetentionWindows;
+  let confirm_intents: ConfirmIntentWindows;
   let rows: PaidCallRow[] | undefined;
 
   if (fromLogs || logFile) {
     const text = logFile ? readFileSync(logFile, "utf8") : await readStdin();
     const parsed = rowsFromLogText(text);
     windows = aggregatePaidCallRows(parsed, now);
+    confirm_intents = aggregateConfirmIntentRows(parsed, now);
     source = { kind: "logs", path: logFile };
     if (includeRows) rows = parsed;
   } else if (!existsSync(dbPath) && dbPath !== ":memory:") {
@@ -109,6 +145,7 @@ async function main(): Promise<void> {
     const db = openPaidCallDb(dbPath);
     try {
       windows = queryRetentionWindows(db, now);
+      confirm_intents = queryConfirmIntentWindows(db, now);
       source = { kind: "sqlite", path: dbPath };
       if (includeRows) rows = listPaidCallRows(db);
     } finally {
@@ -119,8 +156,10 @@ async function main(): Promise<void> {
   const report: CosReport = {
     source,
     as_of: asOfIso(now),
+    fly_machine_id: process.env.FLY_MACHINE_ID?.trim() || process.env.FLY_ALLOC_ID?.trim() || null,
     windows,
-    note: "Row counts only: calls = rows in window; unique_payers = distinct non-null wallet in window.",
+    confirm_intents,
+    note: `Row counts only: calls = rows in window; unique_payers = distinct non-null wallet in window. ${DUAL_VOLUME_NOTE}`,
   };
   if (rows) {
     report.rows = rows.map((row) => ({
@@ -133,6 +172,8 @@ async function main(): Promise<void> {
       ...(sanitizePaymentIntent(row.payment_intent)
         ? { payment_intent: sanitizePaymentIntent(row.payment_intent) }
         : {}),
+      ...(row.intent ? { intent: row.intent } : {}),
+      ...(row.verdict ? { verdict: row.verdict } : {}),
     }));
   }
 

@@ -14,8 +14,11 @@ primary_region = "sjc"
   # Confirm / check / watch / event receipts. Same volume as watchers.
   RECEIPT_DB_PATH = "/data/receipts.sqlite"
 
-# Privacy-safe paid_call SQLite. Patty must create this volume before the
-# first deploy that includes this mount (see README). Single machine only.
+# Privacy-safe paid_call + receipt SQLite. Patty must create this volume
+# before the first deploy that includes this mount (see README).
+# Single writer: each machine gets its own livecheck_data. Two machines
+# split /stats and CoS (one volume can show confirm paid_calls the other
+# does not). Do not scale out without a shared store. Prefer one machine.
 [[mounts]]
   source = "livecheck_data"
   destination = "/data"

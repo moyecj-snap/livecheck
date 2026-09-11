@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { after, before, describe, it } from "node:test";
+import { after, afterEach, before, describe, it } from "node:test";
 import { serve } from "@hono/node-server";
 import { createApp } from "../src/app.js";
 import { observationHash } from "../src/check.js";
@@ -17,6 +17,19 @@ import {
   benchesFromSentinelReport,
   resetSentinelBenches,
 } from "../src/sentinel-stats-benches.js";
+import { hashUrl } from "../src/paid-call.js";
+import {
+  closePaidCallStore,
+  initPaidCallStore,
+  insertPaidCallRow,
+} from "../src/paid-call-store.js";
+import {
+  clearConfirmReceiptMemory,
+  closeReceiptStore,
+  initReceiptStore,
+  rememberConfirmReceipt,
+  type ConfirmReceiptRow,
+} from "../src/receipt-store.js";
 import { buildStatsDocument } from "../src/stats.js";
 import {
   closeWatchStore,
@@ -141,8 +154,16 @@ describe("GET /stats", () => {
         };
       };
       benches?: { false_confirmed_rate?: unknown; note?: string };
+      store?: {
+        scope?: string;
+        confirm_unscoped_paid_calls?: { l7d?: number; l30d?: number };
+        note?: string;
+      };
     };
     assert.equal(body.ok, true);
+    assert.equal(body.store?.scope, "this_machine_volume");
+    assert.equal(typeof body.store?.confirm_unscoped_paid_calls?.l7d, "number");
+    assert.match(body.store?.note ?? "", /this Fly machine/i);
     assert.equal(body.intents?.lead_submit?.payable, true);
     assert.equal(body.intents?.lead_submit?.price_usd, CONFIRM_PRICE_USD);
     assert.equal(body.intents?.lead_submit?.status, "ga");
@@ -202,6 +223,8 @@ describe("GET /stats", () => {
     assert.doesNotMatch(html, />null</);
     assert.match(html, /status_change/);
     assert.match(html, /numeric_threshold/);
+    assert.match(html, /Volume scope/);
+    assert.match(html, /Unscoped confirm paid_calls/);
   });
 
   it("GET /v1/judge is a 501 stub and is not 402", async () => {
@@ -378,5 +401,102 @@ describe("Sentinel benches loader", () => {
 
   it("rejects a report missing latency so Fly still uses the fallback", () => {
     assert.equal(benchesFromSentinelReport({ honesty: { status_change: { false_positive_rate: 0, checks: 198 } } }), null);
+  });
+});
+
+function stubReceipt(overrides: Partial<ConfirmReceiptRow> = {}): ConfirmReceiptRow {
+  return {
+    id: overrides.id ?? "cfm_01STATSLEADSUBMIT000000001",
+    intent: overrides.intent ?? "lead_submit",
+    verdict: overrides.verdict ?? "confirmed",
+    confidence: 0.92,
+    evidence_level: 2,
+    canonical_json: "{}",
+    payload_hash: "ab".repeat(32),
+    signature: null,
+    signer: null,
+    observed_at: "2026-09-10T18:00:00Z",
+    url_hash: "cd".repeat(32),
+    claim_hash: "ef".repeat(32),
+    created_at: overrides.created_at ?? "2026-09-10T18:00:00Z",
+  };
+}
+
+describe("GET /stats Confirm paid_calls vs receipts honesty", () => {
+  afterEach(() => {
+    closePaidCallStore();
+    closeReceiptStore();
+    clearConfirmReceiptMemory();
+  });
+
+  it("does not attribute unscoped confirm-route rows to lead_submit", () => {
+    const opened = initPaidCallStore(":memory:");
+    if (!opened.ok) throw new Error("paid_call store failed");
+    initReceiptStore(":memory:");
+    const now = new Date("2026-09-11T19:00:00.000Z");
+    for (let i = 0; i < 3; i += 1) {
+      insertPaidCallRow(opened.db, {
+        ts: `2026-09-10T18:0${i}:00Z`,
+        route: "confirm",
+        host: "example.com",
+        url_sha256: hashUrl(`https://example.com/thanks-${i}`),
+      });
+    }
+    const doc = buildStatsDocument(now);
+    assert.equal(doc.intents.lead_submit.l7d.paid_calls, 0);
+    assert.equal(doc.intents.lead_submit.l7d.receipts, 0);
+    assert.equal(doc.intents.listing_published.l7d.paid_calls, 0);
+    assert.equal(doc.intents.order_placed.l7d.paid_calls, 0);
+    assert.equal(doc.store.confirm_unscoped_paid_calls.l7d, 3);
+    assert.equal(doc.store.scope, "this_machine_volume");
+    assert.match(doc.notes.join(" "), /3 L7d/);
+    assert.match(doc.notes.join(" "), /cannot be reconstructed/i);
+  });
+
+  it("counts only intent-scoped paid_calls per Confirm intent", () => {
+    const opened = initPaidCallStore(":memory:");
+    if (!opened.ok) throw new Error("paid_call store failed");
+    initReceiptStore(":memory:");
+    const now = new Date("2026-09-11T19:00:00.000Z");
+    insertPaidCallRow(opened.db, {
+      ts: "2026-09-10T18:00:00Z",
+      route: "confirm",
+      host: "example.com",
+      url_sha256: hashUrl("https://example.com/lead"),
+      intent: "lead_submit",
+      verdict: "unknown",
+    });
+    insertPaidCallRow(opened.db, {
+      ts: "2026-09-10T18:01:00Z",
+      route: "confirm",
+      host: "example.com",
+      url_sha256: hashUrl("https://example.com/listing"),
+      intent: "listing_published",
+      verdict: "confirmed",
+    });
+    insertPaidCallRow(opened.db, {
+      ts: "2026-09-10T18:02:00Z",
+      route: "confirm",
+      host: "shop.example.com",
+      url_sha256: hashUrl("https://shop.example.com/order"),
+      intent: "order_placed",
+      verdict: "failed",
+    });
+    rememberConfirmReceipt(stubReceipt({ id: "cfm_01LEAD00000000000000000001", intent: "lead_submit" }));
+    rememberConfirmReceipt(
+      stubReceipt({
+        id: "cfm_01LIST00000000000000000001",
+        intent: "listing_published",
+        created_at: "2026-09-10T18:01:00Z",
+      }),
+    );
+    const doc = buildStatsDocument(now);
+    assert.equal(doc.intents.lead_submit.l7d.paid_calls, 1);
+    assert.equal(doc.intents.lead_submit.l7d.receipts, 1);
+    assert.equal(doc.intents.listing_published.l7d.paid_calls, 1);
+    assert.equal(doc.intents.listing_published.l7d.receipts, 1);
+    assert.equal(doc.intents.order_placed.l7d.paid_calls, 1);
+    assert.equal(doc.intents.order_placed.l7d.receipts, 0);
+    assert.equal(doc.store.confirm_unscoped_paid_calls.l7d, 0);
   });
 });

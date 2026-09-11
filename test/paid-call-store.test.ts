@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { DatabaseSync } from "node:sqlite";
 import { serve } from "@hono/node-server";
 import { createApp } from "../src/app.js";
 import {
@@ -25,6 +26,8 @@ import {
   openPaidCallDb,
   paidCallEventToRow,
   parsePaidCallLogLine,
+  queryConfirmIntentWindows,
+  queryConfirmIntentWindowsFromStore,
   queryRetentionWindows,
   queryRetentionWindowsFromStore,
   listPaidCallRowsFromStore,
@@ -32,6 +35,9 @@ import {
   rowContainsSensitive,
   rowsFromLogText,
   safeHost,
+  backfillPaidCallIntentFromEvent,
+  migratePaidCallStore,
+  paidCallStoreTableColumns,
 } from "../src/paid-call-store.js";
 
 const execFileAsync = promisify(execFile);
@@ -133,7 +139,13 @@ describe("sqlite insert and L7d/L30d queries", () => {
     );
     const recentConfirm = paidCallEventToRow(
       buildPaidCallEvent(
-        { route: "confirm", host: "example.com", url_hash: hashConfirm, verdict: "confirmed" },
+        {
+          route: "confirm",
+          host: "example.com",
+          url_hash: hashConfirm,
+          intent: "lead_submit",
+          verdict: "confirmed",
+        },
         { payer: PAYER_A, payment_intent: "pi_confirm1" },
         new Date("2026-09-06T18:00:00.000Z"),
       ),
@@ -166,6 +178,9 @@ describe("sqlite insert and L7d/L30d queries", () => {
     assert.equal(windows.l7d.verify.unique_payers, 2);
     assert.equal(windows.l7d.confirm.calls, 1);
     assert.equal(windows.l7d.confirm.unique_payers, 1);
+    const intents = queryConfirmIntentWindows(opened.db, now);
+    assert.equal(intents.l7d.lead_submit, 1);
+    assert.equal(intents.l7d.unscoped, 0);
     assert.equal(windows.l30d.verify.calls, 3);
     assert.equal(windows.l30d.verify.unique_payers, 2);
     assert.equal(windows.l30d.confirm.calls, 1);
@@ -318,6 +333,25 @@ describe("HTTP paid check writes a retained row", () => {
     assert.deepEqual(rowContainsSensitive(rows[0], target), []);
     assert.equal(JSON.stringify(rows[0]).includes(target), false);
   });
+
+  it("mock-paid confirm stores intent and verdict on the paid_calls row", async () => {
+    const target = `${origin}/fixtures/confirm/thank-you-id`;
+    const res = await fetch(`${origin}/v1/confirm`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
+      body: JSON.stringify({ url: target, intent: "lead_submit" }),
+    });
+    assert.equal(res.status, 200);
+    const rows = listPaidCallRowsFromStore();
+    const confirm = rows.filter((row) => row.route === "confirm");
+    assert.equal(confirm.length, 1);
+    assert.equal(confirm[0].intent, "lead_submit");
+    assert.equal(confirm[0].verdict, "confirmed");
+    const scoped = queryConfirmIntentWindowsFromStore();
+    assert.ok(scoped);
+    assert.equal(scoped.l7d.lead_submit, 1);
+    assert.equal(scoped.l7d.unscoped, 0);
+  });
 });
 
 describe("CoS CLI", () => {
@@ -354,6 +388,22 @@ describe("CoS CLI", () => {
     assert.equal(report.windows.l7d.verify.unique_payers, 1);
     assert.equal(report.windows.l7d.confirm.calls, 1);
     assert.equal(stdout.includes("https://example.com"), false);
+    const withIntent = JSON.parse(stdout) as {
+      confirm_intents: { l7d: { lead_submit: number; unscoped: number } };
+      note: string;
+    };
+    assert.equal(withIntent.confirm_intents.l7d.unscoped, 1);
+    assert.match(withIntent.note, /one volume/i);
+  });
+
+  it("prints --machines-help without touching sqlite", async () => {
+    const { stdout } = await execFileAsync("npx", ["tsx", "scripts/paid-call-cos.ts", "--machines-help"], {
+      cwd: process.cwd(),
+    });
+    assert.match(stdout, /fly machines list -a livecheck/);
+    assert.match(stdout, /839744b76061e8/);
+    assert.match(stdout, /860792be4622e8/);
+    assert.match(stdout, /receipt:rescue/);
   });
 
   it("parses a log file via --from-logs --log-file", async () => {
@@ -377,5 +427,63 @@ describe("CoS CLI", () => {
     assert.equal(report.source.kind, "logs");
     assert.equal(report.windows.l7d.verify.calls, 1);
     assert.equal(report.windows.l7d.verify.unique_payers, 1);
+  });
+});
+
+describe("paid_calls intent migrate and backfill", () => {
+  after(() => closePaidCallStore());
+
+  it("ALTERs intent/verdict onto a pre-intent paid_calls table", () => {
+    const dir = mkdtempSync(join(tmpdir(), "paid-call-migrate-"));
+    const path = join(dir, "paid-calls.sqlite");
+    const db = new DatabaseSync(path);
+    db.exec(`
+      CREATE TABLE paid_calls (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL,
+        route TEXT NOT NULL,
+        payer TEXT,
+        tx TEXT,
+        payment_intent TEXT,
+        host TEXT NOT NULL,
+        url_sha256 TEXT NOT NULL
+      );
+    `);
+    db.prepare(
+      `INSERT INTO paid_calls (ts, route, host, url_sha256) VALUES (?, ?, ?, ?)`,
+    ).run("2026-09-10T18:00:00Z", "confirm", "example.com", hashUrl("https://example.com/thanks"));
+    assert.equal(paidCallStoreTableColumns(db, "paid_calls").has("intent"), false);
+    migratePaidCallStore(db);
+    assert.equal(paidCallStoreTableColumns(db, "paid_calls").has("intent"), true);
+    assert.equal(paidCallStoreTableColumns(db, "paid_calls").has("verdict"), true);
+    const intents = queryConfirmIntentWindows(db, new Date("2026-09-11T19:00:00.000Z"));
+    assert.equal(intents.l7d.unscoped, 1);
+    assert.equal(intents.l7d.lead_submit, 0);
+    db.close();
+  });
+
+  it("backfills intent from a matching log event and refuses a second write", () => {
+    const opened = initPaidCallStore(":memory:");
+    if (!opened.ok) throw new Error("paid_call store failed");
+    const url_hash = hashUrl("https://example.com/thanks");
+    insertPaidCallRow(opened.db, {
+      ts: "2026-09-10T18:00:00Z",
+      route: "confirm",
+      host: "example.com",
+      url_sha256: url_hash,
+    });
+    const event = buildPaidCallEvent(
+      { route: "confirm", host: "example.com", url_hash, intent: "lead_submit", verdict: "unknown" },
+      {},
+      new Date("2026-09-10T18:00:00.000Z"),
+    );
+    assert.equal(backfillPaidCallIntentFromEvent(opened.db, event), 1);
+    assert.equal(backfillPaidCallIntentFromEvent(opened.db, event), 0);
+    const intents = queryConfirmIntentWindows(opened.db, new Date("2026-09-11T19:00:00.000Z"));
+    assert.equal(intents.l7d.lead_submit, 1);
+    assert.equal(intents.l7d.unscoped, 0);
+    const rows = listPaidCallRows(opened.db);
+    assert.equal(rows[0].intent, "lead_submit");
+    assert.equal(rows[0].verdict, "unknown");
   });
 });

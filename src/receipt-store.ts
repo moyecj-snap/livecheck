@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { defaultPaidCallDbPath } from "./paid-call-store.js";
 import type { EvidenceLevel } from "./types.js";
 
 export type ConfirmReceiptRow = {
@@ -132,8 +133,24 @@ function prepareDatabase(path: string): DatabaseSync {
   return db;
 }
 
+export function receiptPathConflictsWithPaidCalls(
+  receiptPath: string,
+  paidCallPath = defaultPaidCallDbPath(),
+): boolean {
+  if (receiptPath === ":memory:") return false;
+  if (basename(receiptPath) === "paid-calls.sqlite") return true;
+  if (paidCallPath === ":memory:") return false;
+  return resolve(receiptPath) === resolve(paidCallPath);
+}
+
 export function initReceiptStore(path = defaultReceiptDbPath()): StoreState {
   closeReceiptStore();
+  if (receiptPathConflictsWithPaidCalls(path)) {
+    const reason =
+      "RECEIPT_DB_PATH must not be paid-calls.sqlite. Receipts belong in receipts.sqlite; writing confirm_receipts into the paid-call file is how GET /v1/receipt 404s after 26c702e.";
+    state = { ok: false, path, reason };
+    return state;
+  }
   try {
     const db = prepareDatabase(path);
     state = { ok: true, path, db };
@@ -170,6 +187,45 @@ function sqliteDb(): DatabaseSync | undefined {
   return state?.ok ? state.db : undefined;
 }
 
+export function confirmReceiptsTableExists(database: DatabaseSync): boolean {
+  const row = database
+    .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'confirm_receipts'`)
+    .get() as { name?: string } | undefined;
+  return Boolean(row?.name);
+}
+
+export function listConfirmReceiptRows(database: DatabaseSync): ConfirmReceiptRow[] {
+  if (!confirmReceiptsTableExists(database)) return [];
+  migrateReceiptStore(database);
+  const raw = database
+    .prepare(
+      `SELECT id, intent, verdict, confidence, evidence_level, canonical_json, payload_hash,
+              signature, signer, observed_at, url_hash, claim_hash, created_at
+       FROM confirm_receipts`,
+    )
+    .all() as Array<{
+    id: string;
+    intent: string;
+    verdict: string;
+    confidence: number;
+    evidence_level: number;
+    canonical_json: string;
+    payload_hash: string;
+    signature: string | null;
+    signer: string | null;
+    observed_at: string;
+    url_hash: string;
+    claim_hash: string;
+    created_at: string;
+  }>;
+  const rows: ConfirmReceiptRow[] = [];
+  for (const item of raw) {
+    const row = fromSqlRow(item);
+    if (row) rows.push(row);
+  }
+  return rows;
+}
+
 function fromSqlRow(item: {
   id: string;
   intent: string;
@@ -204,17 +260,23 @@ function fromSqlRow(item: {
   };
 }
 
-export function rememberConfirmReceipt(row: ConfirmReceiptRow): boolean {
+export type ReceiptRememberResult = {
+  memory: true;
+  /** True only when the row was written to receipts.sqlite. */
+  durable: boolean;
+};
+
+export function rememberConfirmReceipt(row: ConfirmReceiptRow): ReceiptRememberResult {
   memory.set(row.id, row);
   const database = sqliteDb();
-  if (!database) return true;
+  if (!database) return { memory: true, durable: false };
   try {
     insertConfirmReceiptRow(database, row);
-    return true;
+    return { memory: true, durable: true };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     console.warn(`[confirm_receipt] persist failed: ${reason}`);
-    return false;
+    return { memory: true, durable: false };
   }
 }
 
