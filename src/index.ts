@@ -42,7 +42,9 @@ if (store.ok && receiptStore.ok) {
       `receipt rescue: copied ${rescue.copied}/${rescue.found} confirm_receipts from paid-calls.sqlite → receipts.sqlite; dropped_source=${rescue.dropped_source_table} ids=${rescue.ids.join(",")}`,
     );
   } else {
-    console.log("receipt rescue: no misplaced confirm_receipts on paid-calls.sqlite");
+    console.log(
+      "receipt rescue: no leftover confirm_receipts on paid-calls.sqlite (already migrated or never misplaced)",
+    );
   }
 }
 
