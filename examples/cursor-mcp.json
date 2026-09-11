@@ -3,10 +3,14 @@
     "livecheck": {
       "type": "stdio",
       "command": "npx",
-      "args": ["tsx", "${workspaceFolder}/src/mcp.ts"],
+      "args": [
+        "tsx",
+        "${workspaceFolder}/src/mcp.ts"
+      ],
       "env": {
         "LIVECHECK_URL": "http://127.0.0.1:43127/v1/verify"
-      }
+      },
+      "description": "Livecheck MCP: verify, check, confirm, watch (+ verify_listing compat; watch_get/events/stop/chain_topup). No wallet \u2014 unpaid calls return structured 402. Entry: src/mcp.ts \u2192 src/mcp-server.ts."
     }
   }
 }
