@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Livecheck">
+  <rect width="1024" height="1024" fill="#0B3D2E"/>
+  <circle cx="512" cy="512" r="340" fill="#125C45"/>
+  <path d="M318 530 L454 666 L722 358" fill="none" stroke="#E8FFF4" stroke-width="88" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="780" cy="244" r="56" fill="#3DFFA8"/>
+</svg>
