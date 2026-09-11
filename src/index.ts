@@ -4,6 +4,7 @@ import { DEFAULT_PORT, isLiveSettlement, missingLiveKeyNames, port } from "./con
 import { isEbayAdapterEnabled, logEbayAdapterDisabled } from "./ebay.js";
 import { loadDotEnvIfPresent } from "./env.js";
 import { initPaidCallStore } from "./paid-call-store.js";
+import { rescueMisplacedReceipts } from "./receipt-rescue.js";
 import { initReceiptStore } from "./receipt-store.js";
 import { startWatchScheduler } from "./watch-scheduler.js";
 import { sentinelBenchesLoadInfo } from "./sentinel-stats-benches.js";
@@ -27,6 +28,22 @@ if (receiptStore.ok) {
   console.warn(
     `receipt persistence failed (${receiptStore.reason}). GET /v1/receipt/{id} will 404 after this process exits. Live Confirm returns 503 receipt_persist_failed so x402 does not settle without a durable receipt.`,
   );
+}
+
+if (store.ok && receiptStore.ok) {
+  const rescue = rescueMisplacedReceipts({
+    paidCallDb: store.db,
+    receiptDb: receiptStore.db,
+    paidCallPath: store.path,
+    receiptPath: receiptStore.path,
+  });
+  if (rescue.found > 0 || rescue.same_path_refused) {
+    console.log(
+      `receipt rescue: copied ${rescue.copied}/${rescue.found} confirm_receipts from paid-calls.sqlite → receipts.sqlite; dropped_source=${rescue.dropped_source_table} ids=${rescue.ids.join(",")}`,
+    );
+  } else {
+    console.log("receipt rescue: no misplaced confirm_receipts on paid-calls.sqlite");
+  }
 }
 
 const watchStore = initWatchStore();

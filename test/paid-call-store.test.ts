@@ -401,7 +401,9 @@ describe("CoS CLI", () => {
       cwd: process.cwd(),
     });
     assert.match(stdout, /fly machines list -a livecheck/);
-    assert.match(stdout, /--machine/);
+    assert.match(stdout, /839744b76061e8/);
+    assert.match(stdout, /860792be4622e8/);
+    assert.match(stdout, /receipt:rescue/);
   });
 
   it("parses a log file via --from-logs --log-file", async () => {

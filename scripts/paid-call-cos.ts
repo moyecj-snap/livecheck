@@ -42,6 +42,7 @@ import {
   type RetentionWindows,
 } from "../src/paid-call-store.js";
 import type { PaidCallRoute } from "../src/paid-call.js";
+import { dualMachineCosHelp } from "../src/receipt-rescue.js";
 
 const DUAL_VOLUME_NOTE =
   "This report is one volume / one process. Fly app livecheck has two machines each with livecheck_data — sum nothing across pulls; run --machines-help and ssh each id.";
@@ -106,18 +107,7 @@ function printHuman(report: CosReport): void {
 
 async function main(): Promise<void> {
   if (argFlag("--machines-help")) {
-    console.log(
-      [
-        "Livecheck Fly is dual-volume: each machine has its own livecheck_data.",
-        "GET /stats and this CLI read only the volume of the process you hit.",
-        "",
-        "  fly machines list -a livecheck",
-        "  fly ssh console -a livecheck --machine <id> -C \"npm run paid-call:cos -- --json\"",
-        "  fly ssh console -a livecheck --machine <id> -C \"npm run receipt:backfill -- --json\"",
-        "",
-        "Do not add the two JSON reports into a new KPI. Do not Fly deploy from this tree.",
-      ].join("\n"),
-    );
+    console.log(dualMachineCosHelp());
     return;
   }
 

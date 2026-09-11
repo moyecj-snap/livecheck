@@ -146,6 +146,9 @@ function ensureColumn(db: DatabaseSync, table: string, name: string, ddl: string
  * Idempotent upgrade. Safe on a fresh DB and on a volume whose paid_calls
  * table predates intent/verdict (those rows stay NULL = unscoped).
  * ALTER columns before any index that names them.
+ *
+ * Never CREATE confirm_receipts here. Pre-26c702e bound receipts into this
+ * file; rescue copies those rows into receipts.sqlite and drops the stray table.
  */
 export function migratePaidCallStore(db: DatabaseSync): void {
   db.exec(TABLE_SQL);

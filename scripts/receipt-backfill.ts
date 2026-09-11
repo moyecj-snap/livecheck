@@ -16,6 +16,7 @@ import { readFileSync } from "node:fs";
 import { runReceiptBackfill } from "../src/receipt-backfill.js";
 import { defaultPaidCallDbPath } from "../src/paid-call-store.js";
 import { defaultReceiptDbPath } from "../src/receipt-store.js";
+import { dualMachineCosHelp } from "../src/receipt-rescue.js";
 
 function argFlag(name: string): boolean {
   return process.argv.includes(name);
@@ -39,17 +40,7 @@ function readStdin(): Promise<string> {
 
 async function main(): Promise<void> {
   if (argFlag("--machines-help")) {
-    console.log(
-      [
-        "Each Fly machine has its own livecheck_data volume. Pull both:",
-        "",
-        "  fly machines list -a livecheck",
-        "  fly ssh console -a livecheck --machine <id> -C \"npm run paid-call:cos -- --json\"",
-        "  fly ssh console -a livecheck --machine <id> -C \"npm run receipt:backfill -- --json\"",
-        "",
-        "Do not treat one /stats or one ssh as the app total. Do not Fly deploy from this tree.",
-      ].join("\n"),
-    );
+    console.log(dualMachineCosHelp());
     return;
   }
 
