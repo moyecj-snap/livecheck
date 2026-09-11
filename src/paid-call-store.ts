@@ -311,6 +311,8 @@ export function insertPaidCallRow(db: DatabaseSync, row: PaidCallRow): void {
     tx: row.tx,
     payment_intent: row.payment_intent,
     ts: row.ts,
+    intent: row.intent,
+    verdict: row.verdict,
   });
   if (!mapped) {
     throw new Error("refusing to insert unsanitized paid_call row");

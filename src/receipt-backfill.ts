@@ -10,7 +10,7 @@ import {
   type ConfirmIntentWindows,
 } from "./paid-call-store.js";
 import { PAID_CALL_EVENT } from "./paid-call.js";
-import { defaultReceiptDbPath, queryReceiptsSince } from "./receipt-store.js";
+import { defaultReceiptDbPath, migrateReceiptStore, queryReceiptsSince } from "./receipt-store.js";
 
 export const RECEIPT_RECONSTRUCTION_IMPOSSIBLE =
   "Signed Confirm receipts cannot be reconstructed from paid_calls (or from livecheck.paid_call logs). Those rows have host + url_sha256 + ts (+ intent/verdict once backfilled) but no cfm_ id, evidence, canonical payload, or Ed25519 signature. Do not invent stub receipts — that would fabricate honesty verdicts. Historical in-memory receipts from before 26c702e are gone unless the paying client still has the 200 body.";
@@ -65,6 +65,11 @@ function receiptCounts(db: DatabaseSync | undefined, now: Date) {
 function openReceiptsIfPresent(path: string): DatabaseSync | undefined {
   if (path === ":memory:" || !existsSync(path)) return undefined;
   const db = new DatabaseSync(path);
+  try {
+    migrateReceiptStore(db);
+  } catch {
+    // query still attempted; missing table → 0 counts
+  }
   return db;
 }
 
