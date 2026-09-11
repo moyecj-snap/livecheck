@@ -1,0 +1,54 @@
+{
+  "name": "livecheck-verify-then-confirm",
+  "description": "Hardcode these two x402 tools into an agent tool list. Pay with any Base USDC x402 wallet (purl, CDP, AgentCore payments plugin). Actor ≠ verifier.",
+  "tools": [
+    {
+      "name": "livecheck_verify",
+      "description": "Check whether a specific job, Shopify/HTML product, or eBay item URL is still live. Returns live|closed|unknown. $0.01 USDC on Base via x402. Unpaid → HTTP 402.",
+      "method": "POST",
+      "url": "https://livecheck.fly.dev/v1/verify",
+      "price_usd": 0.01,
+      "headers": { "Content-Type": "application/json" },
+      "body_schema": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": { "type": "string", "format": "uri", "description": "Absolute job, product, or eBay /itm/ URL" }
+        }
+      },
+      "example": { "url": "https://boards.greenhouse.io/example/jobs/1842" }
+    },
+    {
+      "name": "confirm_lead_submit",
+      "description": "Independent check that a lead_submit side effect landed (actor ≠ verifier). Requires Level-2 evidence (ref/ticket/lead id). Thank-you copy alone is never confirmed. $0.10 USDC on Base via x402. Unpaid → HTTP 402.",
+      "method": "POST",
+      "url": "https://livecheck.fly.dev/v1/confirm",
+      "price_usd": 0.10,
+      "headers": { "Content-Type": "application/json" },
+      "body_schema": {
+        "type": "object",
+        "required": ["url", "intent"],
+        "properties": {
+          "url": { "type": "string", "format": "uri", "description": "Thank-you or result URL after lead submit" },
+          "intent": { "type": "string", "const": "lead_submit" },
+          "claim": { "type": "string", "description": "Optional fingerprint / claim id from the actor" }
+        }
+      },
+      "example": {
+        "url": "https://example.com/thanks?ref=ABC123",
+        "intent": "lead_submit"
+      }
+    }
+  ],
+  "agentcore_bazaar": {
+    "gateway_mcp": "https://api.cdp.coinbase.com/platform/v2/x402/discovery/mcp",
+    "search": "livecheck",
+    "note": "AgentCore buyers: add Coinbase x402 Bazaar Gateway target + payments plugin; search livecheck returns verify + confirm (+ confirm/order)."
+  },
+  "do_not_claim": [
+    "Cursor Marketplace live (still in review as of 2026-09-10)",
+    "Trust Oracle / L3",
+    "Broad public-web Confirm accuracy",
+    "Amazon search URL support"
+  ]
+}
