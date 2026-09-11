@@ -203,7 +203,7 @@ describe("GET /v1/receipt round-trip with key", () => {
     const classified = {
       verdict: "unknown" as const,
       effect: { type: "lead_submit" as const },
-      evidence_strength: 1,
+      evidence_strength: 1 as const,
       signals: ["thank-you copy"],
       independent_signals: 1,
       independent_evidence: true,

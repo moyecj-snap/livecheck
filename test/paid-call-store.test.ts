@@ -462,8 +462,7 @@ describe("paid_calls intent migrate and backfill", () => {
 
   it("backfills intent from a matching log event and refuses a second write", () => {
     const opened = initPaidCallStore(":memory:");
-    assert.equal(opened.ok, true);
-    if (!opened.ok) throw new Error(opened.reason);
+    if (!opened.ok) throw new Error("paid_call store failed");
     const url_hash = hashUrl("https://example.com/thanks");
     insertPaidCallRow(opened.db, {
       ts: "2026-09-10T18:00:00Z",

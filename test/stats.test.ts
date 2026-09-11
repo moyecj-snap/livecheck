@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { after, before, describe, it } from "node:test";
+import { after, afterEach, before, describe, it } from "node:test";
 import { serve } from "@hono/node-server";
 import { createApp } from "../src/app.js";
 import { observationHash } from "../src/check.js";
@@ -431,8 +431,7 @@ describe("GET /stats Confirm paid_calls vs receipts honesty", () => {
 
   it("does not attribute unscoped confirm-route rows to lead_submit", () => {
     const opened = initPaidCallStore(":memory:");
-    assert.equal(opened.ok, true);
-    if (!opened.ok) throw new Error(opened.reason);
+    if (!opened.ok) throw new Error("paid_call store failed");
     initReceiptStore(":memory:");
     const now = new Date("2026-09-11T19:00:00.000Z");
     for (let i = 0; i < 3; i += 1) {
@@ -456,8 +455,7 @@ describe("GET /stats Confirm paid_calls vs receipts honesty", () => {
 
   it("counts only intent-scoped paid_calls per Confirm intent", () => {
     const opened = initPaidCallStore(":memory:");
-    assert.equal(opened.ok, true);
-    if (!opened.ok) throw new Error(opened.reason);
+    if (!opened.ok) throw new Error("paid_call store failed");
     initReceiptStore(":memory:");
     const now = new Date("2026-09-11T19:00:00.000Z");
     insertPaidCallRow(opened.db, {
