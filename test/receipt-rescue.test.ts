@@ -178,6 +178,7 @@ describe("receipt rescue from paid-calls.sqlite", () => {
     assert.match(help.stdout, /839744b76061e8/);
     assert.match(help.stdout, /860792be4622e8/);
     assert.match(help.stdout, /summer-voice/);
+    assert.match(help.stdout, /Patty v5/);
     assert.match(help.stdout, /pi_3UDUC1QOrQ8LEBMA1ZXJlcqF/);
   });
 });

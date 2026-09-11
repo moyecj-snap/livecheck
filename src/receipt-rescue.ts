@@ -16,12 +16,12 @@ export const FLY_MACHINES = [
   {
     id: "839744b76061e8",
     name: "summer-voice",
-    holds: "Confirm paid_calls (3 confirm + 1 verify) and the misplaced confirm_receipts rows",
+    holds: "Confirm paid_calls (3 confirm + 1 verify). Patty v5 already copied 2 cfm_ into receipts.sqlite. Sep 8 confirm remains orphan.",
   },
   {
     id: "860792be4622e8",
     name: "sparkling-violet",
-    holds: "mostly verify/check; stray wtc_ receipt in paid-calls.sqlite confirm_receipts",
+    holds: "mostly verify/check. Patty v5 already copied the stray wtc_ into receipts.sqlite.",
   },
 ] as const;
 
@@ -76,6 +76,11 @@ function openReceiptsForWrite(path: string): DatabaseSync {
  * Copy confirm_receipts rows that were written into paid-calls.sqlite
  * (pre-26c702e bindReceiptSqlite) into receipts.sqlite, then drop the
  * misplaced table so receipts are never written there again.
+ *
+ * Uses node:sqlite DatabaseSync only — the Fly image has no better-sqlite3.
+ * Idempotent: if Patty already ran /data/migrate-receipts-v5.mjs, the source
+ * table is gone or empty and this is a no-op. Do not re-run blindly on live
+ * as a second copy of invented rows.
  */
 export function rescueMisplacedReceipts(input: {
   paidCallPath?: string;

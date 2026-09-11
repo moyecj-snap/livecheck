@@ -1,18 +1,22 @@
 /**
- * Ops: copy confirm_receipts out of paid-calls.sqlite into receipts.sqlite.
+ * Ops: copy leftover confirm_receipts out of paid-calls.sqlite into receipts.sqlite.
+ * node:sqlite DatabaseSync only (Fly image has no better-sqlite3).
  *
- * Pre-26c702e bound receipts into the paid-call file. GET /v1/receipt reads
- * receipts.sqlite, so those rows 404 until this runs on the machine volume.
+ * Live volumes already got Patty's one-shot:
+ *   node /data/migrate-receipts-v5.mjs
+ * 839744…: 2 cfm_ now in receipts.sqlite (GET /v1/receipt/cfm_01M23ZJJ… 200).
+ * 860792…: stray wtc_ now in receipts.sqlite.
+ * If this prints found=0, the volume is already migrated — stop.
  *
  *   npm run receipt:rescue
  *   npm run receipt:rescue -- --json
  *   npm run receipt:rescue -- --machines-help
  *
- * Dual-volume — run on EACH machine (Patty / fly ssh / machine exec):
+ * Dual-volume leftover check (do not treat as a second invent-and-copy):
  *   fly ssh console -a livecheck --machine 839744b76061e8 -C "npm run receipt:rescue -- --json"
  *   fly ssh console -a livecheck --machine 860792be4622e8 -C "npm run receipt:rescue -- --json"
  *
- * Does not Fly deploy. Does not invent the Sep 8 orphan receipt.
+ * Does not Fly deploy. Does not invent the Sep 8 orphan (pi_3UDUC1QOrQ8LEBMA1ZXJlcqF).
  */
 import { defaultPaidCallDbPath } from "../src/paid-call-store.js";
 import { defaultReceiptDbPath } from "../src/receipt-store.js";

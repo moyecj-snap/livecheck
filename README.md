@@ -405,7 +405,9 @@ Set `CONFIRM_RECEIPT_PRIVATE_KEY` to an Ed25519 **PKCS#8 PEM** (recommended) or 
 node --input-type=module -e "import { generateKeyPairSync } from 'node:crypto'; process.stdout.write(generateKeyPairSync('ed25519').privateKey.export({ type: 'pkcs8', format: 'pem' }).toString())"
 ```
 
-The signature is Ed25519 over canonical JSON `{id,intent,verdict,confidence,evidence_level,evidence_summary_or_hash,observed_at,url_hash,claim_hash}` (that key order). `evidence_summary_or_hash` is a SHA-256 of signals/verdict (not the raw confirmation id). Receipts persist in **SQLite** on the same Fly volume as watchers (`livecheck_data` → `/data`). Live settlement (`@x402/hono`) runs the handler first and settles only when the handler status is below 400. If `receipts.sqlite` does not persist the row, live Confirm returns **503** `receipt_persist_failed` so the facilitator does **not** settle — no orphan `paid_call` without a durable receipt. Mock/dev still 200s from process memory. Pre-`26c702e` bound `confirm_receipts` into **`paid-calls.sqlite`** (`bindReceiptSqlite`). `26c702e` started writing `receipts.sqlite` but did not copy those rows, so live `GET /v1/receipt/{id}` 404s even though the signed rows still sit in the paid-call file. Boot and `npm run receipt:rescue` copy them (`INSERT OR REPLACE` by id) into `receipts.sqlite` and **drop** the misplaced table so receipts are never written into the paid-call DB again. The Sep 8 confirm paid_call (`839744b76061e8` id 2, `pi_3UDUC1QOrQ8LEBMA1ZXJlcqF`) has **no** receipt in either file — refund candidate, not reconstructable. See `npm run receipt:rescue` and `npm run receipt:backfill`.
+The signature is Ed25519 over canonical JSON `{id,intent,verdict,confidence,evidence_level,evidence_summary_or_hash,observed_at,url_hash,claim_hash}` (that key order). `evidence_summary_or_hash` is a SHA-256 of signals/verdict (not the raw confirmation id). Receipts persist in **SQLite** on the same Fly volume as watchers (`livecheck_data` → `/data`). Live settlement (`@x402/hono`) runs the handler first and settles only when the handler status is below 400. If `receipts.sqlite` does not persist the row, live Confirm returns **503** `receipt_persist_failed` so the facilitator does **not** settle — no orphan `paid_call` without a durable receipt. Mock/dev still 200s from process memory.
+
+Pre-`26c702e` bound `confirm_receipts` into **`paid-calls.sqlite`** (`bindReceiptSqlite`). `26c702e` started a separate `receipts.sqlite` but did not copy those rows. Patty already ran a one-shot on both live machines with **node:sqlite `DatabaseSync`** (the Fly image has no better-sqlite3): `node /data/migrate-receipts-v5.mjs`. Do not redo that blindly. Boot and `npm run receipt:rescue` (also `DatabaseSync`) remain as an **idempotent** leftover copy (`INSERT OR REPLACE` by id) plus **DROP** of the misplaced table so receipts are never written into the paid-call DB again. `found=0` means that volume is already migrated. The Sep 8 confirm paid_call (`839744b76061e8` id 2, `pi_3UDUC1QOrQ8LEBMA1ZXJlcqF`) has **no** receipt in either file — refund candidate, not reconstructable.
 
 Receipts persist at:
 
@@ -661,17 +663,18 @@ CoS pull — L7d / L30d **row counts only** (calls = rows; unique_payers = disti
 
 **Dual-volume:** two machines, each with its own `livecheck_data`. `GET /stats` and a single `fly ssh` are **one volume**. Do not add the two reports into a new KPI.
 
-| Machine | Name | What it holds |
+| Machine | Name | What it holds (after Patty v5) |
 | --- | --- | --- |
-| `839744b76061e8` | summer-voice | Confirm paid_calls (3 confirm + 1 verify). Misplaced `confirm_receipts`: `cfm_01M23ZJJGNHQ15N4DGQ7QS50KP` (lead_submit confirmed), `cfm_01M240J5SCC7XYY1S865XW0FDR` (order_placed unknown). |
-| `860792be4622e8` | sparkling-violet | Mostly verify/check. Stray `wtc_` receipt in paid-calls.sqlite `confirm_receipts`. |
+| `839744b76061e8` | summer-voice | Confirm paid_calls (3 confirm + 1 verify). `cfm_01M23ZJJGNHQ15N4DGQ7QS50KP` and `cfm_01M240J5SCC7XYY1S865XW0FDR` are in `receipts.sqlite`. Live `/stats` on this volume: lead 3 paid / 1 receipt confirmed; order 1/1 unknown. |
+| `860792be4622e8` | sparkling-violet | Mostly verify/check. Stray `wtc_` is in `receipts.sqlite`. |
 
 ```bash
 # which machines / ssh each volume
 npm run paid-call:cos -- --machines-help
 npm run receipt:rescue -- --machines-help
 
-# Patty — run rescue on EACH machine (no Fly deploy from this tree)
+# Leftover check only (node:sqlite). found=0 = already migrated. Do not invent a second copy.
+# Patty already ran: node /data/migrate-receipts-v5.mjs
 fly ssh console -a livecheck --machine 839744b76061e8 -C "npm run receipt:rescue -- --json"
 fly ssh console -a livecheck --machine 860792be4622e8 -C "npm run receipt:rescue -- --json"
 
@@ -682,11 +685,11 @@ fly ssh console -a livecheck --machine 860792be4622e8 -C "npm run paid-call:cos 
 npm run paid-call:cos -- --json
 ```
 
-`npm run receipt:rescue` copies any `confirm_receipts` rows from `paid-calls.sqlite` → `receipts.sqlite` (`INSERT OR REPLACE` by id) and drops the misplaced table. Boot does the same. After rescue, `GET /v1/receipt/cfm_01M23ZJJGNHQ15N4DGQ7QS50KP` and `cfm_01M240J5SCC7XYY1S865XW0FDR` should 200 on summer-voice.
+`npm run receipt:rescue` and process boot use **node:sqlite `DatabaseSync`** (no better-sqlite3). They copy any leftover `confirm_receipts` rows from `paid-calls.sqlite` → `receipts.sqlite` (`INSERT OR REPLACE` by id) and drop the misplaced table. `initReceiptStore` refuses a `paid-calls.sqlite` path. Live GET `/v1/receipt/cfm_01M23ZJJGNHQ15N4DGQ7QS50KP` already 200s on summer-voice after v5.
 
 `npm run receipt:backfill` reports intent-scoped paid_calls vs receipt counts on this volume. With `--from-logs` / `--log-file` it copies `intent` + `verdict` from `livecheck.paid_call` lines onto matching unscoped paid_calls (`ts` + `url_sha256`). It does **not** invent stub receipts.
 
-**Sep 8 orphan (refund candidate):** summer-voice `paid_calls` id 2, `2026-09-08T18:56:30Z`, route=confirm, `payment_intent=pi_3UDUC1QOrQ8LEBMA1ZXJlcqF`, `tx=0xd932eeba…`. No `confirm_receipts` row in either DB. Unreconstructable. Manual Stripe refund is an ops decision — this process does not refund.
+**Sep 8 orphan (refund candidate):** summer-voice `paid_calls` id 2, `2026-09-08T18:56:30Z`, route=confirm, `payment_intent=pi_3UDUC1QOrQ8LEBMA1ZXJlcqF`, `tx=0xd932eeba…`. Still no `confirm_receipts` row in either DB after v5. Unreconstructable. Manual Stripe refund is an ops decision — this process does not refund.
 
 Interim if the volume is missing or the file is empty — parse the existing stdout lines (same column shape, same counts):
 
