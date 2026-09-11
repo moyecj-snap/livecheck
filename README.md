@@ -521,6 +521,8 @@ Paid path only when the caller already has an envelope and supplies it as tool a
 
 `LIVECHECK_URL` may stay the existing verify URL (`http://127.0.0.1:43127/v1/verify` or `https://livecheck.fly.dev/v1/verify`) — the client strips `/v1/verify` so check / confirm / watch hit the same origin. There is no remote MCP transport in this repo; Cursor uses stdio.
 
+Locked drafts for Gil: [`docs/gap7/recipes.md`](docs/gap7/recipes.md) (3 copy-paste recipes) and [`docs/gap7/landing-copy.md`](docs/gap7/landing-copy.md) (landing /stats copy).
+
 ### Tool names + input shapes (Gil recipes)
 
 Canonical paid tools:
