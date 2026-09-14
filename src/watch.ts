@@ -475,6 +475,7 @@ export async function createWatch(
   return { result, ownerToken, observation };
 }
 
+/** Prepaid-window only (Confirm continuity). No new detectors or event kinds. */
 export function renewWatch(
   body: unknown,
   ownerToken: string | undefined,

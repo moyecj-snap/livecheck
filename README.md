@@ -274,7 +274,7 @@ function verify(secret, rawBody, header) {
 
 ### Renew (`POST /v1/watch/renew`)
 
-Same **$2.50 USDC** product as create (`"2500000"` atomic). One accept. Body is `{ "id" }` so `/.well-known/x402` can list a concrete URL (no `{id}` template). Auth is **owner token + payment** — send `X-Livecheck-Owner-Token` (same header as GET/DELETE and chain topup). Extends an **active** watcher's prepaid window: `expires_at` += 30 days from the later of now and the current expiry, and one more term of `checks_remaining`. Same watcher id, detectors, callback, and chain balance. Does not recapture baseline or return `owner_token` again. Stopped or expired → **409** `not_renewable`.
+Same **$2.50 USDC** product as create (`"2500000"` atomic). One accept. Body is `{ "id" }` so `/.well-known/x402` can list a concrete URL (no `{id}` template). Auth is **owner token + payment** — send `X-Livecheck-Owner-Token` (same header as GET/DELETE and chain topup). Extends an **active** watcher's prepaid window (Confirm continuity): `expires_at` += 30 days from the later of now and the current expiry, and one more term of `checks_remaining`. Same watcher id, condition, callback, and chain balance. Does not add detectors or lifecycle event types, recapture baseline, or return `owner_token` again. Stopped or expired → **409** `not_renewable`.
 
 ```http
 POST /v1/watch/renew

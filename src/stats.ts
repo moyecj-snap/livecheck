@@ -38,7 +38,6 @@ export type SentinelStats = {
   prices: {
     check_usd: number;
     watch_usd: number;
-    watch_renew_usd: number;
     chain_topup_usd: number;
   };
   active_watchers: number;
@@ -148,7 +147,6 @@ export function buildSentinelStats(): SentinelStats {
     prices: {
       check_usd: CHECK_PRICE_USD,
       watch_usd: WATCH_PRICE_USD,
-      watch_renew_usd: WATCH_PRICE_USD,
       chain_topup_usd: CHAIN_TOPUP_PRICE_USD,
     },
     active_watchers: watch.active_watchers,
@@ -265,7 +263,7 @@ export function statsHtml(doc: StatsDocument): string {
   </table>
   <p class="muted">${doc.benches.note}</p>
   <h2>Sentinel</h2>
-  <p>Payable: <code>POST /v1/check</code> $${sentinel.prices.check_usd.toFixed(2)}, <code>POST /v1/watch</code> $${sentinel.prices.watch_usd.toFixed(2)}, <code>POST /v1/watch/renew</code> $${sentinel.prices.watch_renew_usd.toFixed(2)}, <code>POST /v1/watch/{id}/chain/topup</code> $${sentinel.prices.chain_topup_usd.toFixed(2)}. Status: ${sentinel.status} (Bazaar GA held).</p>
+  <p>Payable: <code>POST /v1/check</code> $${sentinel.prices.check_usd.toFixed(2)}, <code>POST /v1/watch</code> $${sentinel.prices.watch_usd.toFixed(2)}, <code>POST /v1/watch/{id}/chain/topup</code> $${sentinel.prices.chain_topup_usd.toFixed(2)}. Status: ${sentinel.status} (Bazaar GA held).</p>
   <table>
     <thead>
       <tr><th>Active watchers</th><th>Checks run</th><th>Change events</th><th>False-positive rate</th><th>Median latency</th></tr>

@@ -522,7 +522,7 @@ export function stopWatcher(id: string): boolean {
   return Number(result.changes) > 0;
 }
 
-/** Extend an active watcher's prepaid window. Returns false when not active. */
+/** Extend an active watcher's prepaid window. Does not insert events. Returns false when not active. */
 export function renewWatcher(id: string, input: { expires_at: string; checks_remaining: number }): boolean {
   const db = requireDb();
   const result = db
