@@ -191,7 +191,7 @@ describe("GET /stats", () => {
       n: 77,
       false_confirmed: 0,
       report: "bench/lead-submit-report.json",
-      commit: "9906a99",
+      commit: "a17f56b",
     });
     assert.deepEqual(body.benches?.listing_published, {
       false_confirmed_rate: 0,
