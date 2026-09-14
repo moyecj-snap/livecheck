@@ -23,16 +23,20 @@ import {
 } from "./config.js";
 import { isWatchId, newOwnerToken, newWatchId } from "./confirm-id.js";
 import { hostnameOnly, isoTs } from "./paid-call.js";
+import { PAYABLE_CONFIRM_INTENTS, type PayableConfirmIntent } from "./confirm.js";
 import { sha256Hex, stableJson } from "./receipt.js";
 import type {
   CheckCondition,
   CheckObservation,
   CheckTarget,
+  ConfirmIntent,
   WatchBaseline,
   WatchCallbackDeliver,
   WatchCallbackPayload,
+  WatchChainConfirmConfig,
   WatchCreateResult,
   WatchEventType,
+  WatchOnChange,
   WatchPublicView,
   WatchRenewResult,
   WatchRun,
@@ -97,6 +101,7 @@ export type ParsedWatchRequest = {
   context: Record<string, unknown> | null;
   chain_budget_usd: number | null;
   run: WatchRun;
+  chain_confirm: WatchChainConfirmConfig | null;
 };
 
 function isRecord(value: unknown): boolean {
@@ -239,23 +244,94 @@ export function parseWatchRequest(body: unknown): ParsedWatchRequest {
     }
     chain_budget_usd = record.chain_budget_usd;
   }
-  const run = parseOnChangeRun(record.on_change);
-  return { target, condition, callback, interval_s, label, context, chain_budget_usd, run };
+  const onChange = parseOnChange(record.on_change);
+  return {
+    target,
+    condition,
+    callback,
+    interval_s,
+    label,
+    context,
+    chain_budget_usd,
+    run: onChange.run,
+    chain_confirm: onChange.chain_confirm,
+  };
 }
 
-export function parseOnChangeRun(raw: unknown): WatchRun {
-  if (raw === undefined || raw === null) return "none";
+function isPayableIntent(value: unknown): value is PayableConfirmIntent {
+  return (PAYABLE_CONFIRM_INTENTS as readonly string[]).includes(value as string);
+}
+
+export function parseOnChange(raw: unknown): { run: WatchRun; chain_confirm: WatchChainConfirmConfig | null } {
+  if (raw === undefined || raw === null) return { run: "none", chain_confirm: null };
   if (!isRecord(raw)) {
-    throw new WatchError("invalid_target", 'on_change must be { run: "none" | "verify" }.', 400);
+    throw new WatchError(
+      "invalid_target",
+      'on_change must be { run: "none" | "verify" | "confirm", intent?, url?, claim? }.',
+      400,
+    );
   }
-  const run = (raw as { run?: unknown }).run;
-  if (run === undefined || run === null || run === "none") return "none";
-  if (run === "verify") return "verify";
-  throw new WatchError(
-    "invalid_target",
-    'on_change.run must be "none" or "verify". Confirm chain is not available on this route.',
-    400,
-  );
+  const record = raw as { run?: unknown; intent?: unknown; url?: unknown; claim?: unknown };
+  const extrasSet =
+    record.intent !== undefined || record.url !== undefined || record.claim !== undefined;
+  const run = record.run === undefined || record.run === null ? "none" : record.run;
+  if (run === "none" || run === "verify") {
+    if (extrasSet) {
+      throw new WatchError(
+        "invalid_target",
+        "on_change.intent, on_change.url, and on_change.claim are only valid when run is confirm.",
+        400,
+      );
+    }
+    return { run, chain_confirm: null };
+  }
+  if (run !== "confirm") {
+    throw new WatchError(
+      "invalid_target",
+      'on_change.run must be "none", "verify", or "confirm".',
+      400,
+    );
+  }
+  const intent: ConfirmIntent =
+    record.intent === undefined || record.intent === null ? "lead_submit" : (record.intent as ConfirmIntent);
+  if (!isPayableIntent(intent)) {
+    throw new WatchError(
+      "invalid_target",
+      'on_change.intent must be "lead_submit", "listing_published", or "order_placed".',
+      400,
+    );
+  }
+  let url: string | null = null;
+  if (record.url !== undefined && record.url !== null) {
+    try {
+      url = parseTargetUrl(record.url);
+    } catch (error) {
+      const message = error instanceof VerifyError ? error.message : "on_change.url must be an absolute http(s) URL.";
+      throw new WatchError("invalid_target", message, 400);
+    }
+  }
+  let claim: Record<string, unknown> | null = null;
+  if (record.claim !== undefined && record.claim !== null) {
+    if (!isRecord(record.claim)) {
+      throw new WatchError("invalid_target", "on_change.claim must be an object when provided.", 400);
+    }
+    claim = record.claim as Record<string, unknown>;
+  }
+  return { run: "confirm", chain_confirm: { intent, url, claim } };
+}
+
+/** @deprecated Use parseOnChange. Kept for callers that only need run. */
+export function parseOnChangeRun(raw: unknown): WatchRun {
+  return parseOnChange(raw).run;
+}
+
+export function onChangeView(run: WatchRun, chain_confirm?: WatchChainConfirmConfig | null): WatchOnChange {
+  if (run === "confirm") {
+    const view: WatchOnChange = { run: "confirm", intent: chain_confirm?.intent ?? "lead_submit" };
+    if (chain_confirm?.url) view.url = chain_confirm.url;
+    return view;
+  }
+  return { run };
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -341,7 +417,7 @@ export function publicWatcherView(row: WatcherRow): WatchPublicView {
     condition: row.condition,
     price_usd: WATCH_PRICE_USD,
     run: row.run,
-    on_change: { run: row.run },
+    on_change: onChangeView(row.run, row.chain_confirm),
     chain_budget_usd: row.chain_budget_usd,
     chain_balance_usd: usdFromAtomic(row.chain_balance_atomic),
     callback: { url: row.callback_url, deliver: row.callback_deliver },
@@ -423,6 +499,7 @@ export async function createWatch(
     callback_secret: parsed.callback.secret,
     callback_deliver: parsed.callback.deliver,
     run: parsed.run,
+    chain_confirm: parsed.chain_confirm,
     chain_budget_usd: parsed.chain_budget_usd,
     chain_balance_atomic: 0,
     chain_spent_atomic: 0,
@@ -467,7 +544,7 @@ export async function createWatch(
     condition: row.condition,
     price_usd: WATCH_PRICE_USD,
     run: parsed.run,
-    on_change: { run: parsed.run },
+    on_change: onChangeView(parsed.run, parsed.chain_confirm),
     chain_budget_usd: parsed.chain_budget_usd,
     chain_balance_usd: 0,
   };
@@ -508,7 +585,7 @@ export function renewWatch(
     condition: updated.condition,
     price_usd: WATCH_PRICE_USD,
     run: updated.run,
-    on_change: { run: updated.run },
+    on_change: onChangeView(updated.run, updated.chain_confirm),
     chain_budget_usd: updated.chain_budget_usd,
     chain_balance_usd: usdFromAtomic(updated.chain_balance_atomic),
   };

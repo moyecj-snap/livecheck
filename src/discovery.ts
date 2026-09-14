@@ -267,13 +267,28 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
                     chain_budget_usd: {
                       type: "number",
                       description:
-                        "Spend cap for chained Verify. Funding is POST /v1/watch/{id}/chain/topup ($0.50), not bundled into the $2.50 watch price.",
+                        "Spend cap for chained Verify ($0.01) and Confirm ($0.10 / $0.25). Funding is POST /v1/watch/{id}/chain/topup ($0.50), not bundled into the $2.50 watch price.",
                     },
                     on_change: {
                       type: "object",
-                      description: "run=none (default) or verify. On emitted change, verify runs internally when chain balance >= $0.01.",
+                      description:
+                        "run=none (default), verify, or confirm. On emitted change, verify ($0.01) or Confirm (lead_submit/listing_published $0.10, order_placed $0.25) runs internally when chain balance covers the debit. Confirm default intent is lead_submit; optional url defaults to target.url. Writes cfm_ receipts to receipts.sqlite. No new public x402 price.",
                       properties: {
-                        run: { type: "string", enum: ["none", "verify"] },
+                        run: { type: "string", enum: ["none", "verify", "confirm"] },
+                        intent: {
+                          type: "string",
+                          enum: ["lead_submit", "listing_published", "order_placed"],
+                          description: "Confirm only. Default lead_submit.",
+                        },
+                        url: {
+                          type: "string",
+                          format: "uri",
+                          description: "Confirm only. Override URL; default target.url.",
+                        },
+                        claim: {
+                          type: "object",
+                          description: "Confirm only. Optional claim forwarded to Confirm.",
+                        },
                       },
                     },
                   },

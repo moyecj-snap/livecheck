@@ -181,6 +181,7 @@ describe("watch store Phase 2 → step 3 migrate", () => {
     assert.equal(watcherCols.has("detector_state_json"), true);
     assert.equal(watcherCols.has("chain_balance_atomic"), true);
     assert.equal(watcherCols.has("chain_spent_atomic"), true);
+    assert.equal(watcherCols.has("chain_confirm_json"), true);
     const tables = opened.db
       .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'watch_delivery_attempts'`)
       .get() as { name?: string } | undefined;

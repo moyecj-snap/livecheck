@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-10T21:21:18Z",
+  "generated_at": "2026-09-14T00:26:44Z",
   "scale": {
     "honesty_repeats": 20,
     "honesty_checks_per_detector": 198,
@@ -153,7 +153,17 @@
     "skipped_reason": "insufficient_balance",
     "pass": true
   },
-  "on_change_confirm_deferred": true,
+  "chain_confirm": {
+    "funded_attached": true,
+    "funded_debit_usd": 0.1,
+    "funded_status": "confirmed",
+    "skipped": true,
+    "skipped_reason": "insufficient_balance",
+    "receipt_id": "cfm_01M26HY5N0ZR2Y5AG02NQ44BTA",
+    "intent": "lead_submit",
+    "pass": true
+  },
+  "on_change_confirm_accepted": true,
   "gates": [
     {
       "id": "status_change_fp",
@@ -198,10 +208,10 @@
       "detail": "funded_attached=true skipped=insufficient_balance"
     },
     {
-      "id": "on_change_confirm_deferred",
-      "gate": "on_change.run=confirm stays rejected (Confirm chain deferred)",
+      "id": "on_change_confirm",
+      "gate": "on_change.run=confirm accepted; funded Confirm attaches result + receipt; insufficient → skipped",
       "pass": true,
-      "detail": "parseWatchRequest throws invalid_target"
+      "detail": "accepted=true funded_attached=true skipped=insufficient_balance receipt=cfm_01M26HY5N0ZR2Y5AG02NQ44BTA"
     }
   ],
   "pass": true,

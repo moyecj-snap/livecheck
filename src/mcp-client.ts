@@ -39,7 +39,12 @@ export type WatchToolBody = {
   interval_s?: number;
   label?: string;
   context?: Record<string, unknown>;
-  on_change?: { run?: "none" | "verify" };
+  on_change?: {
+    run?: "none" | "verify" | "confirm";
+    intent?: "lead_submit" | "listing_published" | "order_placed";
+    url?: string;
+    claim?: Record<string, unknown>;
+  };
   chain_budget_usd?: number | null;
 };
 

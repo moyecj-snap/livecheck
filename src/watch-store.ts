@@ -6,8 +6,10 @@ import type {
   CheckCondition,
   CheckObservation,
   CheckTarget,
+  ConfirmIntent,
   WatchBaseline,
   WatchCallbackDeliver,
+  WatchChainConfirmConfig,
   WatchRun,
   WatchStatus,
 } from "./types.js";
@@ -34,6 +36,7 @@ export type WatcherRow = {
   callback_secret: string;
   callback_deliver: WatchCallbackDeliver;
   run: WatchRun;
+  chain_confirm?: WatchChainConfirmConfig | null;
   chain_budget_usd: number | null;
   chain_balance_atomic: number;
   chain_spent_atomic: number;
@@ -100,7 +103,8 @@ CREATE TABLE IF NOT EXISTS watchers (
   consecutive_failures INTEGER NOT NULL DEFAULT 0,
   unreachable INTEGER NOT NULL DEFAULT 0,
   expiring_emitted INTEGER NOT NULL DEFAULT 0,
-  detector_state_json TEXT
+  detector_state_json TEXT,
+  chain_confirm_json TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_watchers_due ON watchers(status, next_check_at);
 CREATE INDEX IF NOT EXISTS idx_watchers_payer_status ON watchers(payer, status);
@@ -208,6 +212,7 @@ export function migrateWatchStore(db: DatabaseSync): void {
   ensureColumn(db, "watchers", "detector_state_json", "detector_state_json TEXT");
   ensureColumn(db, "watchers", "chain_balance_atomic", "chain_balance_atomic INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "watchers", "chain_spent_atomic", "chain_spent_atomic INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "watchers", "chain_confirm_json", "chain_confirm_json TEXT");
   ensureTable(
     db,
     `CREATE TABLE IF NOT EXISTS watch_delivery_attempts (
@@ -277,6 +282,30 @@ function parseJson<T>(raw: string, fallback: T): T {
   }
 }
 
+function parseWatchRun(raw: unknown): WatchRun {
+  if (raw === "verify" || raw === "confirm") return raw;
+  return "none";
+}
+
+function isConfirmIntent(value: unknown): value is ConfirmIntent {
+  return value === "lead_submit" || value === "listing_published" || value === "order_placed";
+}
+
+function parseChainConfirm(raw: unknown, run: unknown): WatchChainConfirmConfig | null {
+  if (parseWatchRun(run) !== "confirm") return null;
+  if (typeof raw === "string" && raw) {
+    const parsed = parseJson<Partial<WatchChainConfirmConfig>>(raw, {});
+    const intent = isConfirmIntent(parsed.intent) ? parsed.intent : "lead_submit";
+    const url = typeof parsed.url === "string" && parsed.url ? parsed.url : null;
+    const claim =
+      parsed.claim && typeof parsed.claim === "object" && !Array.isArray(parsed.claim)
+        ? parsed.claim
+        : null;
+    return { intent, url, claim };
+  }
+  return { intent: "lead_submit", url: null, claim: null };
+}
+
 function fromSql(item: Record<string, unknown>): WatcherRow | undefined {
   const status = item.status;
   if (status !== "active" && status !== "stopped" && status !== "expired") return undefined;
@@ -316,7 +345,8 @@ function fromSql(item: Record<string, unknown>): WatcherRow | undefined {
     callback_url: String(item.callback_url),
     callback_secret: String(item.callback_secret),
     callback_deliver: item.callback_deliver === "every_check" ? "every_check" : "on_change",
-    run: item.run === "verify" ? "verify" : "none",
+    run: parseWatchRun(item.run),
+    chain_confirm: parseChainConfirm(item.chain_confirm_json, item.run),
     chain_budget_usd: item.chain_budget_usd == null ? null : Number(item.chain_budget_usd),
     chain_balance_atomic: Number(item.chain_balance_atomic ?? 0),
     chain_spent_atomic: Number(item.chain_spent_atomic ?? 0),
@@ -337,7 +367,7 @@ const SELECT_COLS = `id, payer, owner_token_hash, status, tier, target_url, targ
   condition_key, interval_s, checks_remaining, expires_at, first_check_at, next_check_at,
   baseline_json, last_observation_json, callback_url, callback_secret, callback_deliver,
   run, chain_budget_usd, chain_balance_atomic, chain_spent_atomic, label, context_json, created_at, claimed_until,
-  consecutive_failures, unreachable, expiring_emitted, detector_state_json`;
+  consecutive_failures, unreachable, expiring_emitted, detector_state_json, chain_confirm_json`;
 
 export function insertWatcher(row: WatcherRow): void {
   const db = requireDb();
@@ -347,8 +377,8 @@ export function insertWatcher(row: WatcherRow): void {
       condition_key, interval_s, checks_remaining, expires_at, first_check_at, next_check_at,
       baseline_json, last_observation_json, callback_url, callback_secret, callback_deliver,
       run, chain_budget_usd, chain_balance_atomic, chain_spent_atomic, label, context_json, created_at, claimed_until,
-      consecutive_failures, unreachable, expiring_emitted, detector_state_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      consecutive_failures, unreachable, expiring_emitted, detector_state_json, chain_confirm_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     row.id,
     row.payer,
@@ -383,6 +413,7 @@ export function insertWatcher(row: WatcherRow): void {
     row.detector_state && Object.keys(row.detector_state).length > 0
       ? JSON.stringify(row.detector_state)
       : null,
+    row.chain_confirm ? JSON.stringify(row.chain_confirm) : null,
   );
 }
 
@@ -550,7 +581,7 @@ export function creditChainBalance(id: string, atomic: number): number {
 }
 
 /**
- * Atomically debit chain balance for an internal Verify.
+ * Atomically debit chain balance for an internal Verify or Confirm.
  * `budgetAtomic` is a spend cap (null = no cap). Returns false when balance or budget is insufficient.
  */
 export function tryDebitChainBalance(id: string, atomic: number, budgetAtomic: number | null): boolean {
