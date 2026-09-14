@@ -17,7 +17,7 @@ npm test -- test/lead-submit-bench.test.ts test/listing-published-bench.test.ts 
 
 | Intent | N | false_confirmed | FC rate | Report | Recorded |
 | --- | ---: | ---: | ---: | --- | --- |
-| `lead_submit` | 77 | 0 | 0 | `bench/lead-submit-report.json` | this branch (`LEAD_SUBMIT_BENCH_COMMIT`) |
+| `lead_submit` | 77 | 0 | 0 | `bench/lead-submit-report.json` | `9906a99` |
 | `listing_published` | 102 | 0 | 0 | `bench/listing-published-report.json` | main `b10322b` |
 | `order_placed` | 100 | 0 | 0 | `bench/order-placed-report.json` | main `0e9faa1` |
 

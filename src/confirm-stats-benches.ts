@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 export const LISTING_PUBLISHED_BENCH_COMMIT = "b10322b";
 export const ORDER_PLACED_BENCH_COMMIT = "0e9faa1";
 /** This branch's recorded lead_submit honesty report (FC=0, N=77). */
-export const LEAD_SUBMIT_BENCH_COMMIT = "lead-submit-bench";
+export const LEAD_SUBMIT_BENCH_COMMIT = "9906a99";
 
 export const CONFIRM_BENCH_REPORT_DOC = "docs/confirm-benches.md";
 export const LEAD_SUBMIT_BENCH_REPORT_JSON = "bench/lead-submit-report.json";
