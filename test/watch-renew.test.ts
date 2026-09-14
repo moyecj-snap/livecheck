@@ -151,7 +151,7 @@ describe("POST /v1/watch/renew HTTP", () => {
         "x-livecheck-mock": "1",
         "x-livecheck-owner-token": body.owner_token,
       },
-      body: JSON.stringify({ id: "wtc_01J8Z0K3N4P5Q6R7S8T9V0GONE" }),
+      body: JSON.stringify({ id: "wtc_01J8Z0K3N4P5Q6R7S8T9V0XXXX" }),
     });
     assert.equal(unknown.status, 404);
 
