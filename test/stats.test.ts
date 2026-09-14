@@ -13,6 +13,11 @@ import {
 } from "../src/config.js";
 import { openApiDocument } from "../src/discovery.js";
 import {
+  FALLBACK_CONFIRM_BENCHES,
+  benchFromConfirmIntentReport,
+  resetConfirmBenches,
+} from "../src/confirm-stats-benches.js";
+import {
   FALLBACK_SENTINEL_BENCHES,
   benchesFromSentinelReport,
   resetSentinelBenches,
@@ -98,7 +103,7 @@ describe("GET /stats", () => {
     closeWatchStore();
   });
 
-  it("returns 200 JSON with lead_submit placeholders and null false-confirmed rate", async () => {
+  it("returns 200 JSON with lead_submit windows and per-intent Confirm FC benches", async () => {
     const res = await fetch(`${origin}/stats`);
     assert.equal(res.status, 200);
     const body = (await res.json()) as {
@@ -153,7 +158,13 @@ describe("GET /stats", () => {
           note?: string;
         };
       };
-      benches?: { false_confirmed_rate?: unknown; note?: string };
+      benches?: {
+        lead_submit?: { false_confirmed_rate?: number; n?: number; false_confirmed?: number; commit?: string };
+        listing_published?: { false_confirmed_rate?: number; n?: number; false_confirmed?: number; commit?: string };
+        order_placed?: { false_confirmed_rate?: number; n?: number; false_confirmed?: number; commit?: string };
+        note?: string;
+        report?: string;
+      };
       store?: {
         scope?: string;
         confirm_unscoped_paid_calls?: { l7d?: number; l30d?: number };
@@ -175,8 +186,29 @@ describe("GET /stats", () => {
     assert.equal(body.intents?.order_placed?.payable, true);
     assert.equal(body.intents?.order_placed?.price_usd, 0.25);
     assert.equal(body.intents?.order_placed?.status, "ga");
-    assert.equal(body.benches?.false_confirmed_rate, null);
-    assert.match(body.benches?.note ?? "", /not published/i);
+    assert.deepEqual(body.benches?.lead_submit, {
+      false_confirmed_rate: 0,
+      n: 77,
+      false_confirmed: 0,
+      report: "bench/lead-submit-report.json",
+      commit: "a17f56b",
+    });
+    assert.deepEqual(body.benches?.listing_published, {
+      false_confirmed_rate: 0,
+      n: 102,
+      false_confirmed: 0,
+      report: "bench/listing-published-report.json",
+      commit: "b10322b",
+    });
+    assert.deepEqual(body.benches?.order_placed, {
+      false_confirmed_rate: 0,
+      n: 100,
+      false_confirmed: 0,
+      report: "bench/order-placed-report.json",
+      commit: "0e9faa1",
+    });
+    assert.match(body.benches?.note ?? "", /not a live dispute rate/i);
+    assert.equal(body.benches?.report, "docs/confirm-benches.md");
     assert.equal(body.sentinel?.payable, true);
     assert.equal(body.sentinel?.status, "payable");
     assert.equal(body.sentinel?.prices?.check_usd, CHECK_PRICE_USD);
@@ -220,6 +252,12 @@ describe("GET /stats", () => {
     assert.equal(res.status, 200);
     assert.match(res.headers.get("content-type") ?? "", /text\/html/);
     const html = await res.text();
+    assert.match(html, /<h3>Confirm benches<\/h3>/);
+    assert.match(html, /lead_submit/);
+    assert.match(html, /0\/77/);
+    assert.match(html, /0\/102/);
+    assert.match(html, /0\/100/);
+    assert.match(html, /not a live dispute rate/);
     assert.match(html, /<h2>Sentinel<\/h2>/);
     assert.match(html, /Active watchers/);
     assert.match(html, /False-positive rate/);
@@ -390,7 +428,9 @@ describe("OpenAPI Confirm v1.0 spine", () => {
     assert.ok(doc.paths?.["/stats"]);
     assert.match(doc.paths?.["/stats"]?.get?.description ?? "", /Sentinel/);
     assert.match(doc.paths?.["/stats"]?.get?.description ?? "", /sentinel-report\.json/);
-    assert.doesNotMatch(doc.paths?.["/stats"]?.get?.description ?? "", /structured nulls/);
+    assert.match(doc.paths?.["/stats"]?.get?.description ?? "", /false_confirmed_rate/);
+    assert.match(doc.paths?.["/stats"]?.get?.description ?? "", /listing-published-report\.json/);
+    assert.doesNotMatch(doc.paths?.["/stats"]?.get?.description ?? "", /structured null/);
     assert.ok(doc.paths?.["/stats"]?.get?.tags?.includes("Sentinel"));
   });
 });
@@ -411,6 +451,37 @@ describe("Sentinel benches loader", () => {
 
   it("rejects a report missing latency so Fly still uses the fallback", () => {
     assert.equal(benchesFromSentinelReport({ honesty: { status_change: { false_positive_rate: 0, checks: 198 } } }), null);
+  });
+});
+
+describe("Confirm benches loader", () => {
+  after(() => {
+    resetConfirmBenches();
+  });
+
+  it("falls back to landed honesty numbers when reports are missing", () => {
+    const load = resetConfirmBenches(null);
+    assert.equal(load.source, "fallback");
+    assert.deepEqual(load.benches, FALLBACK_CONFIRM_BENCHES);
+    assert.equal(load.benches.lead_submit.n, 77);
+    assert.equal(load.benches.listing_published.n, 102);
+    assert.equal(load.benches.order_placed.n, 100);
+    assert.equal(load.benches.lead_submit.false_confirmed_rate, 0);
+    assert.equal(load.benches.listing_published.commit, "b10322b");
+    assert.equal(load.benches.order_placed.commit, "0e9faa1");
+  });
+
+  it("rejects a report missing n so Fly still uses the fallback for that intent", () => {
+    assert.equal(benchFromConfirmIntentReport("listing_published", { false_confirmed: 0 }), null);
+    assert.equal(benchFromConfirmIntentReport("order_placed", { n: 0, false_confirmed: 0 }), null);
+  });
+
+  it("computes false_confirmed_rate from n and false_confirmed", () => {
+    const bench = benchFromConfirmIntentReport("lead_submit", { n: 50, false_confirmed: 1 });
+    assert.ok(bench);
+    assert.equal(bench.n, 50);
+    assert.equal(bench.false_confirmed, 1);
+    assert.equal(bench.false_confirmed_rate, 0.02);
   });
 });
 
@@ -508,5 +579,8 @@ describe("GET /stats Confirm paid_calls vs receipts honesty", () => {
     assert.equal(doc.intents.order_placed.l7d.paid_calls, 1);
     assert.equal(doc.intents.order_placed.l7d.receipts, 0);
     assert.equal(doc.store.confirm_unscoped_paid_calls.l7d, 0);
+    assert.equal(doc.benches.lead_submit.false_confirmed_rate, 0);
+    assert.equal(doc.benches.lead_submit.n, 77);
+    assert.notEqual(doc.benches.listing_published.n, doc.intents.listing_published.l7d.paid_calls);
   });
 });

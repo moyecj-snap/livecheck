@@ -102,7 +102,8 @@ describe("listing price and description", () => {
     assert.match(OPENAPI_CONFIRM_DESCRIPTION, /listing_published \(\$0\.10\)/);
     assert.match(OPENAPI_CONFIRM_DESCRIPTION, /GET \/v1\/receipt\/\{id\}/);
     assert.match(OPENAPI_CONFIRM_DESCRIPTION, /livecheck-keys\.json/);
-    assert.match(OPENAPI_CONFIRM_DESCRIPTION, /missing ≠ false-confirmed rate of 0/);
+    assert.match(OPENAPI_CONFIRM_DESCRIPTION, /missing ≠ live FC of 0/);
+    assert.match(OPENAPI_CONFIRM_DESCRIPTION, /false_confirmed_rate/);
     assert.match(OPENAPI_CONFIRM_DESCRIPTION, /Trust Oracle \/ L3/);
     assert.match(OPENAPI_CONFIRM_DESCRIPTION, /400 unsupported_intent/);
     assert.match(OPENAPI_CONFIRM_INTENT_DESCRIPTION, /claim\.title\/sku\/id optional/);

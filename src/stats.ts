@@ -13,6 +13,10 @@ import {
 } from "./paid-call-store.js";
 import { countReceiptsSince, emptyReceiptVerdictCounts, receiptStoreStatus } from "./receipt-store.js";
 import {
+  loadConfirmBenches,
+  type ConfirmBenches,
+} from "./confirm-stats-benches.js";
+import {
   loadSentinelBenches,
   type SentinelBenches,
 } from "./sentinel-stats-benches.js";
@@ -22,6 +26,7 @@ import {
   type SentinelDetectorCounts,
 } from "./watch-store.js";
 
+export type { ConfirmBenches } from "./confirm-stats-benches.js";
 export type { SentinelBenches } from "./sentinel-stats-benches.js";
 
 export type ConfirmIntentStats = {
@@ -67,10 +72,7 @@ export type StatsDocument = {
     order_placed: ConfirmIntentStats;
   };
   sentinel: SentinelStats;
-  benches: {
-    false_confirmed_rate: null;
-    note: string;
-  };
+  benches: ConfirmBenches;
   store: StatsStoreScope;
   notes: string[];
 };
@@ -84,9 +86,6 @@ export type IntentWindow = {
     unknown: number;
   };
 };
-
-const BENCH_NOTE =
-  "Accuracy benches are not published. Do not infer a false-confirmed rate from these counts; missing is not zero.";
 
 export function emptyIntentWindow(): IntentWindow {
   return {
@@ -173,6 +172,7 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
     "Bazaar 402 copy stays lead_submit-primary on /v1/confirm. order_placed is a separate fixed-price resource. Sentinel Bazaar GA is held.",
     "paid_calls are confirm-route rows with that intent stored. Pre-intent-column confirm rows are store.confirm_unscoped_paid_calls and are not attributed to lead_submit.",
     "Sentinel checks_run is one-shot POST /v1/check receipts plus scheduled watcher observations (term quota minus checks_remaining). by_detector is SQLite watchers + change events. sentinel.benches are CI/local gate results from bench/sentinel-report.json (fallback: main 590627c), not a live dispute rate.",
+    "Confirm benches.false_confirmed_rate is per-intent CI/local honesty (lead_submit / listing_published / order_placed) from bench/*-report.json, not a live dispute rate. Do not infer FC from paid_calls.",
     VOLUME_NOTE,
   ];
   if (unscoped.l7d > 0 || unscoped.l30d > 0) {
@@ -208,10 +208,7 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
       },
     },
     sentinel: buildSentinelStats(),
-    benches: {
-      false_confirmed_rate: null,
-      note: BENCH_NOTE,
-    },
+    benches: loadConfirmBenches(),
     store: buildStoreScope(unscoped),
     notes,
   };
@@ -226,6 +223,11 @@ export function statsHtml(doc: StatsDocument): string {
     `<tr><td>${intent}</td><td>${label}</td><td>${w.paid_calls}</td><td>${w.receipts}</td><td>${w.by_verdict.confirmed}</td><td>${w.by_verdict.failed}</td><td>${w.by_verdict.unknown}</td></tr>`;
   const detectorRow = (name: string, counts: { watchers: number; change_events: number }) =>
     `<tr><td>${name}</td><td>${counts.watchers}</td><td>${counts.change_events}</td></tr>`;
+  const confirmBenches = doc.benches;
+  const confirmBenchRow = (intent: "lead_submit" | "listing_published" | "order_placed") => {
+    const b = confirmBenches[intent];
+    return `<tr><td>${intent}</td><td>${b.false_confirmed}/${b.n}</td><td>${b.false_confirmed_rate}</td><td>${b.n}</td><td><code>${b.commit}</code></td></tr>`;
+  };
   const fp = sentinel.benches.false_positive_rate;
   const hmac = sentinel.benches.hmac;
   const fires = (rate: number, n: number) => `${Math.round(rate * n)}/${n}`;
@@ -261,7 +263,18 @@ export function statsHtml(doc: StatsDocument): string {
       ${row("order_placed", "L30d", order.l30d)}
     </tbody>
   </table>
-  <p class="muted">${doc.benches.note}</p>
+  <h3>Confirm benches</h3>
+  <table>
+    <thead>
+      <tr><th>Intent</th><th>false_confirmed / N</th><th>false_confirmed_rate</th><th>N</th><th>commit</th></tr>
+    </thead>
+    <tbody>
+      ${confirmBenchRow("lead_submit")}
+      ${confirmBenchRow("listing_published")}
+      ${confirmBenchRow("order_placed")}
+    </tbody>
+  </table>
+  <p class="muted">${confirmBenches.note} Report: <code>${confirmBenches.report}</code>.</p>
   <h2>Sentinel</h2>
   <p>Payable: <code>POST /v1/check</code> $${sentinel.prices.check_usd.toFixed(2)}, <code>POST /v1/watch</code> $${sentinel.prices.watch_usd.toFixed(2)}, <code>POST /v1/watch/{id}/chain/topup</code> $${sentinel.prices.chain_topup_usd.toFixed(2)}. Status: ${sentinel.status} (Bazaar GA held).</p>
   <table>

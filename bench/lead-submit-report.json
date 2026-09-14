@@ -1,0 +1,15 @@
+{
+  "n": 77,
+  "true_submitted": 30,
+  "true_failed": 26,
+  "trap": 21,
+  "confirmed": 30,
+  "failed": 26,
+  "unknown": 21,
+  "false_confirmed": 0,
+  "expect_mismatches": 0,
+  "false_confirmed_ids": [],
+  "failures": [],
+  "fc_zero": true,
+  "path": "scripts/lead-submit-bench.ts"
+}
