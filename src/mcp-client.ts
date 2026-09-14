@@ -255,3 +255,16 @@ export async function watchChainTopup(
     body: {},
   });
 }
+
+export async function watchRenew(
+  id: string,
+  ownerToken: string,
+  options: LivecheckRequestOptions = {},
+): Promise<unknown> {
+  return livecheckRequest("/v1/watch/renew", {
+    ...options,
+    method: "POST",
+    ownerToken,
+    body: { id },
+  });
+}

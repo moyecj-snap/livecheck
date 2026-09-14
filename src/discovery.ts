@@ -1,4 +1,4 @@
-import { CHAIN_TOPUP_OUTPUT_SCHEMA, CHECK_OUTPUT_SCHEMA, CONFIRM_OUTPUT_SCHEMA, VERIFY_OUTPUT_SCHEMA, VERIFY_PAID_EXAMPLE, WATCH_OUTPUT_SCHEMA } from "./bazaar.js";
+import { CHAIN_TOPUP_OUTPUT_SCHEMA, CHECK_OUTPUT_SCHEMA, CONFIRM_OUTPUT_SCHEMA, VERIFY_OUTPUT_SCHEMA, VERIFY_PAID_EXAMPLE, WATCH_OUTPUT_SCHEMA, WATCH_RENEW_OUTPUT_SCHEMA } from "./bazaar.js";
 import {
   OPENAPI_CHAIN_TOPUP_DESCRIPTION,
   OPENAPI_CHAIN_TOPUP_SUMMARY,
@@ -13,6 +13,8 @@ import {
   OPENAPI_ORDER_CONFIRM_INTENT_DESCRIPTION,
   OPENAPI_ORDER_CONFIRM_SUMMARY,
   OPENAPI_WATCH_DESCRIPTION,
+  OPENAPI_WATCH_RENEW_DESCRIPTION,
+  OPENAPI_WATCH_RENEW_SUMMARY,
   OPENAPI_WATCH_SUMMARY,
   VERIFY_DESCRIPTION,
 } from "./config.js";
@@ -35,6 +37,7 @@ export const WELL_KNOWN_X402_ROUTES = [
   { path: "/v1/verify", amount: OPENAPI_PRICE_AMOUNT },
   { path: "/v1/check", amount: OPENAPI_CHECK_PRICE_AMOUNT },
   { path: "/v1/watch", amount: OPENAPI_WATCH_PRICE_AMOUNT },
+  { path: "/v1/watch/renew", amount: OPENAPI_WATCH_PRICE_AMOUNT },
   { path: "/v1/confirm", amount: OPENAPI_CONFIRM_PRICE_AMOUNT },
   { path: "/v1/confirm/order", amount: OPENAPI_ORDER_PLACED_PRICE_AMOUNT },
 ] as const;
@@ -44,6 +47,7 @@ export const PAID_DISCOVERY_ROUTES = [
   { path: "/v1/verify", amount: OPENAPI_PRICE_AMOUNT },
   { path: "/v1/check", amount: OPENAPI_CHECK_PRICE_AMOUNT },
   { path: "/v1/watch", amount: OPENAPI_WATCH_PRICE_AMOUNT },
+  { path: "/v1/watch/renew", amount: OPENAPI_WATCH_PRICE_AMOUNT },
   { path: "/v1/watch/{id}/chain/topup", amount: OPENAPI_CHAIN_TOPUP_PRICE_AMOUNT },
   { path: "/v1/confirm", amount: OPENAPI_CONFIRM_PRICE_AMOUNT },
   { path: "/v1/confirm/order", amount: OPENAPI_ORDER_PLACED_PRICE_AMOUNT },
@@ -298,6 +302,70 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
             },
             "429": {
               description: "rate_limited — 200 active standard watchers per wallet",
+            },
+          },
+        },
+      },
+      "/v1/watch/renew": {
+        post: {
+          operationId: "sentinelWatchRenew",
+          summary: OPENAPI_WATCH_RENEW_SUMMARY,
+          description: OPENAPI_WATCH_RENEW_DESCRIPTION,
+          "x-guidance": OPENAPI_WATCH_RENEW_DESCRIPTION,
+          tags: ["Sentinel", "watch"],
+          "x-payment-info": {
+            price: {
+              mode: "fixed",
+              currency: "USD",
+              amount: OPENAPI_WATCH_PRICE_AMOUNT,
+            },
+            protocols: [{ x402: {} }],
+          },
+          parameters: [
+            {
+              name: "X-Livecheck-Owner-Token",
+              in: "header",
+              required: true,
+              schema: { type: "string" },
+              description: "owt_ token returned once on POST /v1/watch. Required in addition to payment.",
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    id: {
+                      type: "string",
+                      description: "Watcher id (wtc_ + ULID). In the body so the well-known URL stays concrete.",
+                    },
+                  },
+                  required: ["id"],
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description:
+                "Watcher prepaid window extended. owner_token is not returned again. Receipt id is wrn_.",
+              content: {
+                "application/json": {
+                  schema: WATCH_RENEW_OUTPUT_SCHEMA,
+                },
+              },
+            },
+            "400": {
+              description: "invalid_id — missing or malformed watcher id",
+            },
+            "401": { description: "Missing owner token" },
+            "403": { description: "Wrong owner token" },
+            "404": { description: "Unknown watcher" },
+            "409": { description: "not_renewable — watcher is stopped or expired" },
+            "402": {
+              description: "Payment required. Fixed $2.50 USDC (2500000 atomic). One accept.",
             },
           },
         },
@@ -586,7 +654,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
           operationId: "getConfirmReceipt",
           summary: "Fetch a Confirm receipt by id",
           description:
-            "Free. Returns the stored receipt, canonical payload, and verify metadata. Accepts Confirm ids (cfm_), Sentinel check ids (chk_), watcher ids (wtc_), and watch event ids (evt_). Rows persist in receipts.sqlite on the same Fly volume as watchers and survive redeploy. Unsigned when CONFIRM_RECEIPT_PRIVATE_KEY is unset.",
+            "Free. Returns the stored receipt, canonical payload, and verify metadata. Accepts Confirm ids (cfm_), Sentinel check ids (chk_), watcher ids (wtc_), watch renew ids (wrn_), and watch event ids (evt_). Rows persist in receipts.sqlite on the same Fly volume as watchers and survive redeploy. Unsigned when CONFIRM_RECEIPT_PRIVATE_KEY is unset.",
           tags: ["Confirm", "Sentinel"],
           parameters: [
             {
@@ -594,7 +662,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
               in: "path",
               required: true,
               schema: { type: "string" },
-              description: "Confirm id (cfm_ + ULID), check id (chk_ + ULID), watcher id (wtc_ + ULID), or event id (evt_ + ULID).",
+              description: "Confirm id (cfm_ + ULID), check id (chk_ + ULID), watcher id (wtc_ + ULID), renew id (wrn_ + ULID), or event id (evt_ + ULID).",
             },
           ],
           responses: {
@@ -646,11 +714,13 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
  * x402scan DISCOVERY.md compatibility fan-out.
  * resources must be absolute URL strings (not objects) — @agentcash/discovery
  * WellKnownDocSchema is z.array(z.string()).
- * Five concrete paid URLs, one fixed accept each: verify $0.01, check $0.02,
- * watch $2.50, confirm $0.10, confirm/order $0.25.
+ * Concrete paid URLs, one fixed accept each: verify $0.01, check $0.02,
+ * watch $2.50, watch/renew $2.50, confirm $0.10, confirm/order $0.25.
  * POST /v1/watch/{id}/chain/topup ($0.50) stays on OpenAPI as a path-param
  * implementation detail — listing a literal `{id}` URL makes crawlers probe
  * https://…/v1/watch/{id}/chain/topup and get a 402 with an empty body.
+ * Renew is POST /v1/watch/renew with id in the JSON body so the well-known
+ * URL stays concrete.
  */
 export function wellKnownX402(requestUrl?: string, host?: string): Record<string, unknown> {
   const origin = publicOrigin(requestUrl, host);

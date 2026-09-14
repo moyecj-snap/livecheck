@@ -21,7 +21,7 @@ import {
   WATCH_TERM_SECONDS,
   usdFromAtomic,
 } from "./config.js";
-import { newOwnerToken, newWatchId } from "./confirm-id.js";
+import { isWatchId, newOwnerToken, newWatchId } from "./confirm-id.js";
 import { hostnameOnly, isoTs } from "./paid-call.js";
 import { sha256Hex, stableJson } from "./receipt.js";
 import type {
@@ -34,6 +34,7 @@ import type {
   WatchCreateResult,
   WatchEventType,
   WatchPublicView,
+  WatchRenewResult,
   WatchRun,
 } from "./types.js";
 import { parseTargetUrl, VerifyError } from "./verify.js";
@@ -45,6 +46,7 @@ import {
   getWatcher,
   insertWatcher,
   listWatchEventsPage,
+  renewWatcher,
   stopWatcher,
   type WatcherRow,
 } from "./watch-store.js";
@@ -59,7 +61,9 @@ export type WatchErrorCode =
   | "rate_limited"
   | "unauthorized"
   | "forbidden"
-  | "not_found";
+  | "not_found"
+  | "invalid_id"
+  | "not_renewable";
 
 export class WatchError extends Error {
   readonly code: WatchErrorCode;
@@ -298,8 +302,27 @@ export async function captureBaseline(
   }
 }
 
+export function watchTermExpiresAt(from: Date): string {
+  return isoTs(new Date(from.getTime() + WATCH_TERM_DAYS * 86_400_000));
+}
+
 function expiresAt(now: Date): string {
-  return isoTs(new Date(now.getTime() + WATCH_TERM_DAYS * 86_400_000));
+  return watchTermExpiresAt(now);
+}
+
+export function parseWatchRenewRequest(body: unknown): { id: string } {
+  if (!isRecord(body)) {
+    throw new WatchError("invalid_id", "JSON body must be { id }.", 400);
+  }
+  const id = (body as { id?: unknown }).id;
+  if (typeof id !== "string" || !id.trim()) {
+    throw new WatchError("invalid_id", "id is required.", 400);
+  }
+  const trimmed = id.trim();
+  if (!isWatchId(trimmed)) {
+    throw new WatchError("invalid_id", "id must be a watcher id (wtc_ + ULID).", 400);
+  }
+  return { id: trimmed };
 }
 
 export function publicWatcherView(row: WatcherRow): WatchPublicView {
@@ -450,6 +473,46 @@ export async function createWatch(
   };
   if (parsed.label) result.label = parsed.label;
   return { result, ownerToken, observation };
+}
+
+export function renewWatch(
+  body: unknown,
+  ownerToken: string | undefined,
+  now = new Date(),
+): Omit<WatchRenewResult, "receipt"> {
+  const { id } = parseWatchRenewRequest(body);
+  const row = requireOwnerToken(ownerToken, getWatcher(id));
+  if (row.status !== "active") {
+    throw new WatchError("not_renewable", "Only an active watcher can be renewed.", 409);
+  }
+  const currentExpiry = Date.parse(row.expires_at);
+  const baseMs = Number.isFinite(currentExpiry) ? Math.max(now.getTime(), currentExpiry) : now.getTime();
+  const expires_at = watchTermExpiresAt(new Date(baseMs));
+  const checks_remaining = row.checks_remaining + checksRemainingForInterval(row.interval_s);
+  if (!renewWatcher(row.id, { expires_at, checks_remaining })) {
+    throw new WatchError("not_renewable", "Only an active watcher can be renewed.", 409);
+  }
+  const updated = getWatcher(row.id) ?? { ...row, expires_at, checks_remaining, expiring_emitted: false };
+  const result: Omit<WatchRenewResult, "receipt"> = {
+    id: updated.id,
+    tier: "standard",
+    status: updated.status,
+    expires_at: updated.expires_at,
+    checks_remaining: updated.checks_remaining,
+    interval_s: updated.interval_s,
+    first_check_at: updated.first_check_at,
+    next_check_at: updated.next_check_at,
+    baseline: updated.baseline,
+    target: updated.target,
+    condition: updated.condition,
+    price_usd: WATCH_PRICE_USD,
+    run: updated.run,
+    on_change: { run: updated.run },
+    chain_budget_usd: updated.chain_budget_usd,
+    chain_balance_usd: usdFromAtomic(updated.chain_balance_atomic),
+  };
+  if (updated.label) result.label = updated.label;
+  return result;
 }
 
 export function topupWatchChain(

@@ -5,6 +5,7 @@ import {
   orderConfirmBazaarExtensions,
   verifyBazaarExtensions,
   watchBazaarExtensions,
+  watchRenewBazaarExtensions,
 } from "./bazaar.js";
 import {
   CHAIN_TOPUP_PAYMENT_DESCRIPTION,
@@ -22,6 +23,7 @@ import {
   VERIFY_DESCRIPTION,
   WATCH_PAYMENT_DESCRIPTION,
   WATCH_PRICE_ATOMIC_USDC,
+  WATCH_RENEW_PAYMENT_DESCRIPTION,
   payToAddress,
 } from "./config.js";
 import {
@@ -31,6 +33,7 @@ import {
   publicConfirmUrl,
   publicVerifyUrl,
   publicWatchChainTopupUrl,
+  publicWatchRenewUrl,
   publicWatchUrl,
 } from "./public-url.js";
 
@@ -141,6 +144,20 @@ export function watchPaymentRequiredBody(resourceUrl: string): PaymentRequiredBo
   };
 }
 
+export function watchRenewPaymentRequiredBody(resourceUrl: string): PaymentRequiredBody {
+  return {
+    x402Version: 2,
+    error: "PAYMENT-SIGNATURE header is required",
+    resource: {
+      url: resourceUrl,
+      description: WATCH_RENEW_PAYMENT_DESCRIPTION,
+      mimeType: "application/json",
+    },
+    accepts: [accept(WATCH_PRICE_ATOMIC_USDC)],
+    extensions: watchRenewBazaarExtensions(),
+  };
+}
+
 export function chainTopupPaymentRequiredBody(resourceUrl: string): PaymentRequiredBody {
   return {
     x402Version: 2,
@@ -182,6 +199,12 @@ function advertisedResource(kind: ReturnType<typeof paidResourceKind>, requestUr
       description: CHECK_PAYMENT_DESCRIPTION,
     };
   }
+  if (kind === "watch_renew") {
+    return {
+      url: publicWatchRenewUrl(requestUrl, host),
+      description: WATCH_RENEW_PAYMENT_DESCRIPTION,
+    };
+  }
   if (kind === "watch") {
     return {
       url: publicWatchUrl(requestUrl, host),
@@ -204,6 +227,7 @@ function routeBazaar(kind: ReturnType<typeof paidResourceKind>): Record<string, 
   if (kind === "confirm_order") return orderConfirmBazaarExtensions();
   if (kind === "confirm") return confirmBazaarExtensions();
   if (kind === "check") return checkBazaarExtensions();
+  if (kind === "watch_renew") return watchRenewBazaarExtensions();
   if (kind === "watch") return watchBazaarExtensions();
   if (kind === "chain_topup") return chainTopupBazaarExtensions();
   return verifyBazaarExtensions();

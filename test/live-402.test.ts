@@ -8,6 +8,7 @@ import {
   CHECK_PAYMENT_DESCRIPTION,
   CONFIRM_PAYMENT_DESCRIPTION,
   WATCH_PAYMENT_DESCRIPTION,
+  WATCH_RENEW_PAYMENT_DESCRIPTION,
   MOCK_PAY_TO,
   NETWORK,
   ORDER_PAYMENT_DESCRIPTION,
@@ -158,6 +159,23 @@ describe("live @x402/hono 402 (decoded payment-required)", () => {
     const resource = decoded.resource as { url?: string; description?: string };
     assert.equal(resource.url, "https://livecheck.fly.dev/v1/watch");
     assert.equal(resource.description, WATCH_PAYMENT_DESCRIPTION);
+    const accepts = decoded.accepts as Array<{ amount?: string; extra?: { name?: string; version?: string } }>;
+    assert.equal(accepts.length, 1);
+    assert.equal(accepts[0]?.amount, "2500000");
+    assert.deepEqual(accepts[0]?.extra, { name: "USD Coin", version: "2" });
+  });
+
+  it("watch renew 402 is one $2.50 accept with the concrete renew URL", async () => {
+    const res = await fetch(`${origin}/v1/watch/renew`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "wtc_01M26F7JFYRFCCBSQVNW1B0E3M" }),
+    });
+    assert.equal(res.status, 402);
+    const decoded = decode402(res);
+    const resource = decoded.resource as { url?: string; description?: string };
+    assert.equal(resource.url, "https://livecheck.fly.dev/v1/watch/renew");
+    assert.equal(resource.description, WATCH_RENEW_PAYMENT_DESCRIPTION);
     const accepts = decoded.accepts as Array<{ amount?: string; extra?: { name?: string; version?: string } }>;
     assert.equal(accepts.length, 1);
     assert.equal(accepts[0]?.amount, "2500000");

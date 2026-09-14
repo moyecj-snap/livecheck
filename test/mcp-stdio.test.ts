@@ -51,7 +51,7 @@ describe("livecheck MCP stdio", () => {
     assert.deepEqual([...MCP_PAID_TOOLS], ["verify", "check", "confirm", "watch"]);
     assert.deepEqual([...MCP_COMPAT_TOOLS], ["verify_listing"]);
     assert.deepEqual([...MCP_WATCH_FOLLOWUP_TOOLS], ["watch_get", "watch_events", "watch_stop"]);
-    assert.deepEqual([...MCP_WATCH_PAID_FOLLOWUP_TOOLS], ["watch_chain_topup"]);
+    assert.deepEqual([...MCP_WATCH_PAID_FOLLOWUP_TOOLS], ["watch_chain_topup", "watch_renew"]);
     for (const name of MCP_TOOL_NAMES) {
       assert.equal(MCP_TOOL_NAMES.filter((item) => item === name).length, 1);
     }

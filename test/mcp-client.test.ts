@@ -27,6 +27,7 @@ import {
   watchChainTopup,
   watchGet,
   watchListing,
+  watchRenew,
 } from "../src/mcp-client.js";
 
 describe("mcp client mapping", () => {
@@ -246,5 +247,20 @@ describe("mcp client against the local HTTP app", () => {
     };
     assert.equal(topup.paid, false);
     assert.equal(topup.http, 402);
+
+    let renewHeaders: Headers | undefined;
+    let renewUrl = "";
+    const renew = (await watchRenew("wtc_01MISSING", "owt_01TOKEN", {
+      env: envFor(),
+      fetchImpl: async (input, init) => {
+        renewUrl = String(input);
+        renewHeaders = new Headers(init?.headers);
+        return fetch(input, init);
+      },
+    })) as { paid: boolean; http: number };
+    assert.match(renewUrl, /\/v1\/watch\/renew$/);
+    assert.equal(renewHeaders?.get("x-livecheck-owner-token"), "owt_01TOKEN");
+    assert.equal(renew.paid, false);
+    assert.equal(renew.http, 402);
   });
 });

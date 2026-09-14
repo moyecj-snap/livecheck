@@ -522,6 +522,21 @@ export function stopWatcher(id: string): boolean {
   return Number(result.changes) > 0;
 }
 
+/** Extend an active watcher's prepaid window. Returns false when not active. */
+export function renewWatcher(id: string, input: { expires_at: string; checks_remaining: number }): boolean {
+  const db = requireDb();
+  const result = db
+    .prepare(
+      `UPDATE watchers
+       SET expires_at = ?,
+           checks_remaining = ?,
+           expiring_emitted = 0
+       WHERE id = ? AND status = 'active'`,
+    )
+    .run(input.expires_at, input.checks_remaining, id);
+  return Number(result.changes) > 0;
+}
+
 /** Credit prepaid chain balance (atomic USDC). Returns the new balance. */
 export function creditChainBalance(id: string, atomic: number): number {
   const db = requireDb();

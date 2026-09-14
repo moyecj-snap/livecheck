@@ -16,6 +16,7 @@ import {
   WATCH_DESCRIPTION,
   WATCH_OWNER_TOKEN_HEADER,
   WATCH_PRICE_USD,
+  WATCH_RENEW_DESCRIPTION,
   isLiveSettlement,
   missingLiveKeyNames,
 } from "./config.js";
@@ -32,7 +33,7 @@ import { discoveryHeaders, openApiDocument, wellKnownX402 } from "./discovery.js
 import { FIXTURES } from "./fixtures.js";
 import { recordSuccessfulPaidCheck, withPaidCallContext } from "./paid-call.js";
 import { applyPaymentGate, settlementMode } from "./payments.js";
-import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl, publicWatchChainTopupUrl, publicWatchUrl } from "./public-url.js";
+import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl, publicWatchChainTopupUrl, publicWatchRenewUrl, publicWatchUrl } from "./public-url.js";
 import { isReceiptId } from "./confirm-id.js";
 import {
   livecheckKeysDocument,
@@ -41,10 +42,11 @@ import {
   sealCheckResult,
   sealConfirmResultDetailed,
   sealWatchResult,
+  sealWatchRenewResult,
 } from "./receipt.js";
 import { buildStatsDocument, statsHtml } from "./stats.js";
 import { VerifyError, parseTargetUrl, verifyUrl } from "./verify.js";
-import { WatchError, createWatch, deleteWatch, listWatchEventsForOwner, readWatch, topupWatchChain, watchErrorBody } from "./watch.js";
+import { WatchError, createWatch, deleteWatch, listWatchEventsForOwner, readWatch, renewWatch, topupWatchChain, watchErrorBody } from "./watch.js";
 import { withWatchHint } from "./watch-hint.js";
 import { resolveWatchPayer, withWatchPayerContext } from "./watch-payer.js";
 
@@ -118,18 +120,21 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
       public_confirm_order_url: publicConfirmOrderUrl(c.req.url),
       public_check_url: publicCheckUrl(c.req.url),
       public_watch_url: publicWatchUrl(c.req.url),
+      public_watch_renew_url: publicWatchRenewUrl(c.req.url),
       public_chain_topup_url: publicWatchChainTopupUrl(c.req.url),
       bazaar: true,
       ebay: isEbayAdapterEnabled(),
       confirm: true,
       check: true,
       watch: true,
+      watch_renew: true,
       chain_topup: true,
       receipt_signing: receiptSigningEnabled(),
       description: VERIFY_DESCRIPTION,
       confirm_description: CONFIRM_DESCRIPTION,
       check_description: CHECK_DESCRIPTION,
       watch_description: WATCH_DESCRIPTION,
+      watch_renew_description: WATCH_RENEW_DESCRIPTION,
       chain_topup_description: CHAIN_TOPUP_DESCRIPTION,
       user_agent: USER_AGENT,
     });
@@ -175,6 +180,7 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
   app.post("/v1/confirm/order", (c) => handlePaidConfirm(c, parseOrderConfirmRequest));
   app.post("/v1/check", handlePaidCheck);
   app.post("/v1/watch", handlePaidWatch);
+  app.post("/v1/watch/renew", handlePaidWatchRenew);
   app.post("/v1/watch/:id/chain/topup", handleChainTopup);
   app.get("/v1/watch/:id/events", handleListWatchEvents);
   app.get("/v1/watch/:id", handleGetWatch);
@@ -235,6 +241,29 @@ async function handlePaidWatch(c: Context) {
     }
     if (error instanceof VerifyError) {
       return c.json({ error: "invalid_target", message: error.message }, error.status as 400 | 502 | 504);
+    }
+    throw error;
+  }
+}
+
+async function handlePaidWatchRenew(c: Context) {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid_id", message: "Request body must be JSON." }, 400);
+  }
+  try {
+    const renewed = renewWatch(body, ownerTokenFrom(c));
+    const result = sealWatchRenewResult(renewed, {
+      url: renewed.target.url,
+      requestUrl: c.req.url,
+      host: c.req.header("host"),
+    });
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof WatchError) {
+      return c.json(watchErrorBody(error), error.status as 400 | 401 | 403 | 404 | 409 | 429);
     }
     throw error;
   }

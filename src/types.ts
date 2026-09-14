@@ -202,6 +202,9 @@ export type WatchCreateResult = {
   label?: string;
 };
 
+/** Same create shape minus owner_token (returned once on create). */
+export type WatchRenewResult = Omit<WatchCreateResult, "owner_token">;
+
 export type WatchPublicView = {
   id: string;
   tier: "standard";
