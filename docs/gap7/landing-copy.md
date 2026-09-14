@@ -28,6 +28,7 @@ Label clearly **live from API** — never invent numbers.
 **Confirm (per intent)** — from `intents.*.l7d` / `l30d`:
 - paid_calls, receipts, by_verdict (confirmed / failed / unknown)
 - status badge: `ga` / payable
+- benches (CI/local, not live): `benches.{lead_submit,listing_published,order_placed}` `false_confirmed_rate` + `n`
 
 **Sentinel** — from `sentinel`:
 - active_watchers, checks_run, change_events
@@ -35,7 +36,7 @@ Label clearly **live from API** — never invent numbers.
 - benches: false_positive_rate (per detector), median_latency_ms, latency_p95_ms  
   (Render whatever `/stats` returns; if null, show “not published” not 0.)
 
-**Notes** — from `notes` / honesty: thank-you alone never confirmed; missing bench ≠ zero.
+**Notes** — from `notes` / honesty: thank-you alone never confirmed; Confirm FC benches are CI/local, not a live dispute rate.
 
 CTA buttons: OpenAPI · Stats JSON (`/stats?format=json`) · x402scan · skill `npx skills add moyecj-snap/livecheck`
 

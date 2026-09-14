@@ -7,6 +7,7 @@ import { initPaidCallStore } from "./paid-call-store.js";
 import { rescueMisplacedReceipts } from "./receipt-rescue.js";
 import { initReceiptStore } from "./receipt-store.js";
 import { startWatchScheduler } from "./watch-scheduler.js";
+import { confirmBenchesLoadInfo } from "./confirm-stats-benches.js";
 import { sentinelBenchesLoadInfo } from "./sentinel-stats-benches.js";
 import { initWatchStore } from "./watch-store.js";
 
@@ -55,6 +56,12 @@ if (watchStore.ok) {
   console.warn(`watch persistence failed (${watchStore.reason}). Watchers will not survive this process.`);
 }
 startWatchScheduler();
+
+const confirmBenches = confirmBenchesLoadInfo();
+const cb = confirmBenches.benches;
+console.log(
+  `confirm benches: source=${confirmBenches.source} lead_submit=${cb.lead_submit.false_confirmed}/${cb.lead_submit.n} listing_published=${cb.listing_published.false_confirmed}/${cb.listing_published.n} order_placed=${cb.order_placed.false_confirmed}/${cb.order_placed.n}`,
+);
 
 const sentinelBenches = sentinelBenchesLoadInfo();
 console.log(
