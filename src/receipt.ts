@@ -7,8 +7,8 @@ import {
   verify,
   type KeyObject,
 } from "node:crypto";
-import { newCheckId, newConfirmId, newEventId, newWatchId } from "./confirm-id.js";
-import { hashUrl } from "./paid-call.js";
+import { newCheckId, newConfirmId, newEventId, newWatchId, newWatchRenewId } from "./confirm-id.js";
+import { hashUrl, isoTs } from "./paid-call.js";
 import { getConfirmReceipt, rememberConfirmReceipt, type ConfirmReceiptRow } from "./receipt-store.js";
 import { publicOrigin } from "./public-url.js";
 import type {
@@ -19,6 +19,7 @@ import type {
   EvidenceLevel,
   WatchCreateResult,
   WatchEventType,
+  WatchRenewResult,
 } from "./types.js";
 
 export const RECEIPT_SIGNER_KID = "livecheck-confirm-v1" as const;
@@ -450,6 +451,73 @@ export function sealWatchResult(
   rememberConfirmReceipt(row);
 
   return { ...result, id, receipt };
+}
+
+/** Confirm-style additive receipt for watch renew. wrn_ id so create wtc_ is not overwritten. */
+export function sealWatchRenewResult(
+  result: Omit<WatchRenewResult, "receipt">,
+  input: {
+    url: string;
+    requestUrl?: string;
+    host?: string;
+    now?: Date;
+  },
+): WatchRenewResult {
+  const receiptId = newWatchRenewId(input.now?.getTime());
+  const observedAt = result.first_check_at;
+  const evidenceSummary = sha256Hex(
+    stableJson({
+      watcher_id: result.id,
+      expires_at: result.expires_at,
+      checks_remaining: result.checks_remaining,
+      interval_s: result.interval_s,
+    }),
+  );
+  const canonicalPayload: ReceiptCanonical = {
+    id: receiptId,
+    intent: "watch_renew",
+    verdict: "renewed",
+    confidence: result.baseline.captured ? 0.85 : 0.2,
+    evidence_level: result.baseline.captured ? 1 : 0,
+    evidence_summary_or_hash: evidenceSummary,
+    observed_at: observedAt,
+    url_hash: hashUrl(input.url),
+    claim_hash: hashClaim({
+      watcher_id: result.id,
+      expires_at: result.expires_at,
+      checks_remaining: result.checks_remaining,
+      interval_s: result.interval_s,
+    }),
+  };
+  const canonical = canonicalizeReceiptPayload(canonicalPayload);
+  const hash = sha256Hex(canonical);
+  const signer = loadReceiptSigner();
+  const signature = signer ? signCanonical(canonical, signer) : undefined;
+  const verifyUrl = publicReceiptUrl(receiptId, input.requestUrl, input.host);
+  const receipt: ConfirmReceipt = { hash, verify_url: verifyUrl };
+  if (signature && signer) {
+    receipt.signature = signature;
+    receipt.signer = signer.kid;
+  }
+
+  const row: ConfirmReceiptRow = {
+    id: receiptId,
+    intent: "watch_renew",
+    verdict: "renewed",
+    confidence: canonicalPayload.confidence,
+    evidence_level: canonicalPayload.evidence_level,
+    canonical_json: canonical,
+    payload_hash: hash,
+    signature: signature ?? null,
+    signer: signer?.kid ?? null,
+    observed_at: observedAt,
+    url_hash: canonicalPayload.url_hash,
+    claim_hash: canonicalPayload.claim_hash,
+    created_at: isoTs(input.now ?? new Date()),
+  };
+  rememberConfirmReceipt(row);
+
+  return { ...result, receipt };
 }
 
 /** Confirm-style Ed25519 receipt for a watch event. Same key family; id prefix is evt_. */

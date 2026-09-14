@@ -163,6 +163,10 @@ describe("discovery documents (mock gate)", () => {
     assert.ok(watch, "expected POST /v1/watch");
     assert.equal(watch["x-payment-info"]?.price?.amount, "2.50");
     assert.equal(watch["x-payment-info"]?.intent_prices, undefined);
+    const renew = (doc.paths as Record<string, { post?: typeof confirm }>)?.["/v1/watch/renew"]?.post;
+    assert.ok(renew, "expected POST /v1/watch/renew");
+    assert.equal(renew["x-payment-info"]?.price?.amount, "2.50");
+    assert.equal(renew["x-payment-info"]?.intent_prices, undefined);
     const topup = (doc.paths as Record<string, { post?: typeof confirm }>)?.["/v1/watch/{id}/chain/topup"]?.post;
     assert.ok(topup, "expected POST /v1/watch/{id}/chain/topup");
     assert.equal(topup["x-payment-info"]?.price?.amount, "0.50");
@@ -214,6 +218,7 @@ describe("discovery documents (mock gate)", () => {
       "https://livecheck.fly.dev/v1/verify",
       "https://livecheck.fly.dev/v1/check",
       "https://livecheck.fly.dev/v1/watch",
+      "https://livecheck.fly.dev/v1/watch/renew",
       "https://livecheck.fly.dev/v1/confirm",
       "https://livecheck.fly.dev/v1/confirm/order",
     ]);
@@ -221,7 +226,7 @@ describe("discovery documents (mock gate)", () => {
     assert.equal(typeof body.resources[0], "string");
     assert.deepEqual(
       WELL_KNOWN_X402_ROUTES.map((r) => r.path),
-      ["/v1/verify", "/v1/check", "/v1/watch", "/v1/confirm", "/v1/confirm/order"],
+      ["/v1/verify", "/v1/check", "/v1/watch", "/v1/watch/renew", "/v1/confirm", "/v1/confirm/order"],
     );
     for (const url of body.resources as string[]) {
       assert.equal(url.includes("{"), false, `crawler resource must not be templated: ${url}`);

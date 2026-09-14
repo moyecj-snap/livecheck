@@ -51,7 +51,13 @@ export function isCheckId(value: string): boolean {
 }
 
 export function isReceiptId(value: string): boolean {
-  return isConfirmId(value) || isCheckId(value) || isWatchId(value) || isEventId(value);
+  return (
+    isConfirmId(value) ||
+    isCheckId(value) ||
+    isWatchId(value) ||
+    isWatchRenewId(value) ||
+    isEventId(value)
+  );
 }
 
 /** Sentinel watcher id: `wtc_` + Crockford ULID. Same receipt store as Confirm/check. */
@@ -70,6 +76,15 @@ export function newOwnerToken(now = Date.now()): string {
 
 export function isOwnerToken(value: string): boolean {
   return /^owt_[0-9A-HJKMNP-TV-Z]{26}$/.test(value);
+}
+
+/** Sentinel watch renew receipt: `wrn_` + Crockford ULID. Same receipt store; does not overwrite wtc_. */
+export function newWatchRenewId(now = Date.now()): string {
+  return `wrn_${ulid(now)}`;
+}
+
+export function isWatchRenewId(value: string): boolean {
+  return /^wrn_[0-9A-HJKMNP-TV-Z]{26}$/.test(value);
 }
 
 /** Sentinel watch event id: `evt_` + Crockford ULID. Same receipt store as Confirm/check/watch. */

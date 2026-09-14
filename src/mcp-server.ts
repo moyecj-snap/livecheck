@@ -9,6 +9,7 @@ import {
   watchEvents,
   watchGet,
   watchListing,
+  watchRenew,
   watchStop,
   verifyListing,
 } from "./mcp-client.js";
@@ -22,8 +23,8 @@ export const MCP_PAID_TOOLS = ["verify", "check", "confirm", "watch"] as const;
 export const MCP_COMPAT_TOOLS = ["verify_listing"] as const;
 /** Free owner-token follow-ups already on Fly. */
 export const MCP_WATCH_FOLLOWUP_TOOLS = ["watch_get", "watch_events", "watch_stop"] as const;
-/** Paid owner-token follow-up ($0.50). */
-export const MCP_WATCH_PAID_FOLLOWUP_TOOLS = ["watch_chain_topup"] as const;
+/** Paid owner-token follow-ups. */
+export const MCP_WATCH_PAID_FOLLOWUP_TOOLS = ["watch_chain_topup", "watch_renew"] as const;
 
 export const MCP_TOOL_NAMES = [
   ...MCP_COMPAT_TOOLS,
@@ -187,7 +188,7 @@ export function createLivecheckMcp(): McpServer {
     "watch",
     {
       title: "Sentinel watch",
-      description: `Create a 30-day standard watcher. Wraps POST /v1/watch ($2.50 USDC). Returns owner_token once — store it for watch_get / watch_events / watch_stop / watch_chain_topup. HMAC callbacks go to callback.url (see examples/sentinel-webhook.ts). No Playwright / fast tier. ${NO_WALLET_NOTE}`,
+      description: `Create a 30-day standard watcher. Wraps POST /v1/watch ($2.50 USDC). Returns owner_token once — store it for watch_get / watch_events / watch_stop / watch_chain_topup / watch_renew. HMAC callbacks go to callback.url (see examples/sentinel-webhook.ts). No Playwright / fast tier. ${NO_WALLET_NOTE}`,
       inputSchema: {
         target: targetShape,
         condition: conditionShape,
@@ -295,6 +296,26 @@ export function createLivecheckMcp(): McpServer {
     async ({ id, owner_token, payment_signature }) => {
       try {
         return toolResult(await watchChainTopup(id, owner_token, { paymentSignature: payment_signature }));
+      } catch (error) {
+        return toolError(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "watch_renew",
+    {
+      title: "Renew watcher",
+      description: `Paid POST /v1/watch/renew ($2.50 USDC). Same price as watch create. Body {id}. Owner token + payment. Extends an active watcher's prepaid window. ${NO_WALLET_NOTE}`,
+      inputSchema: {
+        id: z.string().describe("Watcher id (wtc_…)."),
+        owner_token: z.string().describe("owt_… token from watch create."),
+        payment_signature: paymentSignature,
+      },
+    },
+    async ({ id, owner_token, payment_signature }) => {
+      try {
+        return toolResult(await watchRenew(id, owner_token, { paymentSignature: payment_signature }));
       } catch (error) {
         return toolError(error);
       }

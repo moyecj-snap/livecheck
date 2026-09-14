@@ -5,6 +5,7 @@ import {
   orderConfirmBazaarExtensions,
   verifyBazaarExtensions,
   watchBazaarExtensions,
+  watchRenewBazaarExtensions,
 } from "./bazaar.js";
 import {
   CHAIN_TOPUP_PAYMENT_DESCRIPTION,
@@ -15,6 +16,7 @@ import {
   ORDER_PAYMENT_DESCRIPTION,
   VERIFY_DESCRIPTION,
   WATCH_PAYMENT_DESCRIPTION,
+  WATCH_RENEW_PAYMENT_DESCRIPTION,
 } from "./config.js";
 import {
   parseWatchChainTopupId,
@@ -23,6 +25,7 @@ import {
   publicConfirmUrl,
   publicVerifyUrl,
   publicWatchChainTopupUrl,
+  publicWatchRenewUrl,
   publicWatchUrl,
 } from "./public-url.js";
 
@@ -44,7 +47,7 @@ export type PaymentEnvelope = {
 };
 
 export function advertisedResourceInfo(
-  kind: "verify" | "confirm" | "confirm_order" | "check" | "watch" | "chain_topup" = "verify",
+  kind: "verify" | "confirm" | "confirm_order" | "check" | "watch" | "watch_renew" | "chain_topup" = "verify",
   inboundUrl?: string,
 ): CatalogResourceInfo {
   if (kind === "confirm_order") {
@@ -67,6 +70,13 @@ export function advertisedResourceInfo(
     return {
       url: publicCheckUrl(),
       description: CHECK_PAYMENT_DESCRIPTION,
+      mimeType: "application/json",
+    };
+  }
+  if (kind === "watch_renew") {
+    return {
+      url: publicWatchRenewUrl(),
+      description: WATCH_RENEW_PAYMENT_DESCRIPTION,
       mimeType: "application/json",
     };
   }
@@ -99,10 +109,11 @@ export function advertisedResourceInfo(
   };
 }
 
-function resourceKindFromUrl(url: string | undefined): "verify" | "confirm" | "confirm_order" | "check" | "watch" | "chain_topup" {
+function resourceKindFromUrl(url: string | undefined): "verify" | "confirm" | "confirm_order" | "check" | "watch" | "watch_renew" | "chain_topup" {
   if (url && /\/v1\/confirm\/order\/?(\?|$)/i.test(url)) return "confirm_order";
   if (url && /\/v1\/confirm\/?(\?|$)/i.test(url)) return "confirm";
   if (url && /\/v1\/watch\/[^/?#]+\/chain\/topup\/?(\?|$)/i.test(url)) return "chain_topup";
+  if (url && /\/v1\/watch\/renew\/?(\?|$)/i.test(url)) return "watch_renew";
   if (url && /\/v1\/watch\/?(\?|$)/i.test(url)) return "watch";
   if (url && /\/v1\/check\/?(\?|$)/i.test(url)) return "check";
   return "verify";
@@ -163,7 +174,9 @@ export function fillCatalogPaymentPayload(payload: PaymentEnvelope): {
           ? confirmBazaarExtensions()
           : kind === "check"
             ? checkBazaarExtensions()
-            : kind === "watch"
+            : kind === "watch_renew"
+              ? watchRenewBazaarExtensions()
+              : kind === "watch"
               ? watchBazaarExtensions()
               : kind === "chain_topup"
                 ? chainTopupBazaarExtensions()

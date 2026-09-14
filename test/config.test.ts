@@ -16,6 +16,7 @@ import {
   WATCH_PAYMENT_DESCRIPTION,
   WATCH_PRICE_ATOMIC_USDC,
   WATCH_PRICE_USD,
+  WATCH_RENEW_PAYMENT_DESCRIPTION,
   ORDER_PLACED_PRICE_ATOMIC_USDC,
   ORDER_PLACED_PRICE_USD,
   CONFIRM_RESOURCE_TAGS,
@@ -78,6 +79,11 @@ describe("listing price and description", () => {
       [...WATCH_PAYMENT_DESCRIPTION].every((ch) => ch.charCodeAt(0) < 128),
       true,
     );
+    assert.equal(
+      [...WATCH_RENEW_PAYMENT_DESCRIPTION].every((ch) => ch.charCodeAt(0) < 128),
+      true,
+    );
+    assert.equal(WATCH_RENEW_PAYMENT_DESCRIPTION.includes("$2.50"), true);
     assert.equal(
       [...CHECK_PAYMENT_DESCRIPTION].every((ch) => ch.charCodeAt(0) < 128),
       true,

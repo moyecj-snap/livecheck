@@ -7,7 +7,7 @@ function stripTrailingSlash(value: string): string {
 /** Strip a paid Livecheck path so MCP can keep LIVECHECK_URL=/v1/verify. */
 export function originOnly(value: string): string {
   return stripTrailingSlash(value).replace(
-    /\/v1\/(verify|check|watch(\/[^/]+\/chain\/topup)?|confirm(\/order)?)$/i,
+    /\/v1\/(verify|check|watch(\/renew|\/[^/]+\/chain\/topup)?|confirm(\/order)?)$/i,
     "",
   );
 }
@@ -82,6 +82,10 @@ export function publicWatchUrl(requestUrl?: string, host?: string): string {
   return `${publicOrigin(requestUrl, host)}/v1/watch`;
 }
 
+export function publicWatchRenewUrl(requestUrl?: string, host?: string): string {
+  return `${publicOrigin(requestUrl, host)}/v1/watch/renew`;
+}
+
 export const CHAIN_TOPUP_ID_PLACEHOLDER = "{id}";
 
 export function parseWatchChainTopupId(pathOrUrl: string): string | undefined {
@@ -105,7 +109,14 @@ export function publicWatchChainTopupUrl(requestUrl?: string, host?: string, wat
   return `${publicOrigin(requestUrl, host)}/v1/watch/${id}/chain/topup`;
 }
 
-export type PaidResourceKind = "verify" | "confirm" | "confirm_order" | "check" | "watch" | "chain_topup";
+export type PaidResourceKind =
+  | "verify"
+  | "confirm"
+  | "confirm_order"
+  | "check"
+  | "watch"
+  | "watch_renew"
+  | "chain_topup";
 
 function pathnameOf(requestUrl?: string): string | undefined {
   if (!requestUrl) return undefined;
@@ -135,8 +146,14 @@ export function isCheckRequestPath(requestUrl?: string): boolean {
   return Boolean(requestUrl && /\/v1\/check\/?(\?|$)/i.test(requestUrl));
 }
 
+export function isWatchRenewRequestPath(requestUrl?: string): boolean {
+  const pathname = pathnameOf(requestUrl);
+  if (pathname) return pathname.endsWith("/v1/watch/renew");
+  return Boolean(requestUrl && /\/v1\/watch\/renew\/?(\?|$)/i.test(requestUrl));
+}
+
 export function isWatchRequestPath(requestUrl?: string): boolean {
-  if (isChainTopupRequestPath(requestUrl)) return false;
+  if (isWatchRenewRequestPath(requestUrl) || isChainTopupRequestPath(requestUrl)) return false;
   const pathname = pathnameOf(requestUrl);
   if (pathname) return pathname.endsWith("/v1/watch");
   return Boolean(requestUrl && /\/v1\/watch\/?(\?|$)/i.test(requestUrl));
@@ -152,6 +169,7 @@ export function paidResourceKind(requestUrl?: string): PaidResourceKind {
   if (isConfirmOrderRequestPath(requestUrl)) return "confirm_order";
   if (isConfirmRequestPath(requestUrl)) return "confirm";
   if (isChainTopupRequestPath(requestUrl)) return "chain_topup";
+  if (isWatchRenewRequestPath(requestUrl)) return "watch_renew";
   if (isWatchRequestPath(requestUrl)) return "watch";
   if (isCheckRequestPath(requestUrl)) return "check";
   return "verify";
@@ -163,6 +181,7 @@ export function isPaidPostPath(path: string): boolean {
     normalized === "/v1/verify" ||
     normalized === "/v1/check" ||
     normalized === "/v1/watch" ||
+    normalized === "/v1/watch/renew" ||
     normalized === "/v1/confirm" ||
     normalized === "/v1/confirm/order" ||
     Boolean(parseWatchChainTopupId(normalized))

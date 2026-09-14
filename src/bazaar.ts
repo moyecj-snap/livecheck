@@ -616,6 +616,88 @@ export function chainTopupBazaarExtensions(): Record<string, unknown> {
   );
 }
 
+export const WATCH_RENEW_EXAMPLE = {
+  id: "wtc_01J8Z0K3N4P5Q6R7S8T9V0WWTC",
+  tier: "standard",
+  status: "active",
+  expires_at: "2026-11-09T18:00:00Z",
+  checks_remaining: 5760,
+  interval_s: 900,
+  first_check_at: "2026-09-10T18:00:00Z",
+  next_check_at: "2026-09-10T18:15:00Z",
+  baseline: WATCH_EXAMPLE.baseline,
+  target: WATCH_EXAMPLE.target,
+  condition: WATCH_EXAMPLE.condition,
+  price_usd: WATCH_PRICE_USD,
+  run: "none",
+  on_change: { run: "none" },
+  chain_budget_usd: null,
+  chain_balance_usd: 0,
+  receipt: {
+    hash: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    verify_url: "https://livecheck.fly.dev/v1/receipt/wrn_01J8Z0K3N4P5Q6R7S8T9V0WWRN",
+  },
+} as const;
+
+export const WATCH_RENEW_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    id: { type: "string", description: "Watcher id (wtc_ + ULID). Unchanged on renew." },
+    tier: { type: "string", enum: ["standard"] },
+    status: { type: "string", enum: ["active", "stopped", "expired"] },
+    expires_at: { type: "string" },
+    checks_remaining: { type: "number" },
+    interval_s: { type: "number" },
+    first_check_at: { type: "string" },
+    next_check_at: { type: "string" },
+    baseline: WATCH_OUTPUT_SCHEMA.properties.baseline,
+    target: CHECK_OUTPUT_SCHEMA.properties.target,
+    condition: CHECK_OUTPUT_SCHEMA.properties.condition,
+    price_usd: { type: "number" },
+    run: { type: "string", enum: ["none", "verify"] },
+    on_change: WATCH_OUTPUT_SCHEMA.properties.on_change,
+    chain_budget_usd: { type: ["number", "null"] },
+    chain_balance_usd: { type: "number" },
+    receipt: CHECK_OUTPUT_SCHEMA.properties.receipt,
+  },
+  required: [
+    "id",
+    "tier",
+    "expires_at",
+    "checks_remaining",
+    "interval_s",
+    "first_check_at",
+    "baseline",
+    "price_usd",
+    "receipt",
+  ],
+} as const;
+
+export const WATCH_RENEW_INPUT_SCHEMA = {
+  properties: {
+    id: {
+      type: "string",
+      description: "Watcher id (wtc_ + ULID). In the JSON body so the well-known URL stays concrete.",
+    },
+  },
+  required: ["id"],
+} as const;
+
+/** Slim verify-shaped Bazaar for renew. Does not change watch-create bazaar copy. */
+export function watchRenewBazaarExtensions(): Record<string, unknown> {
+  return withPostJsonMethod(
+    declareDiscoveryExtension({
+      bodyType: "json",
+      input: { id: WATCH_RENEW_EXAMPLE.id },
+      inputSchema: WATCH_RENEW_INPUT_SCHEMA,
+      output: {
+        example: WATCH_RENEW_EXAMPLE,
+        schema: WATCH_RENEW_OUTPUT_SCHEMA,
+      },
+    }),
+  );
+}
+
 /** Verify-shaped Bazaar only — same POST JSON wrapper as /v1/check. Slim until settle proven. */
 export function watchBazaarExtensions(): Record<string, unknown> {
   return withPostJsonMethod(
