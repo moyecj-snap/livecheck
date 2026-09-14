@@ -1,0 +1,20 @@
+Copyright © 2026 Craig Moye / SnapPrice.
+
+Permission to use, copy, and modify this repository only to call or integrate
+with the Livecheck hosted API at https://livecheck.fly.dev (or successors),
+including Cursor skills / MCP install (npx skills add moyecj-snap/livecheck).
+
+You may not offer a competing hosted verification, confirmation, or watch
+service under this code, remove attribution, or imply that you are Livecheck
+or an official Livecheck partner.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+API use of https://livecheck.fly.dev is also subject to the Livecheck API Terms
+published with the product (pay per call; no resale as your own trust layer).

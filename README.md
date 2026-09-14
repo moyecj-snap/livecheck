@@ -855,3 +855,7 @@ Spec §8 — not in this slice. Do not treat these as shipped or priced:
 - Postgres watcher spine (SQLite on the Fly volume)
 - Price changes
 - Fly deploy or GitHub mirror from this tree (Origin remains SoT)
+
+## License
+
+See [LICENSE](./LICENSE). Hosted API use is also subject to the Livecheck API Terms (pay per call; no resale as your own trust layer).
