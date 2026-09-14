@@ -61,7 +61,7 @@ POST https://livecheck.fly.dev/v1/check
 
 If `fired=true` (or you need ongoing): same `watch` body as Recipe 1 with matching detector. Point `callback.url` at `examples/sentinel-webhook.ts` (HMAC via `X-Sentinel-Signature`).
 
-Optional later: `watch_chain_topup` ($0.50) if `on_change.run=verify` needs chain balance.
+Optional: `watch_chain_topup` ($0.50) if `on_change.run=verify` or `on_change.run=confirm` needs chain balance. Confirm chain default `intent` is `lead_submit` ($0.10 internal); `listing_published` ($0.10) / `order_placed` ($0.25) are the same public Confirm prices.
 
 ---
 

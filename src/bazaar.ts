@@ -519,10 +519,14 @@ export const WATCH_OUTPUT_SCHEMA = {
     target: CHECK_OUTPUT_SCHEMA.properties.target,
     condition: CHECK_OUTPUT_SCHEMA.properties.condition,
     price_usd: { type: "number" },
-    run: { type: "string", enum: ["none", "verify"] },
+    run: { type: "string", enum: ["none", "verify", "confirm"] },
     on_change: {
       type: "object",
-      properties: { run: { type: "string", enum: ["none", "verify"] } },
+      properties: {
+        run: { type: "string", enum: ["none", "verify", "confirm"] },
+        intent: { type: "string", enum: ["lead_submit", "listing_published", "order_placed"] },
+        url: { type: "string" },
+      },
     },
     chain_budget_usd: { type: ["number", "null"] },
     chain_balance_usd: { type: "number" },
@@ -564,11 +568,13 @@ export const WATCH_INPUT_SCHEMA = {
     context: { type: "object" },
     chain_budget_usd: {
       type: "number",
-      description: "Spend cap for chained Verify. Funding is POST /v1/watch/{id}/chain/topup ($0.50), not bundled into $2.50.",
+      description:
+        "Spend cap for chained Verify ($0.01) and Confirm ($0.10 / $0.25). Funding is POST /v1/watch/{id}/chain/topup ($0.50), not bundled into $2.50.",
     },
     on_change: {
       type: "object",
-      description: "run=none (default) or verify. Confirm chain is not in this phase.",
+      description:
+        "run=none (default), verify, or confirm. confirm default intent=lead_submit ($0.10 internal). Optional intent/url/claim.",
     },
   },
   required: ["target", "condition", "callback"],
@@ -591,7 +597,7 @@ export const CHAIN_TOPUP_OUTPUT_SCHEMA = {
     chain_balance_usd: { type: "number" },
     chain_budget_usd: { type: ["number", "null"] },
     price_usd: { type: "number" },
-    run: { type: "string", enum: ["none", "verify"] },
+    run: { type: "string", enum: ["none", "verify", "confirm"] },
   },
   required: ["id", "added_usd", "chain_balance_usd", "price_usd", "run"],
 } as const;

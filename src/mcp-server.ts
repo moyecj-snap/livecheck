@@ -205,7 +205,16 @@ export function createLivecheckMcp(): McpServer {
         context: z.record(z.unknown()).optional().describe("Optional JSON echoed on callbacks."),
         on_change: z
           .object({
-            run: z.enum(["none", "verify"]).optional().describe("none (default) or verify. Confirm chain is not available."),
+            run: z
+              .enum(["none", "verify", "confirm"])
+              .optional()
+              .describe("none (default), verify ($0.01), or confirm ($0.10 / $0.25 from chain balance)."),
+            intent: z
+              .enum(["lead_submit", "listing_published", "order_placed"])
+              .optional()
+              .describe("Confirm only. Default lead_submit ($0.10). order_placed is $0.25. Same as public Confirm routes."),
+            url: z.string().optional().describe("Confirm only. Override URL; default target.url."),
+            claim: z.record(z.unknown()).optional().describe("Confirm only. Forwarded to Confirm."),
           })
           .optional(),
         chain_budget_usd: z.number().nullable().optional().describe("Spend cap only — not funding. Fund via watch_chain_topup ($0.50)."),
@@ -286,7 +295,7 @@ export function createLivecheckMcp(): McpServer {
     "watch_chain_topup",
     {
       title: "Watch chain top-up",
-      description: `Paid POST /v1/watch/{id}/chain/topup ($0.50 USDC). Owner token + payment. Funds on_change.run=verify. ${NO_WALLET_NOTE}`,
+      description: `Paid POST /v1/watch/{id}/chain/topup ($0.50 USDC). Owner token + payment. Funds on_change.run=verify ($0.01) and on_change.run=confirm ($0.10 / $0.25). ${NO_WALLET_NOTE}`,
       inputSchema: {
         id: z.string().describe("Watcher id (wtc_…)."),
         owner_token: z.string().describe("owt_… token from watch create."),

@@ -32,7 +32,8 @@ import {
   stopWatcher,
   type WatcherRow,
 } from "./watch-store.js";
-import { WatchError, hashOwnerToken, parseWatchRequest } from "./watch.js";
+import { closeReceiptStore, getConfirmReceipt, initReceiptStore } from "./receipt-store.js";
+import { hashOwnerToken, parseWatchRequest } from "./watch.js";
 
 export const SENTINEL_BENCH_INTERVAL_S = WATCH_MIN_INTERVAL_S;
 export const SENTINEL_BENCH_HONESTY_REPEATS = 20;
@@ -110,7 +111,8 @@ export type SentinelBenchReport = {
     pass: boolean;
   };
   chain: ChainSlice;
-  on_change_confirm_deferred: boolean;
+  chain_confirm: ChainSlice & { receipt_id: string | null; intent: string | null };
+  on_change_confirm_accepted: boolean;
   gates: GateResult[];
   pass: boolean;
 };
@@ -192,17 +194,17 @@ function hmacUnitPass(): boolean {
   );
 }
 
-function confirmOnChangeDeferred(): boolean {
+function confirmOnChangeAccepted(): boolean {
   try {
-    parseWatchRequest({
+    const parsed = parseWatchRequest({
       target: { type: "url", url: "https://example.com/jobs/1", render: "never" },
       condition: { detector: "status_change", params: {} },
       callback: { url: "https://example.com/hook", secret: SECRET },
       on_change: { run: "confirm" },
     });
+    return parsed.run === "confirm" && parsed.chain_confirm?.intent === "lead_submit";
+  } catch {
     return false;
-  } catch (error) {
-    return error instanceof WatchError && error.code === "invalid_target";
   }
 }
 
@@ -571,8 +573,120 @@ async function runChain(
   };
 }
 
+const THANK_YOU_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8" /><title>Thank you</title></head><body><h1>Thank you</h1><p>We've received your request. Confirmation number: ABC123</p></body></html>`;
+
+async function runChainConfirm(
+  pages: Map<string, PageState>,
+  hooks: DeliveredHook[],
+): Promise<SentinelBenchReport["chain_confirm"]> {
+  const fundedId = "wtc_01SENTINELCHAINCONFIRMFN01";
+  const skippedId = "wtc_01SENTINELCHAINCONFIRMSK01";
+  const url = `${PAGE_ORIGIN}/thanks/chain-confirm`;
+  pages.set(url, { status: 200, html: THANK_YOU_HTML });
+  const closedHash = observationHash("closed", "4xx");
+  const now = new Date("2026-09-10T21:00:00Z");
+  insertWatcher(
+    stubWatcher({
+      id: fundedId,
+      payer: "0xdddddddddddddddddddddddddddddddddddddddd",
+      condition_key: "chain-confirm-funded".padEnd(64, "0"),
+      target_url: url,
+      target: { type: "url", url, render: "never", selector: null },
+      run: "confirm",
+      chain_confirm: { intent: "lead_submit", url: null, claim: null },
+      chain_budget_usd: 5,
+      chain_balance_atomic: 500_000,
+      next_check_at: isoTs(now),
+      baseline: { captured: true, hash: closedHash, summary: "closed 4xx (404)" },
+      last_observation: {
+        status: "closed",
+        signals: ["http 404"],
+        http_status: 404,
+        http_class: "4xx",
+        hash: closedHash,
+        summary: "closed 4xx (404)",
+        checked_at: isoTs(now),
+        canonical_url: url,
+      },
+    }),
+  );
+  insertWatcher(
+    stubWatcher({
+      id: skippedId,
+      payer: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      condition_key: "chain-confirm-skip".padEnd(64, "0"),
+      target_url: url,
+      target: { type: "url", url, render: "never", selector: null },
+      run: "confirm",
+      chain_confirm: { intent: "lead_submit", url: null, claim: null },
+      chain_budget_usd: 5,
+      chain_balance_atomic: 0,
+      next_check_at: isoTs(now),
+      baseline: { captured: true, hash: closedHash, summary: "closed 4xx (404)" },
+      last_observation: {
+        status: "closed",
+        signals: ["http 404"],
+        http_status: 404,
+        http_class: "4xx",
+        hash: closedHash,
+        summary: "closed 4xx (404)",
+        checked_at: isoTs(now),
+        canonical_url: url,
+      },
+    }),
+  );
+
+  const clock = { now };
+  const fetcher = makeFetcher(pages, hooks, () => clock.now.getTime());
+  await tickDueWatchers(clock.now, fetcher);
+  clock.now = new Date(clock.now.getTime() + WATCH_CONFIRM_REFETCH_MS);
+  await tickDueWatchers(clock.now, fetcher);
+
+  const funded = listWatchEvents(fundedId).find((event) => event.kind === "change");
+  const skipped = listWatchEvents(skippedId).find((event) => event.kind === "change");
+  const fundedPayload = funded
+    ? (JSON.parse(funded.payload_json) as {
+        chain?: {
+          run?: string;
+          intent?: string;
+          result?: { verdict?: string; id?: string };
+          debit_usd?: number;
+          receipt?: { hash?: string };
+          skipped?: string;
+        };
+      })
+    : {};
+  const skippedPayload = skipped
+    ? (JSON.parse(skipped.payload_json) as { chain?: { skipped?: string; result?: unknown } })
+    : {};
+
+  const receiptId = fundedPayload.chain?.result?.id ?? null;
+  const receiptOk = Boolean(receiptId && getConfirmReceipt(receiptId));
+  const funded_attached =
+    fundedPayload.chain?.run === "confirm" &&
+    fundedPayload.chain.intent === "lead_submit" &&
+    fundedPayload.chain.result?.verdict === "confirmed" &&
+    fundedPayload.chain.debit_usd === 0.1 &&
+    receiptOk &&
+    getWatcher(fundedId)?.chain_balance_atomic === 400_000;
+  const skippedOk =
+    skippedPayload.chain?.skipped === "insufficient_balance" && skippedPayload.chain.result === undefined;
+
+  return {
+    funded_attached,
+    funded_debit_usd: fundedPayload.chain?.debit_usd ?? null,
+    funded_status: fundedPayload.chain?.result?.verdict ?? null,
+    skipped: skippedOk,
+    skipped_reason: skippedPayload.chain?.skipped ?? null,
+    receipt_id: receiptId,
+    intent: fundedPayload.chain?.intent ?? null,
+    pass: funded_attached && skippedOk,
+  };
+}
+
 export async function runSentinelBench(): Promise<SentinelBenchReport> {
   initWatchStore(":memory:");
+  initReceiptStore(":memory:");
   const pages = new Map<string, PageState>();
   const hooks: DeliveredHook[] = [];
   const clock = { now: new Date("2026-09-10T18:00:00Z") };
@@ -583,8 +697,9 @@ export async function runSentinelBench(): Promise<SentinelBenchReport> {
     const watchChangeEvents = await runWatchHonesty(pages, hooks, clock);
     const { samples, hmacVerified } = await runLatency(pages, hooks);
     const chain = await runChain(pages, hooks);
+    const chain_confirm = await runChainConfirm(pages, hooks);
     const hmacUnit = hmacUnitPass();
-    const confirmDeferred = confirmOnChangeDeferred();
+    const confirmAccepted = confirmOnChangeAccepted();
 
     const p50 = percentile(samples.map((s) => s.latency_ms), 0.5);
     const p95 = percentile(samples.map((s) => s.latency_ms), 0.95);
@@ -640,10 +755,10 @@ export async function runSentinelBench(): Promise<SentinelBenchReport> {
         detail: `funded_attached=${chain.funded_attached} skipped=${chain.skipped_reason ?? "no"}`,
       },
       {
-        id: "on_change_confirm_deferred",
-        gate: "on_change.run=confirm stays rejected (Confirm chain deferred)",
-        pass: confirmDeferred,
-        detail: confirmDeferred ? "parseWatchRequest throws invalid_target" : "confirm was accepted",
+        id: "on_change_confirm",
+        gate: "on_change.run=confirm accepted; funded Confirm attaches result + receipt; insufficient → skipped",
+        pass: confirmAccepted && chain_confirm.pass,
+        detail: `accepted=${confirmAccepted} funded_attached=${chain_confirm.funded_attached} skipped=${chain_confirm.skipped_reason ?? "no"} receipt=${chain_confirm.receipt_id ?? "none"}`,
       },
     ];
 
@@ -679,12 +794,14 @@ export async function runSentinelBench(): Promise<SentinelBenchReport> {
         pass: hmacPass,
       },
       chain,
-      on_change_confirm_deferred: confirmDeferred,
+      chain_confirm,
+      on_change_confirm_accepted: confirmAccepted,
       gates,
       pass: gates.every((g) => g.pass),
     };
   } finally {
     closeWatchStore();
+    closeReceiptStore();
   }
 }
 
@@ -698,7 +815,7 @@ export function formatSentinelBenchText(report: SentinelBenchReport): string {
     `hmac recipe: ${report.hmac.recipe}`,
     `hmac unit=${report.hmac.unit_pass} verified=${report.hmac.verified}/${report.hmac.delivered}`,
     `chain funded_attached=${report.chain.funded_attached} skipped=${report.chain.skipped_reason}`,
-    `on_change.confirm deferred=${report.on_change_confirm_deferred}`,
+    `on_change.confirm accepted=${report.on_change_confirm_accepted} funded_attached=${report.chain_confirm.funded_attached} skipped=${report.chain_confirm.skipped_reason}`,
     report.pass ? "GATES PASS" : "GATES FAIL",
   ];
   for (const gate of report.gates) {
@@ -713,7 +830,7 @@ export function formatSentinelBenchMarkdown(report: SentinelBenchReport): string
     .join("\n");
   return `# Sentinel benches (acceptance checklist light)
 
-Local/CI scale — not a 1000-watcher 24h soak. No Fly deploy, no Bazaar GA push, no price changes, no real $2.50 spends. Confirm chain (\`on_change.run=confirm\`) stays deferred.
+Local/CI scale — not a 1000-watcher 24h soak. No Fly deploy, no Bazaar GA push, no price changes, no real $2.50 spends. Confirm chain (\`on_change.run=confirm\`) spends watcher balance at public Confirm prices.
 
 Generated: \`${report.generated_at}\`
 
@@ -784,7 +901,14 @@ Mock/internal only — \`resolveChangeChain\` via the scheduler; no public \`POS
 | \`on_change.run=verify\` + $0.50 balance | attached=${report.chain.funded_attached} status=${report.chain.funded_status} debit=${report.chain.funded_debit_usd} |
 | insufficient balance | skipped=${report.chain.skipped} reason=${report.chain.skipped_reason} |
 
-\`on_change.run=confirm\` deferred: **${report.on_change_confirm_deferred}**
+## Chain Confirm
+
+Internal Confirm at public route prices — no public \`POST /v1/confirm\`, no new x402 price. Successful runs write \`cfm_\` receipts to receipts.sqlite.
+
+| Path | Result |
+| --- | --- |
+| \`on_change.run=confirm\` (default \`lead_submit\`) + $0.50 balance | accepted=${report.on_change_confirm_accepted} attached=${report.chain_confirm.funded_attached} verdict=${report.chain_confirm.funded_status} debit=${report.chain_confirm.funded_debit_usd} receipt=${report.chain_confirm.receipt_id ?? "none"} |
+| insufficient balance | skipped=${report.chain_confirm.skipped} reason=${report.chain_confirm.skipped_reason} |
 
 ## Held
 

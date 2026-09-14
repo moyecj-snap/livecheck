@@ -8,9 +8,12 @@ import {
   CHAIN_TOPUP_PRICE_ATOMIC_USDC,
   CHAIN_TOPUP_PRICE_USD,
   CHECK_PRICE_ATOMIC_USDC,
+  CONFIRM_PRICE_ATOMIC_USDC,
+  ORDER_PLACED_PRICE_ATOMIC_USDC,
   PRICE_ATOMIC_USDC,
   WATCH_PRICE_ATOMIC_USDC,
 } from "../src/config.js";
+import { closeReceiptStore, getConfirmReceipt, initReceiptStore } from "../src/receipt-store.js";
 import { hashOwnerToken, parseWatchRequest, WatchError } from "../src/watch.js";
 import { tickDueWatchers } from "../src/watch-scheduler.js";
 import {
@@ -85,6 +88,7 @@ describe("chain topup + on_change.verify", () => {
 
   before(async () => {
     initWatchStore(":memory:");
+    initReceiptStore(":memory:");
     await new Promise<void>((resolve) => {
       const server = serve({ fetch: app.fetch, port: 0, hostname: "127.0.0.1" }, (info) => {
         origin = `http://127.0.0.1:${info.port}`;
@@ -97,19 +101,40 @@ describe("chain topup + on_change.verify", () => {
   after(() => {
     close();
     closeWatchStore();
+    closeReceiptStore();
   });
 
-  it("rejects confirm on_change.run and stores verify + budget as a cap", () => {
+  it("accepts confirm on_change.run with default lead_submit and stores verify + budget as a cap", () => {
+    const confirm = parseWatchRequest({
+      target: { type: "url", url: "https://example.com/job", render: "never" },
+      condition: { detector: "status_change", params: {} },
+      callback: { url: "https://example.com/hook", secret: "whsec_x" },
+      on_change: { run: "confirm" },
+    });
+    assert.equal(confirm.run, "confirm");
+    assert.equal(confirm.chain_confirm?.intent, "lead_submit");
+    assert.equal(confirm.chain_confirm?.url, null);
+
+    const order = parseWatchRequest({
+      target: { type: "url", url: "https://example.com/job", render: "never" },
+      condition: { detector: "status_change", params: {} },
+      callback: { url: "https://example.com/hook", secret: "whsec_x" },
+      on_change: { run: "confirm", intent: "order_placed", url: "https://example.com/thanks" },
+    });
+    assert.equal(order.chain_confirm?.intent, "order_placed");
+    assert.equal(order.chain_confirm?.url, "https://example.com/thanks");
+
     assert.throws(
       () =>
         parseWatchRequest({
           target: { type: "url", url: "https://example.com/job", render: "never" },
           condition: { detector: "status_change", params: {} },
           callback: { url: "https://example.com/hook", secret: "whsec_x" },
-          on_change: { run: "confirm" },
+          on_change: { run: "verify", intent: "lead_submit" },
         }),
       (error: unknown) => error instanceof WatchError && error.code === "invalid_target",
     );
+
     const parsed = parseWatchRequest({
       target: { type: "url", url: "https://example.com/job", render: "never" },
       condition: { detector: "status_change", params: {} },
@@ -119,6 +144,7 @@ describe("chain topup + on_change.verify", () => {
     });
     assert.equal(parsed.run, "verify");
     assert.equal(parsed.chain_budget_usd, 5);
+    assert.equal(parsed.chain_confirm, null);
   });
 
   it("unpaid topup is 402 with one accept at 500000", async () => {
@@ -184,6 +210,30 @@ describe("chain topup + on_change.verify", () => {
         ?.amount,
       PRICE_ATOMIC_USDC,
     );
+
+    const confirm = await fetch(`${origin}/v1/confirm`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: "https://example.com/thanks", intent: "lead_submit" }),
+    });
+    assert.equal(confirm.status, 402);
+    const confirmAccepts = decodePaymentRequired(confirm.headers.get("payment-required") ?? "").accepts as Array<{
+      amount?: string;
+    }>;
+    assert.equal(confirmAccepts.length, 1);
+    assert.equal(confirmAccepts[0]?.amount, CONFIRM_PRICE_ATOMIC_USDC);
+
+    const order = await fetch(`${origin}/v1/confirm/order`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: "https://example.com/order", intent: "order_placed" }),
+    });
+    assert.equal(order.status, 402);
+    const orderAccepts = decodePaymentRequired(order.headers.get("payment-required") ?? "").accepts as Array<{
+      amount?: string;
+    }>;
+    assert.equal(orderAccepts.length, 1);
+    assert.equal(orderAccepts[0]?.amount, ORDER_PLACED_PRICE_ATOMIC_USDC);
   });
 
   it("mock-paid topup requires owner token and increases balance by $0.50", async () => {
@@ -332,6 +382,178 @@ describe("chain topup + on_change.verify", () => {
     assert.equal(skippedPayload.chain.skipped, "insufficient_balance");
     assert.equal(skippedPayload.chain.result, undefined);
     assert.equal(getWatcher(skippedId)?.chain_balance_atomic, 0);
+  });
+
+  it("mock-paid watch create stores on_change.confirm + default intent", async () => {
+    const created = await fetch(`${origin}/v1/watch`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
+      body: JSON.stringify(
+        watchBody(`${origin}/fixtures/confirm/thank-you-id`, {
+          on_change: { run: "confirm" },
+          chain_budget_usd: 5,
+          label: "chain-confirm",
+        }),
+      ),
+    });
+    assert.equal(created.status, 201);
+    const body = (await created.json()) as {
+      id: string;
+      owner_token: string;
+      run: string;
+      on_change?: { run?: string; intent?: string };
+    };
+    assert.equal(body.run, "confirm");
+    assert.equal(body.on_change?.run, "confirm");
+    assert.equal(body.on_change?.intent, "lead_submit");
+
+    const viewed = await fetch(`${origin}/v1/watch/${body.id}`, {
+      headers: { "x-livecheck-owner-token": body.owner_token },
+    });
+    assert.equal(viewed.status, 200);
+    const view = (await viewed.json()) as { run?: string; on_change?: { run?: string; intent?: string } };
+    assert.equal(view.run, "confirm");
+    assert.equal(view.on_change?.intent, "lead_submit");
+  });
+
+  it("change with confirm + balance debits, writes receipts.sqlite, and skips when unpaid", async () => {
+    const fundedId = "wtc_01CHAINCONFIRMFUND00000001";
+    const skippedId = "wtc_01CHAINCONFIRMSKIP0000001";
+    const thanksUrl = `${origin}/fixtures/confirm/thank-you-id`;
+    insertWatcher(
+      stubWatcher({
+        id: fundedId,
+        payer: "0xdddddddddddddddddddddddddddddddddddddddd",
+        condition_key: "chain-confirm-funded".padEnd(64, "0"),
+        target_url: thanksUrl,
+        target: { type: "url", url: thanksUrl, render: "never", selector: null },
+        run: "confirm",
+        chain_confirm: { intent: "lead_submit", url: null, claim: null },
+        chain_budget_usd: 5,
+        chain_balance_atomic: 500_000,
+        next_check_at: "2026-09-10T18:00:00Z",
+        baseline: { captured: true, hash: observationHash("closed", "4xx"), summary: "closed 4xx" },
+      }),
+    );
+    insertWatcher(
+      stubWatcher({
+        id: skippedId,
+        payer: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        condition_key: "chain-confirm-skip".padEnd(64, "0"),
+        target_url: thanksUrl,
+        target: { type: "url", url: thanksUrl, render: "never", selector: null },
+        run: "confirm",
+        chain_confirm: { intent: "lead_submit", url: null, claim: null },
+        chain_budget_usd: 5,
+        chain_balance_atomic: 0,
+        next_check_at: "2026-09-10T18:00:00Z",
+        baseline: { captured: true, hash: observationHash("closed", "4xx"), summary: "closed 4xx" },
+      }),
+    );
+
+    const hookOk: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url.includes("/hooks/") || url.includes("example.com/hooks")) {
+        return new Response("ok", { status: 200 });
+      }
+      assert.doesNotMatch(url, /\/v1\/confirm/);
+      return fetch(input, init);
+    };
+
+    await tickDueWatchers(new Date("2026-09-10T18:00:00Z"), hookOk);
+    assert.equal(listWatchEvents(fundedId).some((event) => event.kind === "change"), false);
+    await tickDueWatchers(new Date("2026-09-10T18:00:20Z"), hookOk);
+
+    const fundedEvents = listWatchEvents(fundedId).filter((event) => event.kind === "change");
+    assert.equal(fundedEvents.length, 1);
+    const fundedPayload = JSON.parse(fundedEvents[0]?.payload_json ?? "{}") as {
+      type: string;
+      chain: {
+        run?: string;
+        intent?: string;
+        skipped?: string;
+        result?: { verdict?: string; id?: string; price_usd?: number };
+        receipt?: { hash?: string; verify_url?: string };
+        debit_usd?: number;
+      };
+    };
+    assert.equal(fundedPayload.type, "change");
+    assert.equal(fundedPayload.chain.skipped, undefined);
+    assert.equal(fundedPayload.chain.run, "confirm");
+    assert.equal(fundedPayload.chain.intent, "lead_submit");
+    assert.equal(fundedPayload.chain.result?.verdict, "confirmed");
+    assert.equal(fundedPayload.chain.debit_usd, 0.1);
+    assert.ok(fundedPayload.chain.result?.id?.startsWith("cfm_"));
+    assert.equal(fundedPayload.chain.receipt?.hash?.length, 64);
+    assert.ok(fundedPayload.chain.receipt?.verify_url?.includes(fundedPayload.chain.result?.id ?? "missing"));
+
+    const receiptRow = getConfirmReceipt(fundedPayload.chain.result?.id ?? "");
+    assert.ok(receiptRow, "expected cfm_ row in receipts.sqlite");
+    assert.equal(receiptRow.intent, "lead_submit");
+    assert.equal(receiptRow.verdict, "confirmed");
+
+    const receiptRes = await fetch(`${origin}/v1/receipt/${fundedPayload.chain.result?.id}`);
+    assert.equal(receiptRes.status, 200);
+    const receiptBody = (await receiptRes.json()) as { id?: string; intent?: string };
+    assert.equal(receiptBody.id, fundedPayload.chain.result?.id);
+    assert.equal(receiptBody.intent, "lead_submit");
+
+    assert.equal(getWatcher(fundedId)?.chain_balance_atomic, 400_000);
+    assert.equal(getWatcher(fundedId)?.chain_spent_atomic, 100_000);
+
+    const skippedEvents = listWatchEvents(skippedId).filter((event) => event.kind === "change");
+    assert.equal(skippedEvents.length, 1);
+    const skippedPayload = JSON.parse(skippedEvents[0]?.payload_json ?? "{}") as {
+      chain: { skipped?: string; result?: unknown };
+    };
+    assert.equal(skippedPayload.chain.skipped, "insufficient_balance");
+    assert.equal(skippedPayload.chain.result, undefined);
+    assert.equal(getWatcher(skippedId)?.chain_balance_atomic, 0);
+  });
+
+  it("order_placed confirm chain debits $0.25 and writes a receipt", async () => {
+    const fundedId = "wtc_01CHAINCONFIRMORDER000001";
+    const orderUrl = `${origin}/fixtures/confirm/order-thank-you-id`;
+    insertWatcher(
+      stubWatcher({
+        id: fundedId,
+        payer: "0xffffffffffffffffffffffffffffffffffffffff",
+        condition_key: "chain-confirm-order".padEnd(64, "0"),
+        target_url: orderUrl,
+        target: { type: "url", url: orderUrl, render: "never", selector: null },
+        run: "confirm",
+        chain_confirm: { intent: "order_placed", url: null, claim: null },
+        chain_budget_usd: 5,
+        chain_balance_atomic: 500_000,
+        next_check_at: "2026-09-10T18:00:00Z",
+        baseline: { captured: true, hash: observationHash("closed", "4xx"), summary: "closed 4xx" },
+      }),
+    );
+
+    const hookOk: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url.includes("/hooks/") || url.includes("example.com/hooks")) {
+        return new Response("ok", { status: 200 });
+      }
+      assert.doesNotMatch(url, /\/v1\/confirm/);
+      return fetch(input, init);
+    };
+
+    await tickDueWatchers(new Date("2026-09-10T18:00:00Z"), hookOk);
+    await tickDueWatchers(new Date("2026-09-10T18:00:20Z"), hookOk);
+
+    const fundedEvents = listWatchEvents(fundedId).filter((event) => event.kind === "change");
+    assert.equal(fundedEvents.length, 1);
+    const fundedPayload = JSON.parse(fundedEvents[0]?.payload_json ?? "{}") as {
+      chain: { run?: string; intent?: string; debit_usd?: number; result?: { verdict?: string; id?: string } };
+    };
+    assert.equal(fundedPayload.chain.run, "confirm");
+    assert.equal(fundedPayload.chain.intent, "order_placed");
+    assert.equal(fundedPayload.chain.debit_usd, 0.25);
+    assert.equal(fundedPayload.chain.result?.verdict, "confirmed");
+    assert.ok(getConfirmReceipt(fundedPayload.chain.result?.id ?? ""));
+    assert.equal(getWatcher(fundedId)?.chain_balance_atomic, 250_000);
+    assert.equal(getWatcher(fundedId)?.chain_spent_atomic, 250_000);
   });
 
   it("credit helper is used by topup and does not pay public verify", () => {

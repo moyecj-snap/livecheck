@@ -135,18 +135,37 @@ export type WatchBaseline = {
 
 export type WatchCallbackDeliver = "on_change" | "every_check";
 
-/** on_change.run. Confirm chain is a later step. */
-export type WatchRun = "none" | "verify";
+/** on_change.run. Confirm chain spends watcher balance at public Confirm prices. */
+export type WatchRun = "none" | "verify" | "confirm";
+
+export type WatchChainConfirmConfig = {
+  intent: ConfirmIntent;
+  /** Override Confirm URL. null/omitted → watcher target.url. */
+  url: string | null;
+  claim: Record<string, unknown> | null;
+};
+
+export type WatchOnChange =
+  | { run: "none" }
+  | { run: "verify" }
+  | { run: "confirm"; intent: ConfirmIntent; url?: string };
 
 export type WatchChainNone = { run: "none" };
-export type WatchChainSkipped = { skipped: "insufficient_balance" };
+export type WatchChainSkipped = { skipped: "insufficient_balance" | "receipt_persist_failed" };
 export type WatchChainVerify = {
   run: "verify";
   result: VerifyVerdict;
   receipt: ConfirmReceipt;
   debit_usd: number;
 };
-export type WatchChain = WatchChainNone | WatchChainSkipped | WatchChainVerify;
+export type WatchChainConfirm = {
+  run: "confirm";
+  intent: ConfirmIntent;
+  result: ConfirmResult;
+  receipt: ConfirmReceipt;
+  debit_usd: number;
+};
+export type WatchChain = WatchChainNone | WatchChainSkipped | WatchChainVerify | WatchChainConfirm;
 
 export type WatchEventType = "change" | "unreachable" | "recovered" | "expiring" | "expired" | "baseline";
 
@@ -195,7 +214,7 @@ export type WatchCreateResult = {
   condition: { detector: CheckDetector; params: Record<string, unknown> };
   price_usd: number;
   run: WatchRun;
-  on_change: { run: WatchRun };
+  on_change: WatchOnChange;
   chain_budget_usd: number | null;
   chain_balance_usd: number;
   receipt: ConfirmReceipt;
@@ -220,7 +239,7 @@ export type WatchPublicView = {
   condition: { detector: CheckDetector; params: Record<string, unknown> };
   price_usd: number;
   run: WatchRun;
-  on_change: { run: WatchRun };
+  on_change: WatchOnChange;
   chain_budget_usd: number | null;
   chain_balance_usd: number;
   callback: { url: string; deliver: WatchCallbackDeliver };

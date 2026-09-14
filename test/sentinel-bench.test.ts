@@ -74,8 +74,15 @@ describe("Sentinel honesty + latency benches", () => {
     assert.equal(report.chain.pass, true);
   });
 
-  it("keeps on_change.run=confirm deferred", () => {
-    assert.equal(report.on_change_confirm_deferred, true);
+  it("accepts on_change.run=confirm and attaches a receipt when funded", () => {
+    assert.equal(report.on_change_confirm_accepted, true);
+    assert.equal(report.chain_confirm.funded_attached, true);
+    assert.equal(report.chain_confirm.funded_debit_usd, 0.1);
+    assert.equal(report.chain_confirm.funded_status, "confirmed");
+    assert.equal(report.chain_confirm.skipped, true);
+    assert.equal(report.chain_confirm.skipped_reason, "insufficient_balance");
+    assert.ok(report.chain_confirm.receipt_id?.startsWith("cfm_"));
+    assert.equal(report.chain_confirm.pass, true);
     assert.equal(report.pass, true, report.gates.filter((g) => !g.pass).map((g) => g.id).join(","));
   });
 });
