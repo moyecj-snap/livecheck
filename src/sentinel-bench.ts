@@ -581,7 +581,7 @@ async function runChainConfirm(
 ): Promise<SentinelBenchReport["chain_confirm"]> {
   const fundedId = "wtc_01SENTINELCHAINCONFIRMFN01";
   const skippedId = "wtc_01SENTINELCHAINCONFIRMSK01";
-  const url = `${PAGE_ORIGIN}/thanks/chain-confirm`;
+  const url = "https://confirm.bench.livecheck.test/thanks/chain-confirm";
   pages.set(url, { status: 200, html: THANK_YOU_HTML });
   const closedHash = observationHash("closed", "4xx");
   const now = new Date("2026-09-10T21:00:00Z");

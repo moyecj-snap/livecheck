@@ -1,8 +1,8 @@
 # Sentinel benches (acceptance checklist light)
 
-Local/CI scale — not a 1000-watcher 24h soak. No Fly deploy, no Bazaar GA push, no price changes, no real $2.50 spends. Confirm chain (`on_change.run=confirm`) stays deferred.
+Local/CI scale — not a 1000-watcher 24h soak. No Fly deploy, no Bazaar GA push, no price changes, no real $2.50 spends. Confirm chain (`on_change.run=confirm`) spends watcher balance at public Confirm prices.
 
-Generated: `2026-09-10T21:21:18Z`
+Generated: `2026-09-14T00:26:44Z`
 
 ## Commands
 
@@ -36,7 +36,7 @@ Fixtures rotate timestamps, view/sold counters, session/CSRF tokens, ad slots, c
 | PASS | latency_p95 | p95 ≤ 2×interval_s (600s) | p95=315250ms n=20 |
 | PASS | hmac | X-Sentinel-Signature: t=<unix>,v1=<hex> — v1 is lowercase hex HMAC-SHA256 of the raw UTF-8 body with callback.secret; t is not part of the MAC | unit=true delivered_verified=20/20 |
 | PASS | chain_verify | on_change.verify + balance attaches result; insufficient → skipped | funded_attached=true skipped=insufficient_balance |
-| PASS | on_change_confirm_deferred | on_change.run=confirm stays rejected (Confirm chain deferred) | parseWatchRequest throws invalid_target |
+| PASS | on_change_confirm | on_change.run=confirm accepted; funded Confirm attaches result + receipt; insufficient → skipped | accepted=true funded_attached=true skipped=insufficient_balance receipt=cfm_01M26HY5N0ZR2Y5AG02NQ44BTA |
 
 **Overall: PASS**
 
@@ -78,7 +78,14 @@ Mock/internal only — `resolveChangeChain` via the scheduler; no public `POST /
 | `on_change.run=verify` + $0.50 balance | attached=true status=live debit=0.01 |
 | insufficient balance | skipped=true reason=insufficient_balance |
 
-`on_change.run=confirm` deferred: **true**
+## Chain Confirm
+
+Internal Confirm at public route prices — no public `POST /v1/confirm`, no new x402 price. Successful runs write `cfm_` receipts to receipts.sqlite.
+
+| Path | Result |
+| --- | --- |
+| `on_change.run=confirm` (default `lead_submit`) + $0.50 balance | accepted=true attached=true verdict=confirmed debit=0.1 receipt=cfm_01M26HY5N0ZR2Y5AG02NQ44BTA |
+| insufficient balance | skipped=true reason=insufficient_balance |
 
 ## Held
 

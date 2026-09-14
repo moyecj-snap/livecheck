@@ -13,6 +13,7 @@ import {
   PAID_CALL_EVENT,
   buildPaidCallEvent,
   hashUrl,
+  isoTs,
   paidCallLineContainsSensitive,
   urlHostAndHash,
 } from "../src/paid-call.js";
@@ -359,15 +360,17 @@ describe("CoS CLI", () => {
     const dir = mkdtempSync(join(tmpdir(), "paid-call-cos-"));
     const dbPath = join(dir, "paid-calls.sqlite");
     const db = openPaidCallDb(dbPath);
+    const recentVerify = isoTs(new Date(Date.now() - 2 * 86_400_000));
+    const recentConfirm = isoTs(new Date(Date.now() - 2 * 86_400_000 + 60_000));
     insertPaidCallRow(db, {
-      ts: "2026-09-06T20:34:00Z",
+      ts: recentVerify,
       route: "verify",
       host: "example.com",
       url_sha256: hashUrl("https://example.com/job"),
       payer: PAYER_A,
     });
     insertPaidCallRow(db, {
-      ts: "2026-09-06T21:00:00Z",
+      ts: recentConfirm,
       route: "confirm",
       host: "example.com",
       url_sha256: hashUrl("https://example.com/thanks"),
@@ -409,12 +412,13 @@ describe("CoS CLI", () => {
   it("parses a log file via --from-logs --log-file", async () => {
     const dir = mkdtempSync(join(tmpdir(), "paid-call-logs-"));
     const logPath = join(dir, "export.txt");
+    const recent = new Date(Date.now() - 2 * 86_400_000);
     const event = buildPaidCallEvent(
       { route: "verify", host: "example.com", url_hash: hashUrl("https://example.com/job"), status: "live" },
       { payer: PAYER_B },
-      new Date("2026-09-06T20:34:00.000Z"),
+      recent,
     );
-    writeFileSync(logPath, `2026-09-06T20:34:00Z app[abc] sjc [info]${JSON.stringify(event)}\n`);
+    writeFileSync(logPath, `${isoTs(recent)} app[abc] sjc [info]${JSON.stringify(event)}\n`);
     const { stdout } = await execFileAsync(
       "npx",
       ["tsx", "scripts/paid-call-cos.ts", "--from-logs", "--log-file", logPath, "--json"],
