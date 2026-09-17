@@ -4,6 +4,73 @@ Before you scrape a listing, check if it is still there. POST a specific job pos
 
 This is a per-check agent API, not a platform. Agents pay **$0.01 USDC** per `POST /v1/verify`, **$0.02 USDC** per `POST /v1/check` (Sentinel one-shot condition), **$2.50 USDC** per `POST /v1/watch` (30-day standard watcher), **$2.50 USDC** per `POST /v1/watch/renew` (extend an active watcher; owner token + payment; `{id}` in the body), **$0.50 USDC** per `POST /v1/watch/{id}/chain/topup` (chain balance; owner token + payment), **$0.10 USDC** per `POST /v1/confirm` (`lead_submit` / `listing_published`), and **$0.25 USDC** per `POST /v1/confirm/order` (`order_placed`) on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md). x402 wants one fixed price per resource — dual pricing on a single path makes facilitator verify fail when settle-time `paymentRequirements` drift from the first 402.
 
+## Verify-first: first paid call
+
+Default first useful call is **Verify** (`POST /v1/verify`, **$0.01 USDC** on Base). Use a URL from your own workflow when you have one.
+
+**We can help with the first Verify settle.**
+
+### 1. Health
+
+```bash
+curl -sS https://livecheck.fly.dev/health
+```
+
+### 2. Unpaid 402 (no spend)
+
+```bash
+curl -sS -D - -o /tmp/v.body https://livecheck.fly.dev/v1/verify \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://job-boards.greenhouse.io/discord/jobs/8806482002"}'
+```
+
+Expect HTTP **402** and a `payment-required` header. That proves the endpoint is alive without paying.
+
+### 3. Install `purl` (Linux amd64)
+
+From [stripe/purl](https://github.com/stripe/purl) release **v0.2.9**, asset `purl-linux-amd64` → `~/bin/purl`. See also the [Stripe x402](https://docs.stripe.com/payments/machine/x402.md) guide.
+
+```bash
+mkdir -p ~/bin
+curl -fsSL -o ~/bin/purl https://github.com/stripe/purl/releases/download/v0.2.9/purl-linux-amd64
+chmod +x ~/bin/purl
+export PATH="$HOME/bin:$PATH"
+purl --version
+```
+
+The binary may print `0.2.8` even when downloaded from the v0.2.9 release asset.
+
+Optional macOS (Apple Silicon) one-liner:
+
+```bash
+mkdir -p ~/bin && curl -fsSL -o ~/bin/purl https://github.com/stripe/purl/releases/download/v0.2.9/purl-darwin-arm64 && chmod +x ~/bin/purl && export PATH="$HOME/bin:$PATH" && purl --version
+```
+
+Wallet (interactive — **never paste keys into git, chat, or this README**):
+
+```bash
+purl wallet list
+purl wallet add
+# or
+purl wallet add --type evm
+```
+
+Paid Verify needs **USDC on Base**. Check with `purl balance` or `purl balance --network base`. Ignore ethereum RPC errors on balance.
+
+### 4. Paid Verify
+
+```bash
+purl https://livecheck.fly.dev/v1/verify \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://job-boards.greenhouse.io/discord/jobs/8806482002"}'
+```
+
+Prefer a URL from your own workflow.
+
+### 5. Limits
+
+`status` is `live`, `closed`, or `unknown`. Status ≠ legitimacy, fraud, or payment safety. v1 reads HTML + status only (no JavaScript). Many JS-heavy ATS pages return `unknown`.
+
 ## What you get
 
 ```http
@@ -549,15 +616,26 @@ The server mints an application OAuth token (`grant_type=client_credentials`, sc
 
 Unpaid `curl` must return **HTTP 402** and a `payment-required` header. That is the x402 challenge — not a fake status.
 
-To settle with real USDC on Base, use Stripe’s `purl` client from the [x402 guide](https://docs.stripe.com/payments/machine/x402.md):
+Default first settle is **production Verify**. Install `purl` and add a wallet as in [Verify-first: first paid call](#verify-first-first-paid-call). To settle with real USDC on Base, use Stripe’s `purl` client from the [x402 guide](https://docs.stripe.com/payments/machine/x402.md):
 
 ```bash
-purl http://127.0.0.1:43127/v1/verify \
+purl https://livecheck.fly.dev/v1/verify \
   -H 'content-type: application/json' \
-  -d '{"url":"https://boards.greenhouse.io/example/jobs/1"}'
+  -d '{"url":"https://job-boards.greenhouse.io/discord/jobs/8806482002"}'
 ```
 
+Local-dev override only when this repo is running (`npm start`): `purl http://127.0.0.1:43127/v1/verify …`
+
 `purl` moves real funds because the deposit address is a live-mode Base address.
+
+### Skill install (Verify first)
+
+```bash
+mkdir -p ~/.local/lib
+npx --yes skills add moyecj-snap/livecheck -y -s livecheck-verify-then-confirm
+```
+
+Create `~/.local/lib` first or the CLI can fail with `ENOENT`. The `skills` package may warn that it wants Node `>=22.20.0`; Node `20.19` still works. The skill’s default first call is Verify.
 
 ## Cursor MCP (local agent)
 
@@ -565,7 +643,7 @@ Stdio MCP (`src/mcp.ts` / `npm run mcp`). **No wallet, no private key, no x402 s
 
 Paid path only when the caller already has an envelope and supplies it as tool arg `payment_signature` or env `LIVECHECK_PAYMENT_SIGNATURE` (forwarded as `PAYMENT-SIGNATURE` / `X-PAYMENT`). The MCP never sends `X-Livecheck-Mock`.
 
-`LIVECHECK_URL` may stay the existing verify URL (`http://127.0.0.1:43127/v1/verify` or `https://livecheck.fly.dev/v1/verify`) — the client strips `/v1/verify` so check / confirm / watch hit the same origin. There is no remote MCP transport in this repo; Cursor uses stdio.
+`LIVECHECK_URL` defaults to production Verify (`https://livecheck.fly.dev/v1/verify`) in `examples/cursor-mcp.json`. The client strips `/v1/verify` so check / confirm / watch hit the same origin. Override to `http://127.0.0.1:43127/v1/verify` only when you are running `npm start` locally. There is no remote MCP transport in this repo; Cursor uses stdio. **MCP does not settle payment.**
 
 Locked drafts for Gil: [`docs/gap7/recipes.md`](docs/gap7/recipes.md) (3 copy-paste recipes) and [`docs/gap7/landing-copy.md`](docs/gap7/landing-copy.md) (landing /stats copy).
 
@@ -624,7 +702,7 @@ Shapes:
 
 Unpaid tool result: `{ "paid": false, "http": 402, ...decoded payment-required }`. HTTP 200/201 returns the Fly JSON as-is.
 
-Keep the HTTP server running (`npm start`), then point Cursor at the MCP.
+`examples/cursor-mcp.json` points at production by default, so you do **not** need a local `npm start` for first-use MCP. Unpaid tools still return structured 402. Use localhost only as a local-dev override while `npm start` is running.
 
 1. Copy the example into the project file Cursor reads, or into your user config:
 
@@ -647,7 +725,7 @@ cp examples/cursor-mcp.json ~/.cursor/mcp.json
       "command": "npx",
       "args": ["tsx", "${workspaceFolder}/src/mcp.ts"],
       "env": {
-        "LIVECHECK_URL": "http://127.0.0.1:43127/v1/verify"
+        "LIVECHECK_URL": "https://livecheck.fly.dev/v1/verify"
       }
     }
   }
@@ -664,12 +742,14 @@ cp examples/cursor-mcp.json ~/.cursor/mcp.json
       "command": "${workspaceFolder}/node_modules/.bin/tsx",
       "args": ["${workspaceFolder}/src/mcp.ts"],
       "env": {
-        "LIVECHECK_URL": "http://127.0.0.1:43127/v1/verify"
+        "LIVECHECK_URL": "https://livecheck.fly.dev/v1/verify"
       }
     }
   }
 }
 ```
+
+Local-dev override (only with `npm start`): set `LIVECHECK_URL` to `http://127.0.0.1:43127/v1/verify`.
 
 3. Reload Cursor (or toggle the server under Customize → MCP). Ask the agent to `verify` (or `verify_listing`) a job URL, or `check` / `confirm` / `watch`. An unpaid call should come back as HTTP 402 with `paid: false` and the Base USDC requirements for that route. A request that the HTTP server has already settled returns the Fly JSON as-is.
 
@@ -686,7 +766,7 @@ Existing `LIVECHECK_URL=…/v1/verify` stays valid. The client derives the origi
 
 Cursor Marketplace is human distribution. It requires a **public GitHub repository** at submit time. Origin remains the source of truth. Do not create a GitHub repo from this session. When you want Marketplace, publish a public GitHub copy yourself and submit it.
 
-Local agent work stays `examples/cursor-mcp.json` (localhost). The plugin `mcp.json` is the production URL for Marketplace.
+`examples/cursor-mcp.json` defaults to production Verify. Override `LIVECHECK_URL` to `http://127.0.0.1:43127/v1/verify` only for local `npm start`. Root `mcp.json` and `.cursor-plugin/mcp.json` already use production.
 
 ## Fly.io (public HTTPS)
 

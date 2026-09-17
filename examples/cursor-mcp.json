@@ -8,9 +8,9 @@
         "${workspaceFolder}/src/mcp.ts"
       ],
       "env": {
-        "LIVECHECK_URL": "http://127.0.0.1:43127/v1/verify"
+        "LIVECHECK_URL": "https://livecheck.fly.dev/v1/verify"
       },
-      "description": "Livecheck MCP: verify, check, confirm, watch (+ verify_listing compat; watch_get/events/stop/chain_topup). No wallet \u2014 unpaid calls return structured 402. Entry: src/mcp.ts \u2192 src/mcp-server.ts."
+      "description": "Livecheck MCP: verify, check, confirm, watch (+ verify_listing compat; watch_get/events/stop/chain_topup). No wallet \u2014 unpaid calls return structured 402. MCP does not settle payment. Default LIVECHECK_URL is production Verify. Override to http://127.0.0.1:43127/v1/verify only when running local npm start. Entry: src/mcp.ts \u2192 src/mcp-server.ts."
     }
   }
 }

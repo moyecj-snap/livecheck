@@ -8,8 +8,21 @@ description: >-
 
 # Livecheck → Confirm (x402)
 
+Default first call is **Verify** (`POST /v1/verify`). Confirm is later, after you have a thank-you or result URL.
+
 ## When
 You already have a concrete job/product/eBay URL, and later a post-submit thank-you or result URL. Goal: pay Livecheck for availability, then pay Confirm for an independent `lead_submit` check. Do **not** trust the actor’s own `success: true`.
+
+## Install
+
+Create `~/.local/lib` first — the skills CLI can fail with `ENOENT` if that directory is missing.
+
+```bash
+mkdir -p ~/.local/lib
+npx --yes skills add moyecj-snap/livecheck -y -s livecheck-verify-then-confirm
+```
+
+The `skills` CLI may warn that it wants Node `>=22.20.0`. Node `20.19` still works.
 
 ## Endpoints
 | Tool | Method | Price | Body |
