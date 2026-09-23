@@ -109,7 +109,7 @@ After payment verifies and settles:
 
 v1 reads HTML + status only. It does not execute page JavaScript. Redirects are followed; `canonical_url` is the final URL. User-Agent identifies Livecheck.
 
-Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, `GET /.well-known/x402`, `GET /.well-known/livecheck-keys.json`, `GET /stats`, `GET /v1/receipt/{id}`, `GET /v1/watch/{id}`, `GET /v1/watch/{id}/events`, and `DELETE /v1/watch/{id}` (owner token required). Paid: `POST /v1/verify` ($0.01), `POST /v1/check` ($0.02, one-shot Sentinel condition), `POST /v1/watch` ($2.50, 30-day standard watcher), `POST /v1/watch/renew` ($2.50, extend an active watcher; `{id}` in the body), `POST /v1/watch/{id}/chain/topup` ($0.50, owner token + payment), `POST /v1/confirm` ($0.10, `lead_submit` / `listing_published`), and `POST /v1/confirm/order` ($0.25, `order_placed`). `GET /v1/judge` is a 501 stub. `/v1/watch/fast` and Bazaar GA are not in this phase. Confirm chain (`on_change.run=confirm`) spends watcher chain balance at those same Confirm prices — no new public route.
+Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, `GET /.well-known/x402`, `GET /.well-known/livecheck-keys.json`, `GET /llms.txt` (plain-text agent discovery), `GET /stats`, `GET /v1/receipt/{id}`, `GET /v1/watch/{id}`, `GET /v1/watch/{id}/events`, and `DELETE /v1/watch/{id}` (owner token required). Paid: `POST /v1/verify` ($0.01), `POST /v1/check` ($0.02, one-shot Sentinel condition), `POST /v1/watch` ($2.50, 30-day standard watcher), `POST /v1/watch/renew` ($2.50, extend an active watcher; `{id}` in the body), `POST /v1/watch/{id}/chain/topup` ($0.50, owner token + payment), `POST /v1/confirm` ($0.10, `lead_submit` / `listing_published`), and `POST /v1/confirm/order` ($0.25, `order_placed`). `GET /v1/judge` is a 501 stub. `/v1/watch/fast` and Bazaar GA are not in this phase. Confirm chain (`on_change.run=confirm`) spends watcher chain balance at those same Confirm prices — no new public route.
 
 Agent crawlers (x402scan, AgentCash, Circle OpenAPI discovery) read the free JSON docs. `GET /openapi.json` is the canonical contract: `POST /v1/verify` with JSON `{ "url": "https://..." }`, `x-payment-info` fixed **$0.01** USD (decimal; runtime 402 `accepts[].amount` stays `"10000"` atomic USDC), and a 200 schema of `live | closed | unknown` plus paid-only `watch` (`suggest: "/v1/watch"`, detector `status_change`, `price_usd: 2.5`). It lists `POST /v1/check` at fixed **$0.02** (`"20000"` atomic) for a one-shot condition (no watcher), `POST /v1/watch` at fixed **$2.50** (`"2500000"` atomic) for a 30-day standard watcher, `POST /v1/watch/renew` at the same **$2.50** (`"2500000"` atomic; `{id}` in the JSON body so the well-known URL stays concrete), `POST /v1/watch/{id}/chain/topup` at fixed **$0.50** (`"500000"` atomic; owner token + payment; OpenAPI path-param only — not a crawler resource), `GET /v1/watch/{id}/events` (free, owner token), `POST /v1/confirm` at fixed **$0.10** USD (`"100000"` atomic) for `lead_submit` / `listing_published` (no `intent_prices`), and `POST /v1/confirm/order` at fixed **$0.25** (`"250000"` atomic) for `order_placed`. `GET /.well-known/x402` lists the concrete paid URLs: `https://livecheck.fly.dev/v1/verify`, `https://livecheck.fly.dev/v1/check`, `https://livecheck.fly.dev/v1/watch`, `https://livecheck.fly.dev/v1/watch/renew`, `https://livecheck.fly.dev/v1/confirm`, and `https://livecheck.fly.dev/v1/confirm/order`. It does **not** list `…/v1/watch/{id}/chain/topup` — crawlers would hit that literal `{id}` string and get a 402 with an empty body. Neither discovery route returns 402.
 
@@ -132,6 +132,9 @@ curl -sS https://livecheck.fly.dev/health
 curl -sI https://livecheck.fly.dev/openapi.json
 curl -sI https://livecheck.fly.dev/.well-known/x402
 # both must be HTTP 200 application/json, not 402
+
+curl -sI https://livecheck.fly.dev/llms.txt
+# HTTP 200 text/plain; charset=utf-8, not 402
 
 curl -sS -D - -o /dev/null https://livecheck.fly.dev/v1/verify \
   -H 'Content-Type: application/json' \
@@ -915,6 +918,7 @@ No new secrets. `PAID_CALL_DB_PATH`, `WATCH_DB_PATH`, and `RECEIPT_DB_PATH` are 
 ## How agents find this
 
 - **Wallet-agents:** [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) / Agentic.market. They search a free catalog of paid APIs, then pay $0.01 USDC on Base to `POST /v1/verify`.
+- **Machine Payments / agents:** `GET /llms.txt` is free `text/plain` discovery (paid routes, prices, Verify-first then Confirm, fixture demo). It does not add APIs or prices. Cursor Marketplace is not live.
 - **Humans in Cursor:** Cursor Marketplace (later). Needs a public GitHub repository for submit. Do not create one here. Until then, point Cursor at the stdio MCP in this repo (`verify`, `check`, `confirm`, `watch`; `verify_listing` remains). The MCP reports 402; paying is x402.
 
 ## Honest limits
