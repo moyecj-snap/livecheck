@@ -31,6 +31,7 @@ import { isEbayAdapterEnabled } from "./ebay.js";
 import { demoHtml } from "./demo-page.js";
 import { discoveryHeaders, openApiDocument, wellKnownX402 } from "./discovery.js";
 import { FIXTURES } from "./fixtures.js";
+import { LLMS_TXT, llmsTxtHeaders } from "./llms.js";
 import { recordSuccessfulPaidCheck, withPaidCallContext } from "./paid-call.js";
 import { applyPaymentGate, settlementMode } from "./payments.js";
 import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl, publicWatchChainTopupUrl, publicWatchRenewUrl, publicWatchUrl } from "./public-url.js";
@@ -68,6 +69,10 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
 
   app.get("/.well-known/livecheck-keys.json", (c) => {
     return c.json(livecheckKeysDocument(), 200, discoveryHeaders());
+  });
+
+  app.get("/llms.txt", () => {
+    return new Response(LLMS_TXT, { status: 200, headers: llmsTxtHeaders() });
   });
 
   app.get("/stats", (c) => {

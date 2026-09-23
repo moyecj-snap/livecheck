@@ -14,6 +14,7 @@ COPY src ./src
 COPY scripts ./scripts
 COPY bench ./bench
 COPY docs ./docs
+COPY public ./public
 
 ENV NODE_ENV=production
 ENV PORT=43127

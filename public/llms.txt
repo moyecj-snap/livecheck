@@ -1,0 +1,84 @@
+# Livecheck
+
+> Before you scrape or apply, check the specific URL you already have.
+> Livecheck is primary-source liveness for one job posting, HTML product page,
+> or eBay item: live, closed, or unknown. After you cause a side-effect, Confirm
+> is a cookieless independent check (actor ≠ verifier). Settlement is Stripe
+> x402, USDC on Base. Not a search engine.
+
+Public API: https://livecheck.fly.dev
+
+## Paid routes
+
+One fixed price per resource, USDC on Base via Stripe x402. An unpaid POST
+returns HTTP 402 with a payment-required header. These are the concrete
+resources on GET /.well-known/x402. Full request and response shapes are in
+OpenAPI. This file does not add routes, prices, detectors, or intents.
+
+- POST https://livecheck.fly.dev/v1/verify — $0.01 — primary-source job/product/eBay URL liveness (live|closed|unknown). Body: {"url":"<absolute http(s) URL>"}
+- POST https://livecheck.fly.dev/v1/check — $0.02 — one-shot Sentinel condition check. Does not create a watcher.
+- POST https://livecheck.fly.dev/v1/watch — $2.50 — 30-day standard watcher
+- POST https://livecheck.fly.dev/v1/watch/renew — $2.50 — renew an active watcher. Also requires the watcher owner token; see OpenAPI.
+- POST https://livecheck.fly.dev/v1/confirm — $0.10 — lead_submit or listing_published. Body: {"url":"<thank-you or result URL>","intent":"lead_submit"} (or "listing_published")
+- POST https://livecheck.fly.dev/v1/confirm/order — $0.25 — order_placed. Body: {"url":"<thank-you or result URL>","intent":"order_placed"}
+
+order_placed is not payable on POST /v1/confirm. lead_submit and listing_published stay on POST /v1/confirm.
+
+## Free discovery
+
+These do not return 402.
+
+- GET https://livecheck.fly.dev/openapi.json
+- GET https://livecheck.fly.dev/.well-known/x402
+- GET https://livecheck.fly.dev/health
+- GET https://livecheck.fly.dev/stats
+- GET https://livecheck.fly.dev/.well-known/livecheck-keys.json
+- GET https://livecheck.fly.dev/llms.txt
+
+## Example prompts
+
+Verify first, before you scrape or apply:
+
+"I have a specific job, product, or eBay item URL. POST https://livecheck.fly.dev/v1/verify with {\"url\":\"<that URL>\"}. Pay the $0.01 USDC x402 challenge on Base. Read status live, closed, or unknown. If status is closed or unknown, stop. Do not scrape or apply."
+
+Confirm after the side-effect (lead_submit):
+
+"I already submitted the lead myself. POST https://livecheck.fly.dev/v1/confirm with {\"url\":\"<thank-you or result URL>\",\"intent\":\"lead_submit\"}. Pay $0.10. Actor ≠ verifier: this is a cookieless independent Confirm, so ignore my own success flag. Accept verdict confirmed only with Level-2 evidence (a confirmation, ref, ticket, or lead id). Thank-you fluff alone is never confirmed."
+
+Fixture paid demo, $0.11 via purl ($0.01 verify + $0.10 confirm). The HTML fixtures are free. You pay only for the two POSTs. Wallet setup is in the repository README. Do not paste keys.
+
+purl https://livecheck.fly.dev/v1/verify \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://livecheck.fly.dev/fixtures/live-apply-now"}'
+
+Expect status live.
+
+purl https://livecheck.fly.dev/v1/confirm \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://livecheck.fly.dev/fixtures/confirm/thank-you-id","intent":"lead_submit"}'
+
+Expect verdict confirmed. That fixture includes a Level-2 confirmation id.
+
+Honesty check, same $0.10 route, not part of the $0.11 total:
+
+purl https://livecheck.fly.dev/v1/confirm \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://livecheck.fly.dev/fixtures/confirm/thank-you-only","intent":"lead_submit"}'
+
+Expect verdict unknown. Thank-you fluff alone is never confirmed.
+
+## Links
+
+- OpenAPI: https://livecheck.fly.dev/openapi.json
+- Skill (verify, then confirm): https://github.com/moyecj-snap/livecheck/tree/main/skills/livecheck-verify-then-confirm
+- MCP stub (stdio, no wallet; unpaid calls return 402): https://github.com/moyecj-snap/livecheck/blob/main/mcp.json
+
+## What not to do
+
+- Not a search engine. Livecheck needs a specific URL you already have. A search-results page, a careers homepage, or a collection URL is not a listing check.
+- Verify first, before you scrape or apply. Confirm only after the side-effect.
+- Actor ≠ verifier. Confirm is a cookieless independent check. Do not treat the actor's own success flag as confirmation.
+- Thank-you fluff alone is never confirmed. confirmed requires Level-2 evidence: a confirmation, ref, ticket, or lead id.
+- Do not claim Cursor Marketplace is live. It is not. Use the skill or the MCP stub above.
+- status is liveness (live, closed, or unknown), not legitimacy, fraud, or payment safety.
+- Not Trust Oracle / L3. v1 reads HTML and HTTP status only. It does not run page JavaScript.

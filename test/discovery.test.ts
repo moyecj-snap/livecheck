@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { after, before, describe, it } from "node:test";
 import { serve } from "@hono/node-server";
 import type { FacilitatorClient } from "@x402/core/server";
@@ -14,6 +15,7 @@ import {
   VERIFY_DESCRIPTION,
 } from "../src/config.js";
 import { PAID_DISCOVERY_ROUTES, WELL_KNOWN_X402_ROUTES } from "../src/discovery.js";
+import { LLMS_TXT } from "../src/llms.js";
 import { livePaymentMiddlewareFromServer, resourceServerFromFacilitator } from "../src/payments.js";
 
 function stubFacilitator(): FacilitatorClient {
@@ -84,6 +86,39 @@ function assertJsonDiscovery(res: Response, label: string) {
   assert.notEqual(res.status, 402, `${label}: discovery must not 402`);
   assert.match(res.headers.get("content-type") ?? "", /application\/json/);
   assert.equal(res.headers.get("payment-required"), null);
+}
+
+function assertLlmsTxt(res: Response, body: string) {
+  assert.equal(res.status, 200, "GET /llms.txt must be 200");
+  assert.notEqual(res.status, 402, "GET /llms.txt must not 402");
+  assert.equal(res.headers.get("payment-required"), null);
+  assert.match(res.headers.get("content-type") ?? "", /^text\/plain/);
+  assert.match(res.headers.get("content-type") ?? "", /charset=utf-8/i);
+  const file = readFileSync(new URL("../public/llms.txt", import.meta.url), "utf8");
+  assert.equal(body, file);
+  assert.equal(body, LLMS_TXT);
+  assert.match(body, /Not a search engine/);
+  assert.match(body, /specific URL/);
+  assert.match(body, /Thank-you fluff alone is never confirmed/);
+  assert.match(body, /Level-2/);
+  assert.match(body, /ref, ticket, or lead id/);
+  assert.match(body, /Actor ≠ verifier/);
+  assert.match(body, /cookieless independent/);
+  assert.match(body, /Verify first, before you scrape or apply/);
+  assert.match(body, /Confirm only after the side-effect/);
+  assert.match(body, /Do not claim Cursor Marketplace is live/);
+  assert.match(body, /POST https:\/\/livecheck\.fly\.dev\/v1\/verify — \$0\.01/);
+  assert.match(body, /POST https:\/\/livecheck\.fly\.dev\/v1\/check — \$0\.02/);
+  assert.match(body, /POST https:\/\/livecheck\.fly\.dev\/v1\/watch — \$2\.50/);
+  assert.match(body, /POST https:\/\/livecheck\.fly\.dev\/v1\/watch\/renew — \$2\.50/);
+  assert.match(body, /POST https:\/\/livecheck\.fly\.dev\/v1\/confirm — \$0\.10/);
+  assert.match(body, /POST https:\/\/livecheck\.fly\.dev\/v1\/confirm\/order — \$0\.25/);
+  assert.match(body, /\/fixtures\/live-apply-now/);
+  assert.match(body, /\/fixtures\/confirm\/thank-you-id/);
+  assert.match(body, /\/fixtures\/confirm\/thank-you-only/);
+  assert.match(body, /\$0\.11 via purl/);
+  assert.match(body, /https:\/\/github\.com\/moyecj-snap\/livecheck\/tree\/main\/skills\/livecheck-verify-then-confirm/);
+  assert.match(body, /https:\/\/github\.com\/moyecj-snap\/livecheck\/blob\/main\/mcp\.json/);
 }
 
 describe("discovery documents (mock gate)", () => {
@@ -242,6 +277,11 @@ describe("discovery documents (mock gate)", () => {
     );
   });
 
+  it("GET /llms.txt is free 200 text/plain from public/llms.txt", async () => {
+    const res = await fetch(`${origin}/llms.txt`);
+    assertLlmsTxt(res, await res.text());
+  });
+
   it("empty POST /v1/verify still reaches a parseable 402 (not 400)", async () => {
     const res = await fetch(`${origin}/v1/verify`, { method: "POST" });
     assert.equal(res.status, 402);
@@ -283,7 +323,7 @@ describe("discovery documents (live @x402/hono gate)", () => {
     else process.env.LIVECHECK_PUBLIC_URL = previousPublic;
   });
 
-  it("does not 402 OpenAPI or well-known under the live payment middleware", async () => {
+  it("does not 402 OpenAPI, well-known, or llms.txt under the live payment middleware", async () => {
     const openapi = await fetch(`${origin}/openapi.json`);
     assertJsonDiscovery(openapi, "live openapi.json");
     const wellKnown = await fetch(`${origin}/.well-known/x402`);
@@ -292,6 +332,8 @@ describe("discovery documents (live @x402/hono gate)", () => {
     assertJsonDiscovery(keys, "live .well-known/livecheck-keys.json");
     const stats = await fetch(`${origin}/stats`);
     assert.equal(stats.status, 200, "GET /stats must not 402");
+    const llms = await fetch(`${origin}/llms.txt`);
+    assertLlmsTxt(llms, await llms.text());
     const verify = await fetch(`${origin}/v1/verify`, { method: "POST" });
     assert.equal(verify.status, 402);
   });
