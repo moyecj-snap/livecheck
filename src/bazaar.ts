@@ -704,7 +704,12 @@ export function watchRenewBazaarExtensions(): Record<string, unknown> {
   );
 }
 
-/** Verify-shaped Bazaar only — same POST JSON wrapper as /v1/check. Slim until settle proven. */
+/**
+ * Rich watch discovery declaration. Not attached to the POST /v1/watch 402 or
+ * the facilitator verify/settle envelope until settle is proven — the fat
+ * schema breaks purl→CDP the same way Confirm did before b7ab919.
+ * OpenAPI still uses WATCH_OUTPUT_SCHEMA.
+ */
 export function watchBazaarExtensions(): Record<string, unknown> {
   return withPostJsonMethod(
     declareDiscoveryExtension({

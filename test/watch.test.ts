@@ -207,6 +207,11 @@ describe("POST /v1/watch HTTP", () => {
     assert.equal(resource.description, WATCH_PAYMENT_DESCRIPTION);
     assert.equal(isAscii(WATCH_PAYMENT_DESCRIPTION), true);
     assert.doesNotMatch(WATCH_PAYMENT_DESCRIPTION, /[^\x00-\x7F]/);
+    const extensions = decoded.extensions as { bazaar?: unknown } | undefined;
+    assert.equal(extensions?.bazaar, undefined);
+    // Before the hotfix this header was 7500 b64 (verify was 3608) because of
+    // the fat watch bazaar. It must stay well under that.
+    assert.ok(header.length < 4000, `watch payment-required still fat: ${header.length} b64`);
   });
 
   it("verify, check, and confirm unpaid 402s stay single-price (regression)", async () => {

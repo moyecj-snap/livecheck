@@ -163,6 +163,11 @@ describe("live @x402/hono 402 (decoded payment-required)", () => {
     assert.equal(accepts.length, 1);
     assert.equal(accepts[0]?.amount, "2500000");
     assert.deepEqual(accepts[0]?.extra, { name: "USD Coin", version: "2" });
+    const extensions = decoded.extensions as { bazaar?: unknown } | undefined;
+    assert.equal(extensions?.bazaar, undefined);
+    const header = res.headers.get("payment-required");
+    assert.ok(header);
+    assert.ok(header.length < 4000, `live watch payment-required still fat: ${header.length} b64`);
   });
 
   it("watch renew 402 is one $2.50 accept with the concrete renew URL", async () => {
@@ -356,6 +361,7 @@ describe("advertisePaymentRequired on a production-shaped 402", () => {
             mimeType: "application/json",
           },
           accepts: structuredClone(accepts),
+          extensions: { bazaar: { info: { input: { bodyType: "json" } }, schema: { properties: {} } } },
         },
         "https://livecheck.fly.dev/v1/watch",
         "livecheck.fly.dev",
@@ -364,6 +370,7 @@ describe("advertisePaymentRequired on a production-shaped 402", () => {
       const resource = decoded.resource as { url: string; description: string };
       assert.equal(resource.url, "https://livecheck.fly.dev/v1/watch");
       assert.equal(resource.description, WATCH_PAYMENT_DESCRIPTION);
+      assert.equal((decoded.extensions as { bazaar?: unknown }).bazaar, undefined);
     } finally {
       if (previousPublic === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
       else process.env.LIVECHECK_PUBLIC_URL = previousPublic;
