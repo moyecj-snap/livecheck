@@ -37,12 +37,58 @@ The `skills` CLI may warn that it wants Node `>=22.20.0`. Node `20.19` still wor
 
 Pasteable tool shapes: see `tools.json` in this folder.
 
+End-to-end paid demo (purl, production fixtures, ~$0.11 USDC): [`docs/DEMO-AGENT-VERIFY-CONFIRM.md`](../../docs/DEMO-AGENT-VERIFY-CONFIRM.md).
+
+## Paid demo (`purl`)
+
+Production URLs. Needs USDC on Base. **Never paste keys.** Install `purl` from the README Verify-first section (Linux + macOS Apple Silicon). MCP without a wallet still returns 402 — for this paid path use `purl` or AgentCore bazaar + payments.
+
+Unpaid 402 (no spend):
+
+```bash
+curl -sS -D - -o /tmp/livecheck-verify.402 https://livecheck.fly.dev/v1/verify \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://livecheck.fly.dev/fixtures/live-apply-now"}'
+
+curl -sS -D - -o /tmp/livecheck-confirm.402 https://livecheck.fly.dev/v1/confirm \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://livecheck.fly.dev/fixtures/confirm/thank-you-id","intent":"lead_submit"}'
+```
+
+Paid Verify (`$0.01`) — expect `status=live`:
+
+```bash
+purl https://livecheck.fly.dev/v1/verify \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://livecheck.fly.dev/fixtures/live-apply-now"}'
+```
+
+**Actor:** for the demo, treat form submit as already done. Do not build a form product. Confirm the thank-you fixture next.
+
+Paid Confirm (`$0.10`) — expect `verdict=confirmed`, Level-2 id `ABC123`:
+
+```bash
+purl https://livecheck.fly.dev/v1/confirm \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://livecheck.fly.dev/fixtures/confirm/thank-you-id","intent":"lead_submit"}'
+```
+
+Honesty contrast (thank-you fluff → `unknown`, never confirmed):
+
+```bash
+purl https://livecheck.fly.dev/v1/confirm \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://livecheck.fly.dev/fixtures/confirm/thank-you-only","intent":"lead_submit"}'
+```
+
+The contrast is an extra `$0.10` if paid; skip and still treat fluff as `unknown`. Required path spend is **~$0.11 USDC**.
+
 ## Steps
-1. **Verify first** — unpaid call expects HTTP 402; complete x402 payment; body `{"url":"<absolute job, Shopify/HTML product, or eBay /itm/ URL>"}`.
+1. **Verify first** — unpaid call expects HTTP 402; complete x402 payment; body `{"url":"<absolute job, Shopify/HTML product, or eBay /itm/ URL>"}`. Demo fixture: `https://livecheck.fly.dev/fixtures/live-apply-now`.
 2. Parse `status` `live|closed|unknown` + `signals`. If `closed` or `unknown` (and not a known Ashby/Lever unknown), stop or escalate — do not treat as success.
-3. Run the agent’s own `lead_submit` action (separate actor).
-4. **Confirm** — unpaid → 402; pay; body `{"url":"<thank-you or result URL>","intent":"lead_submit"}` (optional `claim` fingerprint).
-5. Accept only `verdict=confirmed` with Level-2 evidence (ref / ticket / lead id, or unique confirmation-URL token). Thank-you fluff alone → `unknown` — never treat as confirmed.
+3. Run the agent’s own `lead_submit` action (separate actor). Demo: treat submit as already done; use the thank-you fixture.
+4. **Confirm** — unpaid → 402; pay; body `{"url":"<thank-you or result URL>","intent":"lead_submit"}` (optional `claim` fingerprint). Demo fixture: `https://livecheck.fly.dev/fixtures/confirm/thank-you-id`.
+5. Accept only `verdict=confirmed` with Level-2 evidence (ref / ticket / lead id, or unique confirmation-URL token). Thank-you fluff alone → `unknown` — never treat as confirmed (`https://livecheck.fly.dev/fixtures/confirm/thank-you-only`).
 6. On `failed` / `unknown`, prefer abstention over false success.
 
 ## Honest limits (do not overclaim)
@@ -52,4 +98,4 @@ Pasteable tool shapes: see `tools.json` in this folder.
 - Local honesty bench: false-confirmed=0 on fixture set — not broad public-web confirmed recall.
 
 ## Success
-Paid 200 JSON from both calls; Confirm `confirmed` only with Level-2 signals; report both responses.
+Paid 200 JSON from both calls; Confirm `confirmed` only with Level-2 signals; report both responses. Demo path: Verify `live` on `live-apply-now` + Confirm `confirmed` on `thank-you-id` (~$0.11 USDC). Full copy-paste: [`docs/DEMO-AGENT-VERIFY-CONFIRM.md`](../../docs/DEMO-AGENT-VERIFY-CONFIRM.md).

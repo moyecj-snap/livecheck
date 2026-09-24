@@ -71,6 +71,8 @@ Prefer a URL from your own workflow.
 
 `status` is `live`, `closed`, or `unknown`. Status ≠ legitimacy, fraud, or payment safety. v1 reads HTML + status only (no JavaScript). Many JS-heavy ATS pages return `unknown`.
 
+Paid Verify then Confirm (purl, ~$0.11 USDC, fixture-backed): [docs/DEMO-AGENT-VERIFY-CONFIRM.md](docs/DEMO-AGENT-VERIFY-CONFIRM.md).
+
 ## What you get
 
 ```http
