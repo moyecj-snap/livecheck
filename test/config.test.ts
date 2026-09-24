@@ -79,6 +79,13 @@ describe("listing price and description", () => {
       [...WATCH_PAYMENT_DESCRIPTION].every((ch) => ch.charCodeAt(0) < 128),
       true,
     );
+    assert.ok(WATCH_PAYMENT_DESCRIPTION.length >= 200);
+    assert.ok(
+      WATCH_PAYMENT_DESCRIPTION.length <= 300,
+      `watch 402 description must stay in the verify band, got ${WATCH_PAYMENT_DESCRIPTION.length}`,
+    );
+    assert.match(WATCH_PAYMENT_DESCRIPTION, /\$2\.50/);
+    assert.match(WATCH_PAYMENT_DESCRIPTION, /2500000/);
     assert.equal(
       [...WATCH_RENEW_PAYMENT_DESCRIPTION].every((ch) => ch.charCodeAt(0) < 128),
       true,

@@ -14,6 +14,7 @@ import {
   ORDER_PAYMENT_DESCRIPTION,
   VERIFY_DESCRIPTION,
 } from "../src/config.js";
+import { setFacilitatorFetchForTests, wrapFacilitatorForCatalog } from "../src/facilitator-catalog.js";
 import { livePaymentMiddlewareFromServer, resourceServerFromFacilitator } from "../src/payments.js";
 import { advertisePaymentRequired, decodePaymentRequired } from "../src/x402-payload.js";
 import { assertInfoInputMatchesSchema } from "./bazaar-schema.js";
@@ -159,6 +160,7 @@ describe("live @x402/hono 402 (decoded payment-required)", () => {
     const resource = decoded.resource as { url?: string; description?: string };
     assert.equal(resource.url, "https://livecheck.fly.dev/v1/watch");
     assert.equal(resource.description, WATCH_PAYMENT_DESCRIPTION);
+    assert.ok((resource.description ?? "").length <= 300);
     const accepts = decoded.accepts as Array<{ amount?: string; extra?: { name?: string; version?: string } }>;
     assert.equal(accepts.length, 1);
     assert.equal(accepts[0]?.amount, "2500000");
@@ -168,6 +170,68 @@ describe("live @x402/hono 402 (decoded payment-required)", () => {
     const header = res.headers.get("payment-required");
     assert.ok(header);
     assert.ok(header.length < 4000, `live watch payment-required still fat: ${header.length} b64`);
+  });
+
+  it("logs a paid watch attempt before facilitator handling and the reject reason", async () => {
+    const secret = "super-secret-sig";
+    const envelope = {
+      x402Version: 2,
+      resource: {
+        url: "https://livecheck.fly.dev/v1/watch",
+        description: "d".repeat(743),
+        mimeType: "application/json",
+      },
+      extensions: {},
+      accepted: { amount: "2500000", scheme: "exact" },
+      payload: { signature: secret },
+    };
+    const header = Buffer.from(JSON.stringify(envelope), "utf8").toString("base64");
+    const lines: string[] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map((part) => String(part)).join(" "));
+    };
+    try {
+      const res = await fetch(`${origin}/v1/watch`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "payment-signature": header,
+        },
+        body: JSON.stringify({
+          target: { type: "url", url: "https://example.com", render: "never" },
+          condition: { detector: "status_change", params: {} },
+          callback: { url: "https://example.com/hook", secret: "whsec_x" },
+        }),
+      });
+      assert.equal(res.status, 402);
+      const inbound = lines.find((line) => line.startsWith("[livecheck] paid watch inbound"));
+      const rejected = lines.find((line) => line.startsWith("[livecheck] paid watch rejected"));
+      assert.ok(inbound, `missing inbound log\n${lines.join("\n")}`);
+      assert.ok(rejected, `missing rejected log\n${lines.join("\n")}`);
+      assert.ok(lines.indexOf(inbound) < lines.indexOf(rejected));
+      const summary = JSON.parse(inbound.slice("[livecheck] paid watch inbound ".length)) as {
+        header?: string;
+        desc_len?: number;
+        amount?: string;
+        has_bazaar?: boolean;
+      };
+      assert.equal(summary.header, "payment-signature");
+      assert.equal(summary.desc_len, 743);
+      assert.equal(summary.amount, "2500000");
+      assert.equal(summary.has_bazaar, false);
+      assert.doesNotMatch(inbound, /super-secret-sig/);
+      const reject = JSON.parse(rejected.slice("[livecheck] paid watch rejected ".length)) as {
+        status?: number;
+        reason?: string;
+      };
+      assert.equal(reject.status, 402);
+      assert.equal(typeof reject.reason, "string");
+      assert.ok((reject.reason ?? "").length > 0);
+      assert.doesNotMatch(rejected, /super-secret-sig/);
+    } finally {
+      console.log = original;
+    }
   });
 
   it("watch renew 402 is one $2.50 accept with the concrete renew URL", async () => {
@@ -406,6 +470,128 @@ describe("advertisePaymentRequired on a production-shaped 402", () => {
       else process.env.LIVECHECK_PUBLIC_URL = previousPublic;
       if (previousFly === undefined) delete process.env.FLY_APP_NAME;
       else process.env.FLY_APP_NAME = previousFly;
+    }
+  });
+});
+
+describe("paid watch 402 carries the full CDP errorMessage", () => {
+  const previousPublic = process.env.LIVECHECK_PUBLIC_URL;
+  process.env.LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev";
+  const tail = "UNIQUE_402_TAIL_x402V2PaymentPayload_full_errorMessage";
+  const secret = `0x${"cd".repeat(40)}`;
+  const errorMessage = `'paymentPayload' is invalid: must match one of [x402V2PaymentPayload, x402V1PaymentPayload]. ${secret} ${tail}`;
+  const cdpBody = JSON.stringify({
+    correlationId: "a4057b459beecf2e-IAD",
+    errorLink: "https://docs.cdp.coinbase.com/api-reference/v2/errors#invalid-request",
+    errorType: "invalid_request",
+    errorMessage,
+    signature: secret,
+  });
+  const facilitator: FacilitatorClient = wrapFacilitatorForCatalog({
+    async getSupported() {
+      return {
+        kinds: [{ x402Version: 2, scheme: "exact", network: NETWORK }],
+        extensions: [],
+        signers: {},
+      };
+    },
+    async verify() {
+      const res = await fetch("https://api.cdp.coinbase.com/platform/v2/x402/verify", { method: "POST" });
+      const text = await res.text();
+      const cut = text.length <= 200 ? text : `${text.slice(0, 197)}...`;
+      throw new Error(`Facilitator verify failed (400): ${cut}`);
+    },
+    async settle() {
+      return { success: false, transaction: "", network: NETWORK };
+    },
+  });
+  const app = createApp(
+    livePaymentMiddlewareFromServer(resourceServerFromFacilitator(facilitator), MOCK_PAY_TO),
+  );
+  let origin = "";
+  let close: () => void = () => {};
+
+  before(async () => {
+    setFacilitatorFetchForTests(
+      async () => new Response(cdpBody, { status: 400, headers: { "content-type": "application/json" } }),
+    );
+    await new Promise<void>((resolve) => {
+      const server = serve({ fetch: app.fetch, port: 0, hostname: "127.0.0.1" }, (info) => {
+        origin = `http://127.0.0.1:${info.port}`;
+        close = () => server.close();
+        resolve();
+      });
+    });
+  });
+
+  after(() => {
+    close();
+    setFacilitatorFetchForTests(null);
+    if (previousPublic === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
+    else process.env.LIVECHECK_PUBLIC_URL = previousPublic;
+  });
+
+  it("writes the full CDP errorMessage into payment-required.error", async () => {
+    const libraryExcerpt = cdpBody.length <= 200 ? cdpBody : `${cdpBody.slice(0, 197)}...`;
+    assert.equal(libraryExcerpt.includes(tail), false);
+    const unpaid = await fetch(`${origin}/v1/watch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        target: { type: "url", url: "https://example.com", render: "never" },
+        condition: { detector: "status_change", params: {} },
+        callback: { url: "https://example.com/hook", secret: "whsec_x" },
+      }),
+    });
+    assert.equal(unpaid.status, 402);
+    const challenge = decodePaymentRequired(unpaid.headers.get("payment-required") ?? "");
+    const accepts = challenge.accepts as unknown[];
+    assert.equal(accepts.length, 1);
+    const envelope = {
+      x402Version: 2,
+      resource: {
+        url: "https://livecheck.fly.dev/v1/watch",
+        description: "d".repeat(743),
+        mimeType: "application/json",
+      },
+      accepted: accepts[0],
+      payload: { signature: "super-secret-sig", authorization: { from: "0x0561", value: "2500000" } },
+    };
+    const lines: string[] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map((part) => String(part)).join(" "));
+    };
+    try {
+      const res = await fetch(`${origin}/v1/watch`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "payment-signature": Buffer.from(JSON.stringify(envelope), "utf8").toString("base64"),
+        },
+        body: JSON.stringify({
+          target: { type: "url", url: "https://example.com", render: "never" },
+          condition: { detector: "status_change", params: {} },
+          callback: { url: "https://example.com/hook", secret: "whsec_x" },
+        }),
+      });
+      assert.equal(res.status, 402);
+      const decoded = decodePaymentRequired(res.headers.get("payment-required") ?? "");
+      const error = String(decoded.error ?? "");
+      assert.match(error, /UNIQUE_402_TAIL_x402V2PaymentPayload_full_errorMessage/);
+      assert.match(error, /correlationId=a4057b459beecf2e-IAD/);
+      assert.doesNotMatch(error, new RegExp(secret));
+      assert.doesNotMatch(error, /super-secret-sig/);
+      const rejected = lines.find((line) => line.startsWith("[livecheck] paid watch rejected"));
+      assert.ok(rejected);
+      assert.match(rejected, /UNIQUE_402_TAIL_x402V2PaymentPayload_full_errorMessage/);
+      assert.doesNotMatch(rejected, new RegExp(secret));
+      const facilitator = lines.find((line) => line.startsWith("[livecheck] facilitator verify"));
+      assert.ok(facilitator);
+      assert.match(facilitator, /UNIQUE_402_TAIL_x402V2PaymentPayload_full_errorMessage/);
+      assert.match(facilitator, /"description_clamped":true/);
+    } finally {
+      console.log = original;
     }
   });
 });
