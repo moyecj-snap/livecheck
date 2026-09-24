@@ -96,6 +96,7 @@ describe("fillCatalogPaymentPayload", () => {
       assert.equal(resourceFilled, true);
       assert.equal(paymentPayloadResourceUrl(payload), "https://livecheck.fly.dev/v1/watch");
       assert.notEqual(paymentPayloadResourceUrl(payload), advertised);
+      assert.equal(paymentPayloadHasBazaar(payload), false);
     } finally {
       if (previous === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
       else process.env.LIVECHECK_PUBLIC_URL = previous;
@@ -160,6 +161,29 @@ describe("fillCatalogPaymentPayload", () => {
       assert.match(resource.description ?? "", /Livecheck Confirm/);
       assert.equal(resource.serviceName, "Livecheck");
       assert.deepEqual(resource.tags, ["livecheck", "confirm"]);
+    } finally {
+      if (previous === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
+      else process.env.LIVECHECK_PUBLIC_URL = previous;
+    }
+  });
+
+  it("strips an echoed watch bazaar instead of forwarding it to CDP", () => {
+    const previous = process.env.LIVECHECK_PUBLIC_URL;
+    process.env.LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev";
+    try {
+      const { payload, bazaarFilled } = fillCatalogPaymentPayload({
+        resource: {
+          url: "https://livecheck.fly.dev/v1/watch",
+          description: "Livecheck Sentinel watch",
+          mimeType: "application/json",
+        },
+        extensions: { bazaar: { info: { input: { bodyType: "json" } } }, other: true },
+        payload: { signature: "do-not-log" },
+      });
+      assert.equal(bazaarFilled, false);
+      assert.equal(paymentPayloadHasBazaar(payload), false);
+      assert.equal((payload.extensions as { other?: boolean }).other, true);
+      assert.equal((payload.payload as { signature?: string }).signature, "do-not-log");
     } finally {
       if (previous === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
       else process.env.LIVECHECK_PUBLIC_URL = previous;

@@ -4,7 +4,6 @@ import {
   confirmBazaarExtensions,
   orderConfirmBazaarExtensions,
   verifyBazaarExtensions,
-  watchBazaarExtensions,
   watchRenewBazaarExtensions,
 } from "./bazaar.js";
 import {
@@ -157,7 +156,11 @@ export function fillCatalogPaymentPayload(payload: PaymentEnvelope): {
   const kind = resourceKindFromUrl(inboundUrl);
   const advertised = advertisedResourceInfo(kind, inboundUrl);
   const resourceFilled = needsAdvertisedResource(inboundUrl, advertised.url);
-  const bazaarFilled = !paymentPayloadHasBazaar(payload);
+  // Watch: do not inject (or forward) the fat bazaar. It is byte-identical to
+  // the 402 extension that purl echoes, so backfill would hand CDP the schema
+  // that fails verify. Other routes keep the Confirm-era catalog backfill.
+  const omitWatchBazaar = kind === "watch";
+  let bazaarFilled = !omitWatchBazaar && !paymentPayloadHasBazaar(payload);
 
   const next: PaymentEnvelope = { ...payload };
   if (resourceFilled) {
@@ -166,7 +169,13 @@ export function fillCatalogPaymentPayload(payload: PaymentEnvelope): {
     next.resource = { ...advertised, url: inboundUrl };
   }
 
-  if (bazaarFilled) {
+  if (omitWatchBazaar) {
+    if (next.extensions && typeof next.extensions === "object" && "bazaar" in next.extensions) {
+      const rest = { ...next.extensions };
+      delete rest.bazaar;
+      next.extensions = rest;
+    }
+  } else if (bazaarFilled) {
     const bazaar =
       kind === "confirm_order"
         ? orderConfirmBazaarExtensions()
@@ -176,8 +185,6 @@ export function fillCatalogPaymentPayload(payload: PaymentEnvelope): {
             ? checkBazaarExtensions()
             : kind === "watch_renew"
               ? watchRenewBazaarExtensions()
-              : kind === "watch"
-              ? watchBazaarExtensions()
               : kind === "chain_topup"
                 ? chainTopupBazaarExtensions()
                 : verifyBazaarExtensions();

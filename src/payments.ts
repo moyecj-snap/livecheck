@@ -6,7 +6,7 @@ import { bazaarResourceServerExtension } from "@x402/extensions/bazaar";
 import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import type { RoutesConfig } from "@x402/core/server";
 import type { MiddlewareHandler } from "hono";
-import { chainTopupBazaarExtensions, checkBazaarExtensions, confirmBazaarExtensions, orderConfirmBazaarExtensions, verifyBazaarExtensions, watchBazaarExtensions, watchRenewBazaarExtensions } from "./bazaar.js";
+import { chainTopupBazaarExtensions, checkBazaarExtensions, confirmBazaarExtensions, orderConfirmBazaarExtensions, verifyBazaarExtensions, watchRenewBazaarExtensions } from "./bazaar.js";
 import {
   CHAIN_TOPUP_PAYMENT_DESCRIPTION,
   CHAIN_TOPUP_PRICE_LABEL,
@@ -126,7 +126,9 @@ export function verifyPaymentRoutes(payTo: string): RoutesConfig {
       description: WATCH_PAYMENT_DESCRIPTION,
       mimeType: "application/json",
       resource: publicWatchUrl(),
-      extensions: watchBazaarExtensions(),
+      // Hotfix: omit watch bazaar on the 402. The declaration is ~4450 JSON
+      // (~7500 b64 payment-required vs verify ~3600) and purl/CDP reject it
+      // the same way Confirm did before b7ab919. OpenAPI keeps the full schema.
     },
     "POST /v1/watch/renew": {
       accepts: [

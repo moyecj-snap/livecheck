@@ -4,7 +4,6 @@ import {
   confirmBazaarExtensions,
   orderConfirmBazaarExtensions,
   verifyBazaarExtensions,
-  watchBazaarExtensions,
   watchRenewBazaarExtensions,
 } from "./bazaar.js";
 import {
@@ -140,7 +139,8 @@ export function watchPaymentRequiredBody(resourceUrl: string): PaymentRequiredBo
       mimeType: "application/json",
     },
     accepts: [accept(WATCH_PRICE_ATOMIC_USDC)],
-    extensions: watchBazaarExtensions(),
+    // Hotfix: bazaar-free 402 until watch settle is proven (Confirm b7ab919).
+    extensions: {},
   };
 }
 
@@ -228,7 +228,7 @@ function routeBazaar(kind: ReturnType<typeof paidResourceKind>): Record<string, 
   if (kind === "confirm") return confirmBazaarExtensions();
   if (kind === "check") return checkBazaarExtensions();
   if (kind === "watch_renew") return watchRenewBazaarExtensions();
-  if (kind === "watch") return watchBazaarExtensions();
+  if (kind === "watch") return {};
   if (kind === "chain_topup") return chainTopupBazaarExtensions();
   return verifyBazaarExtensions();
 }
@@ -260,10 +260,16 @@ export function advertisePaymentRequired(
       : {};
   const advertised = advertisedResource(kind, requestUrl, host);
   const bazaar = routeBazaar(kind);
-  const extensions: Record<string, unknown> = { ...bazaar, ...libraryExtensions };
-  if (!extensions.bazaar) {
+  // Watch 402 stays bazaar-free. @x402/hono copies route extensions into the
+  // header; a fat bazaar there is what purl echoes into the CDP paymentPayload.
+  const omitBazaar = kind === "watch";
+  const extensions: Record<string, unknown> = omitBazaar
+    ? { ...libraryExtensions }
+    : { ...bazaar, ...libraryExtensions };
+  if (!omitBazaar && !extensions.bazaar) {
     Object.assign(extensions, bazaar);
   }
+  if (omitBazaar && "bazaar" in extensions) delete extensions.bazaar;
   return {
     ...payload,
     resource: {
