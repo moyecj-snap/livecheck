@@ -119,7 +119,7 @@ function reasonFromResponse(res: Response): Promise<string> {
         // fall through
       }
       const compact = text.replace(/\s+/g, " ").trim();
-      return compact ? compact.slice(0, 180) : `HTTP ${res.status}`;
+      return compact || `HTTP ${res.status}`;
     })
     .catch(() => `HTTP ${res.status}`);
 }

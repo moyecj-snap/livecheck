@@ -326,12 +326,66 @@ export function formatFacilitatorLog(phase: "verify" | "settle", parts: Record<s
   return `[livecheck] facilitator ${phase} ${JSON.stringify(parts)}`;
 }
 
-/** Fly-safe reason: one line, no long hex (signatures), capped. */
-export function shortPublicReason(value: string, limit = 180): string {
-  const compact = value.replace(/\s+/g, " ").trim();
-  const redacted = compact.replace(/0x[a-fA-F0-9]{16,}/g, "0x…");
-  if (redacted.length <= limit) return redacted;
-  return `${redacted.slice(0, limit - 3)}...`;
+/** Drop EIP-3009-sized hex (signatures, nonces). Leave addresses and the CDP error text. */
+export function redactSecrets(value: string): string {
+  return value.replace(/0x[a-fA-F0-9]{64,}/g, "0x…");
+}
+
+/**
+ * One line, signatures redacted. Does not truncate: @x402/core already cuts the
+ * facilitator body at 200 chars via responseExcerpt, and that hid CDP's
+ * errorMessage (`must match one of [x402V2Pay...`).
+ */
+export function shortPublicReason(value: string): string {
+  return redactSecrets(value.replace(/\s+/g, " ").trim());
+}
+
+export type PublicFacilitatorHttpError = {
+  error_status: number;
+  error_type: string | null;
+  error_message: string;
+  correlation_id: string | null;
+  error_link: string | null;
+};
+
+/**
+ * CDP error JSON fields only. paymentPayload / signature / authorization are
+ * not copied. errorMessage is kept whole.
+ */
+export function publicFacilitatorHttpError(status: number, body: string): PublicFacilitatorHttpError {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    parsed = null;
+  }
+  const record =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  const rawMessage = record && typeof record.errorMessage === "string" ? record.errorMessage : body;
+  return {
+    error_status: status,
+    error_type: record && typeof record.errorType === "string" ? record.errorType : null,
+    error_message: redactSecrets(rawMessage),
+    correlation_id: record && typeof record.correlationId === "string" ? record.correlationId : null,
+    error_link: record && typeof record.errorLink === "string" ? record.errorLink : null,
+  };
+}
+
+export function facilitatorFailureMessage(
+  operation: "verify" | "settle",
+  status: number,
+  body: string,
+): string {
+  const info = publicFacilitatorHttpError(status, body);
+  const meta = [info.error_type, info.correlation_id ? `correlationId=${info.correlation_id}` : null]
+    .filter((part): part is string => Boolean(part))
+    .join(" ");
+  const head = `Facilitator ${operation} failed (${info.error_status})`;
+  const prefix = meta ? `${head}: ${meta}` : head;
+  const link = info.error_link ? ` ${info.error_link}` : "";
+  return `${prefix}: ${info.error_message}${link}`;
 }
 
 export function facilitatorErrorParts(error: unknown): { error_status: number | null; error_reason: string } {

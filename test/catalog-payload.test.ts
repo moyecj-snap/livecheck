@@ -10,7 +10,7 @@ import {
   paymentPayloadResourceUrl,
   summarizeCatalogPayload,
 } from "../src/catalog-payload.js";
-import { wrapFacilitatorForCatalog } from "../src/facilitator-catalog.js";
+import { setFacilitatorFetchForTests, wrapFacilitatorForCatalog } from "../src/facilitator-catalog.js";
 import { NETWORK } from "../src/config.js";
 import { assertInfoInputMatchesSchema, type BazaarExt } from "./bazaar-schema.js";
 
@@ -218,6 +218,32 @@ describe("fillCatalogPaymentPayload", () => {
     }
   });
 
+  it("clamps a 743-char watch description and does not invent extensions", () => {
+    const previous = process.env.LIVECHECK_PUBLIC_URL;
+    process.env.LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev";
+    try {
+      const inbound = {
+        x402Version: 2,
+        resource: {
+          url: "https://livecheck.fly.dev/v1/watch",
+          description: "w".repeat(743),
+          mimeType: "application/json",
+        },
+        accepted: { scheme: "exact", amount: "2500000" },
+        payload: { signature: "do-not-log" },
+      };
+      const { payload, descriptionClamped } = fillCatalogPaymentPayload(inbound);
+      assert.equal(descriptionClamped, true);
+      assert.equal((payload.resource as { description?: string }).description, WATCH_PAYMENT_DESCRIPTION);
+      assert.equal(Object.prototype.hasOwnProperty.call(payload, "extensions"), false);
+      assert.equal((payload.payload as { signature?: string }).signature, "do-not-log");
+      assert.equal((payload.accepted as { amount?: string }).amount, "2500000");
+    } finally {
+      if (previous === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
+      else process.env.LIVECHECK_PUBLIC_URL = previous;
+    }
+  });
+
   it("leaves a matching https resource and existing bazaar echo in place", () => {
     const previous = process.env.LIVECHECK_PUBLIC_URL;
     process.env.LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev";
@@ -368,6 +394,83 @@ describe("wrapFacilitatorForCatalog", () => {
       assert.ok((parsed.desc_len ?? 999) <= 300);
     } finally {
       console.log = original;
+      if (previous === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
+      else process.env.LIVECHECK_PUBLIC_URL = previous;
+    }
+  });
+
+  it("replaces @x402/core's 200-char excerpt with the full CDP errorMessage", async () => {
+    const previous = process.env.LIVECHECK_PUBLIC_URL;
+    process.env.LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev";
+    const tail = "UNIQUE_CDP_TAIL_x402V2PaymentPayload_not_in_200_char_excerpt";
+    const secret = `0x${"ab".repeat(40)}`;
+    const errorMessage = `'paymentPayload' is invalid: must match one of [x402V2PaymentPayload, x402V1PaymentPayload]. ${secret} ${tail}`;
+    const body = JSON.stringify({
+      correlationId: "a4057b459beecf2e-IAD",
+      errorLink: "https://docs.cdp.coinbase.com/api-reference/v2/errors#invalid-request",
+      errorType: "invalid_request",
+      errorMessage,
+      signature: secret,
+    });
+    const libraryExcerpt = body.length <= 200 ? body : `${body.slice(0, 197)}...`;
+    assert.equal(libraryExcerpt.includes(tail), false);
+    setFacilitatorFetchForTests(
+      async () => new Response(body, { status: 400, headers: { "content-type": "application/json" } }),
+    );
+    const lines: string[] = [];
+    const original = console.log;
+    console.log = (line?: unknown) => {
+      lines.push(String(line));
+    };
+    const inner = {
+      async getSupported() {
+        return { kinds: [], extensions: [], signers: {} };
+      },
+      async verify() {
+        const res = await fetch("https://api.cdp.coinbase.com/platform/v2/x402/verify", { method: "POST" });
+        const text = await res.text();
+        const cut = text.length <= 200 ? text : `${text.slice(0, 197)}...`;
+        throw new Error(`Facilitator verify failed (400): ${cut}`);
+      },
+      async settle() {
+        return { success: false, transaction: "", network: NETWORK };
+      },
+    } satisfies FacilitatorClient;
+    try {
+      const wrapped = wrapFacilitatorForCatalog(inner);
+      await assert.rejects(
+        () =>
+          wrapped.verify(
+            {
+              x402Version: 2,
+              resource: {
+                url: "https://livecheck.fly.dev/v1/watch",
+                description: "w".repeat(743),
+                mimeType: "application/json",
+              },
+              payload: { signature: "super-secret-sig" },
+            } as unknown as Parameters<FacilitatorClient["verify"]>[0],
+            { scheme: "exact", network: NETWORK } as unknown as Parameters<FacilitatorClient["verify"]>[1],
+          ),
+        (err: unknown) => {
+          assert.ok(err instanceof Error);
+          assert.match(err.message, /UNIQUE_CDP_TAIL_x402V2PaymentPayload_not_in_200_char_excerpt/);
+          assert.match(err.message, /correlationId=a4057b459beecf2e-IAD/);
+          assert.match(err.message, /invalid_request/);
+          assert.match(err.message, /invalid-request/);
+          assert.doesNotMatch(err.message, new RegExp(secret));
+          assert.doesNotMatch(err.message, /super-secret-sig/);
+          return true;
+        },
+      );
+      const logged = lines.find((line) => line.startsWith("[livecheck] facilitator verify"));
+      assert.ok(logged);
+      assert.match(logged, /UNIQUE_CDP_TAIL_x402V2PaymentPayload_not_in_200_char_excerpt/);
+      assert.doesNotMatch(logged, new RegExp(secret));
+      assert.doesNotMatch(logged, /super-secret-sig/);
+    } finally {
+      console.log = original;
+      setFacilitatorFetchForTests(null);
       if (previous === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
       else process.env.LIVECHECK_PUBLIC_URL = previous;
     }
