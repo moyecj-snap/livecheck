@@ -207,6 +207,8 @@ describe("POST /v1/watch HTTP", () => {
     assert.equal(resource.description, WATCH_PAYMENT_DESCRIPTION);
     assert.equal(isAscii(WATCH_PAYMENT_DESCRIPTION), true);
     assert.doesNotMatch(WATCH_PAYMENT_DESCRIPTION, /[^\x00-\x7F]/);
+    assert.ok(WATCH_PAYMENT_DESCRIPTION.length <= 300);
+    assert.ok((resource.description ?? "").length <= 300);
     const extensions = decoded.extensions as { bazaar?: unknown } | undefined;
     assert.equal(extensions?.bazaar, undefined);
     // Before the hotfix this header was 7500 b64 (verify was 3608) because of

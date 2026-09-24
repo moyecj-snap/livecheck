@@ -159,6 +159,7 @@ describe("live @x402/hono 402 (decoded payment-required)", () => {
     const resource = decoded.resource as { url?: string; description?: string };
     assert.equal(resource.url, "https://livecheck.fly.dev/v1/watch");
     assert.equal(resource.description, WATCH_PAYMENT_DESCRIPTION);
+    assert.ok((resource.description ?? "").length <= 300);
     const accepts = decoded.accepts as Array<{ amount?: string; extra?: { name?: string; version?: string } }>;
     assert.equal(accepts.length, 1);
     assert.equal(accepts[0]?.amount, "2500000");
@@ -168,6 +169,69 @@ describe("live @x402/hono 402 (decoded payment-required)", () => {
     const header = res.headers.get("payment-required");
     assert.ok(header);
     assert.ok(header.length < 4000, `live watch payment-required still fat: ${header.length} b64`);
+  });
+
+  it("logs a paid watch attempt before facilitator handling and the reject reason", async () => {
+    const secret = "super-secret-sig";
+    const envelope = {
+      x402Version: 2,
+      resource: {
+        url: "https://livecheck.fly.dev/v1/watch",
+        description: "d".repeat(743),
+        mimeType: "application/json",
+      },
+      extensions: {},
+      accepted: { amount: "2500000", scheme: "exact" },
+      payload: { signature: secret },
+    };
+    const header = Buffer.from(JSON.stringify(envelope), "utf8").toString("base64");
+    const lines: string[] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map((part) => String(part)).join(" "));
+    };
+    try {
+      const res = await fetch(`${origin}/v1/watch`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "payment-signature": header,
+        },
+        body: JSON.stringify({
+          target: { type: "url", url: "https://example.com", render: "never" },
+          condition: { detector: "status_change", params: {} },
+          callback: { url: "https://example.com/hook", secret: "whsec_x" },
+        }),
+      });
+      assert.equal(res.status, 402);
+      const inbound = lines.find((line) => line.startsWith("[livecheck] paid watch inbound"));
+      const rejected = lines.find((line) => line.startsWith("[livecheck] paid watch rejected"));
+      assert.ok(inbound, `missing inbound log\n${lines.join("\n")}`);
+      assert.ok(rejected, `missing rejected log\n${lines.join("\n")}`);
+      assert.ok(lines.indexOf(inbound) < lines.indexOf(rejected));
+      const summary = JSON.parse(inbound.slice("[livecheck] paid watch inbound ".length)) as {
+        header?: string;
+        desc_len?: number;
+        amount?: string;
+        has_bazaar?: boolean;
+      };
+      assert.equal(summary.header, "payment-signature");
+      assert.equal(summary.desc_len, 743);
+      assert.equal(summary.amount, "2500000");
+      assert.equal(summary.has_bazaar, false);
+      assert.doesNotMatch(inbound, /super-secret-sig/);
+      const reject = JSON.parse(rejected.slice("[livecheck] paid watch rejected ".length)) as {
+        status?: number;
+        reason?: string;
+      };
+      assert.equal(reject.status, 402);
+      assert.equal(typeof reject.reason, "string");
+      assert.ok((reject.reason ?? "").length > 0);
+      assert.ok((reject.reason ?? "").length <= 180);
+      assert.doesNotMatch(rejected, /super-secret-sig/);
+    } finally {
+      console.log = original;
+    }
   });
 
   it("watch renew 402 is one $2.50 accept with the concrete renew URL", async () => {

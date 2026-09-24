@@ -41,6 +41,7 @@ import {
   watchRenewPaymentRequiredBody,
 } from "./x402-payload.js";
 import { rememberMockConfirmPayment, wrapFacilitatorForVerifiedAmount } from "./confirm-payment.js";
+import { withPaidWatchAttemptLog } from "./paid-watch-log.js";
 import { wrapFacilitatorForWatchPayer } from "./watch-payer.js";
 import { wrapFacilitatorForCatalog } from "./facilitator-catalog.js";
 import { emitPaidCallAfterSettle, extractPayer } from "./paid-call.js";
@@ -217,8 +218,10 @@ export function livePaymentMiddlewareFromServer(
   payTo: string,
   syncFacilitatorOnStart = true,
 ): MiddlewareHandler {
-  return withAdvertised402(
-    paymentMiddleware(verifyPaymentRoutes(payTo), resourceServer, undefined, undefined, syncFacilitatorOnStart),
+  return withPaidWatchAttemptLog(
+    withAdvertised402(
+      paymentMiddleware(verifyPaymentRoutes(payTo), resourceServer, undefined, undefined, syncFacilitatorOnStart),
+    ),
   );
 }
 

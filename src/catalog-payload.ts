@@ -142,6 +142,39 @@ function needsAdvertisedResource(url: string | undefined, advertisedUrl: string)
   return url !== advertisedUrl;
 }
 
+/** CDP x402V2PaymentPayload schema: resource.description max 500 chars. */
+export const CDP_RESOURCE_DESCRIPTION_MAX = 500;
+
+function resourceDescription(resource: unknown): string | undefined {
+  if (!resource || typeof resource !== "object" || !("description" in resource)) return undefined;
+  const description = (resource as { description?: unknown }).description;
+  return typeof description === "string" ? description : undefined;
+}
+
+/**
+ * purl echoes the 402 resource onto paymentPayload. A description over 500
+ * chars makes CDP /verify return 400 before it looks at the signature.
+ * The field sits outside the EIP-3009 authorization, same as the URL backfill.
+ */
+function clampResourceDescription(
+  resource: unknown,
+  advertisedDescription: string,
+): { resource: unknown; clamped: boolean } {
+  const description = resourceDescription(resource);
+  if (description == null || description.length <= CDP_RESOURCE_DESCRIPTION_MAX) {
+    return { resource, clamped: false };
+  }
+  if (!resource || typeof resource !== "object") return { resource, clamped: false };
+  const replacement =
+    advertisedDescription.length <= CDP_RESOURCE_DESCRIPTION_MAX
+      ? advertisedDescription
+      : advertisedDescription.slice(0, CDP_RESOURCE_DESCRIPTION_MAX);
+  return {
+    resource: { ...(resource as Record<string, unknown>), description: replacement },
+    clamped: true,
+  };
+}
+
 /**
  * @x402/hono passes the client PAYMENT-SIGNATURE envelope to /verify and /settle
  * unchanged. Route resource + bazaar live on the 402, not on that envelope.
@@ -151,6 +184,7 @@ export function fillCatalogPaymentPayload(payload: PaymentEnvelope): {
   payload: PaymentEnvelope;
   resourceFilled: boolean;
   bazaarFilled: boolean;
+  descriptionClamped: boolean;
 } {
   const inboundUrl = paymentPayloadResourceUrl(payload);
   const kind = resourceKindFromUrl(inboundUrl);
@@ -168,6 +202,8 @@ export function fillCatalogPaymentPayload(payload: PaymentEnvelope): {
   } else if (typeof payload.resource === "string") {
     next.resource = { ...advertised, url: inboundUrl };
   }
+  const clamped = clampResourceDescription(next.resource, advertised.description);
+  next.resource = clamped.resource as PaymentEnvelope["resource"];
 
   if (omitWatchBazaar) {
     if (next.extensions && typeof next.extensions === "object" && "bazaar" in next.extensions) {
@@ -194,7 +230,7 @@ export function fillCatalogPaymentPayload(payload: PaymentEnvelope): {
     };
   }
 
-  return { payload: next, resourceFilled, bazaarFilled };
+  return { payload: next, resourceFilled, bazaarFilled, descriptionClamped: clamped.clamped };
 }
 
 export function summarizeCatalogPayload(payload: PaymentEnvelope): {
@@ -288,4 +324,27 @@ export function decodeExtensionResponsesHeader(
 
 export function formatFacilitatorLog(phase: "verify" | "settle", parts: Record<string, unknown>): string {
   return `[livecheck] facilitator ${phase} ${JSON.stringify(parts)}`;
+}
+
+/** Fly-safe reason: one line, no long hex (signatures), capped. */
+export function shortPublicReason(value: string, limit = 180): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  const redacted = compact.replace(/0x[a-fA-F0-9]{16,}/g, "0x…");
+  if (redacted.length <= limit) return redacted;
+  return `${redacted.slice(0, limit - 3)}...`;
+}
+
+export function facilitatorErrorParts(error: unknown): { error_status: number | null; error_reason: string } {
+  const message = error instanceof Error ? error.message : "facilitator error";
+  const statusMatch = message.match(/\((\d{3})\)/);
+  return {
+    error_status: statusMatch ? Number(statusMatch[1]) : null,
+    error_reason: shortPublicReason(message),
+  };
+}
+
+export function resourceDescriptionLength(resource: unknown): number | null {
+  if (!resource || typeof resource !== "object" || !("description" in resource)) return null;
+  const description = (resource as { description?: unknown }).description;
+  return typeof description === "string" ? description.length : null;
 }

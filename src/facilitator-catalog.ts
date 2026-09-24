@@ -2,8 +2,10 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { FacilitatorClient } from "@x402/core/server";
 import {
   decodeExtensionResponsesHeader,
+  facilitatorErrorParts,
   fillCatalogPaymentPayload,
   formatFacilitatorLog,
+  resourceDescriptionLength,
   summarizeCatalogPayload,
   type PaymentEnvelope,
 } from "./catalog-payload.js";
@@ -47,20 +49,25 @@ function logPhase(
   phase: "verify" | "settle",
   inbound: PaymentEnvelope,
   outbound: PaymentEnvelope,
-  filled: { resourceFilled: boolean; bazaarFilled: boolean },
+  filled: { resourceFilled: boolean; bazaarFilled: boolean; descriptionClamped: boolean },
   ext: ReturnType<typeof decodeExtensionResponsesHeader>,
+  error?: unknown,
 ): void {
-  console.log(
-    formatFacilitatorLog(phase, {
-      inbound: summarizeCatalogPayload(inbound),
-      outbound: summarizeCatalogPayload(outbound),
-      resource_filled: filled.resourceFilled,
-      bazaar_filled: filled.bazaarFilled,
-      extension_responses: ext.empty && ext.present ? "empty {}" : ext.present ? ext : "absent",
-      bazaar_status: ext.bazaar_status,
-      rejected_reason: ext.rejected_reason,
-    }),
-  );
+  const parts: Record<string, unknown> = {
+    inbound: summarizeCatalogPayload(inbound),
+    outbound: summarizeCatalogPayload(outbound),
+    desc_len: resourceDescriptionLength(outbound.resource),
+    description_clamped: filled.descriptionClamped,
+    resource_filled: filled.resourceFilled,
+    bazaar_filled: filled.bazaarFilled,
+    extension_responses: ext.empty && ext.present ? "empty {}" : ext.present ? ext : "absent",
+    bazaar_status: ext.bazaar_status,
+    rejected_reason: ext.rejected_reason,
+  };
+  if (error !== undefined) {
+    Object.assign(parts, facilitatorErrorParts(error));
+  }
+  console.log(formatFacilitatorLog(phase, parts));
 }
 
 /**
@@ -77,12 +84,29 @@ export function wrapFacilitatorForCatalog(inner: FacilitatorClient): Facilitator
     run: (filled: PaymentPayload) => Promise<T>,
   ): Promise<T> {
     const inbound = envelope(paymentPayload);
-    const { payload, resourceFilled, bazaarFilled } = fillCatalogPaymentPayload(inbound);
+    const { payload, resourceFilled, bazaarFilled, descriptionClamped } = fillCatalogPaymentPayload(inbound);
     const capture: ExtCapture = { header: null, names: [] };
-    const result = await extCapture.run(capture, () => run(payload as PaymentPayload));
-    const ext = decodeExtensionResponsesHeader(capture.header, capture.names);
-    logPhase(phase, inbound, payload, { resourceFilled, bazaarFilled }, ext);
-    return result;
+    let thrown: unknown;
+    try {
+      return await extCapture.run(capture, () => run(payload as PaymentPayload));
+    } catch (error) {
+      thrown = error;
+      throw error;
+    } finally {
+      try {
+        const ext = decodeExtensionResponsesHeader(capture.header, capture.names);
+        logPhase(
+          phase,
+          inbound,
+          payload,
+          { resourceFilled, bazaarFilled, descriptionClamped },
+          ext,
+          thrown,
+        );
+      } catch {
+        // A log failure must not hide the facilitator error.
+      }
+    }
   }
 
   return {

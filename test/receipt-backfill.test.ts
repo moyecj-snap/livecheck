@@ -104,7 +104,8 @@ describe("receipt backfill", () => {
     const paidPath = join(dir, "paid-calls.sqlite");
     const db = openPaidCallDb(paidPath);
     insertPaidCallRow(db, {
-      ts: "2026-09-10T18:00:00Z",
+      // CLI uses the wall clock for L7d. Keep the row inside that window.
+      ts: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
       route: "confirm",
       host: "example.com",
       url_sha256: hashUrl("https://example.com/thanks"),

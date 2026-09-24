@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { FacilitatorClient } from "@x402/core/server";
-import { VERIFY_DESCRIPTION } from "../src/config.js";
+import { VERIFY_DESCRIPTION, WATCH_PAYMENT_DESCRIPTION } from "../src/config.js";
 import {
+  CDP_RESOURCE_DESCRIPTION_MAX,
   decodeExtensionResponsesHeader,
   fillCatalogPaymentPayload,
   paymentPayloadHasBazaar,
@@ -190,6 +191,33 @@ describe("fillCatalogPaymentPayload", () => {
     }
   });
 
+  it("replaces a watch description over the CDP 500-char cap before verify", () => {
+    const previous = process.env.LIVECHECK_PUBLIC_URL;
+    process.env.LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev";
+    try {
+      const fat = "w".repeat(743);
+      assert.ok(fat.length > CDP_RESOURCE_DESCRIPTION_MAX);
+      const { payload, descriptionClamped, resourceFilled } = fillCatalogPaymentPayload({
+        resource: {
+          url: "https://livecheck.fly.dev/v1/watch",
+          description: fat,
+          mimeType: "application/json",
+        },
+        extensions: {},
+        payload: { signature: "do-not-log" },
+      });
+      assert.equal(resourceFilled, false);
+      assert.equal(descriptionClamped, true);
+      const description = (payload.resource as { description?: string }).description;
+      assert.equal(description, WATCH_PAYMENT_DESCRIPTION);
+      assert.ok((description ?? "").length <= CDP_RESOURCE_DESCRIPTION_MAX);
+      assert.equal((payload.payload as { signature?: string }).signature, "do-not-log");
+    } finally {
+      if (previous === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
+      else process.env.LIVECHECK_PUBLIC_URL = previous;
+    }
+  });
+
   it("leaves a matching https resource and existing bazaar echo in place", () => {
     const previous = process.env.LIVECHECK_PUBLIC_URL;
     process.env.LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev";
@@ -281,6 +309,65 @@ describe("wrapFacilitatorForCatalog", () => {
       assert.ok(sent.extensions?.bazaar);
       assert.equal(sent.payload?.signature, "do-not-log");
     } finally {
+      if (previous === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
+      else process.env.LIVECHECK_PUBLIC_URL = previous;
+    }
+  });
+
+  it("logs facilitator verify failures with status and a short reason", async () => {
+    const previous = process.env.LIVECHECK_PUBLIC_URL;
+    process.env.LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev";
+    const lines: string[] = [];
+    const original = console.log;
+    console.log = (line?: unknown) => {
+      lines.push(String(line));
+    };
+    const inner = {
+      async getSupported() {
+        return { kinds: [], extensions: [], signers: {} };
+      },
+      async verify() {
+        throw new Error(
+          "Facilitator verify failed (400): paymentPayload is invalid: resource.description exceeds 500",
+        );
+      },
+      async settle() {
+        return { success: false, transaction: "", network: NETWORK };
+      },
+    } satisfies FacilitatorClient;
+    try {
+      const wrapped = wrapFacilitatorForCatalog(inner);
+      const inbound = {
+        x402Version: 2,
+        resource: {
+          url: "https://livecheck.fly.dev/v1/watch",
+          description: "w".repeat(743),
+          mimeType: "application/json",
+        },
+        extensions: {},
+        payload: { signature: "super-secret-sig" },
+      };
+      await assert.rejects(
+        () =>
+          wrapped.verify(
+            inbound as unknown as Parameters<FacilitatorClient["verify"]>[0],
+            { scheme: "exact", network: NETWORK } as unknown as Parameters<FacilitatorClient["verify"]>[1],
+          ),
+        /Facilitator verify failed \(400\)/,
+      );
+      const logged = lines.find((line) => line.startsWith("[livecheck] facilitator verify"));
+      assert.ok(logged, "expected a facilitator verify log when verify throws");
+      assert.match(logged, /"error_status":400/);
+      assert.match(logged, /resource\.description exceeds 500/);
+      assert.match(logged, /"description_clamped":true/);
+      assert.doesNotMatch(logged, /super-secret-sig/);
+      const parsed = JSON.parse(logged.slice("[livecheck] facilitator verify ".length)) as {
+        desc_len?: number;
+      };
+      assert.equal(parsed.desc_len, WATCH_PAYMENT_DESCRIPTION.length);
+      assert.ok((parsed.desc_len ?? 999) <= 300);
+    } finally {
+      console.log = original;
       if (previous === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
       else process.env.LIVECHECK_PUBLIC_URL = previous;
     }
