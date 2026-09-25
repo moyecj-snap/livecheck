@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { serve } from "@hono/node-server";
 import { createApp } from "../src/app.js";
+import { CONFIRM_CLIP_PATH } from "../src/confirm-video.js";
 import { CONFIRM_DESCRIPTION, PRICE_ATOMIC_USDC, PRICE_USD, VERIFY_DESCRIPTION } from "../src/config.js";
 
 describe("HTTP surface", () => {
@@ -82,6 +83,47 @@ describe("HTTP surface", () => {
     assert.match(html, /\$0\.01 USDC/);
     assert.match(html, /\/stats\?format=json/);
     assert.match(html, /https:\/\/livecheck\.fly\.dev\/stats\?format=json/);
+    assert.match(html, /Did the lead actually land\?/);
+    assert.match(html, /A thank-you sentence by itself is not enough/);
+    assert.match(html, new RegExp(`<video[^>]*src="${CONFIRM_CLIP_PATH.replaceAll(".", "\\.")}"`));
+    assert.match(html, /<video[^>]*\scontrols[\s>]/);
+    assert.match(html, /<video[^>]*\smuted[\s>]/);
+    assert.match(html, /<video[^>]*\splaysinline[\s>]/);
+    assert.doesNotMatch(html, /<video[^>]*\sautoplay[\s>]/);
+    const h1At = html.indexOf("<h1>");
+    const clipAt = html.indexOf("<video");
+    const tryItAt = html.indexOf(">Try it<");
+    const fixturesAt = html.indexOf(">Local fixtures<");
+    const curlAt = html.indexOf(">curl<");
+    assert.ok(h1At >= 0 && clipAt > h1At, "Confirm clip follows the title");
+    assert.ok(tryItAt > clipAt, "Verify Try it stays below the Confirm clip");
+    assert.ok(fixturesAt > tryItAt && curlAt > tryItAt, "fixture and curl docs stay below Try it");
+    assert.match(html, /POST \/v1\/verify without payment/);
+    assert.match(html, /Example 402/);
+    assert.match(html, /Gil owns landing copy/);
+  });
+
+  it("GET the Confirm clip is a free mp4 with range support", async () => {
+    const full = await fetch(`${origin}${CONFIRM_CLIP_PATH}`);
+    assert.equal(full.status, 200);
+    assert.equal(full.headers.get("content-type"), "video/mp4");
+    assert.notEqual(full.status, 402);
+    const bytes = Buffer.from(await full.arrayBuffer());
+    assert.ok(bytes.length > 1_000_000, `expected the LI-v4 file, got ${bytes.length} bytes`);
+    assert.equal(bytes.subarray(4, 8).toString("ascii"), "ftyp");
+
+    const partial = await fetch(`${origin}${CONFIRM_CLIP_PATH}`, { headers: { range: "bytes=0-15" } });
+    assert.equal(partial.status, 206);
+    assert.equal(partial.headers.get("content-type"), "video/mp4");
+    assert.match(partial.headers.get("content-range") ?? "", /^bytes 0-15\/\d+$/);
+    const slice = Buffer.from(await partial.arrayBuffer());
+    assert.equal(slice.length, 16);
+    assert.equal(slice.subarray(4, 8).toString("ascii"), "ftyp");
+
+    const head = await fetch(`${origin}${CONFIRM_CLIP_PATH}`, { method: "HEAD" });
+    assert.equal(head.status, 200);
+    assert.equal(head.headers.get("content-type"), "video/mp4");
+    assert.equal(Number(head.headers.get("content-length")), bytes.length);
   });
 
   it("POST /v1/verify without payment returns HTTP 402 and payment-required", async () => {

@@ -1,3 +1,4 @@
+import { CONFIRM_CLIP_PATH } from "./confirm-video.js";
 import {
   MOCK_PAYMENT_HEADER,
   PRICE_USD,
@@ -93,6 +94,20 @@ export function demoHtml(origin: string): string {
     .status.live { color: var(--live); }
     .status.closed { color: var(--closed); }
     .status.unknown { color: var(--unknown); }
+    .confirm-clip { margin: 1.6rem 0 0; max-width: 40rem; }
+    .confirm-clip h2 {
+      margin-top: 0;
+      text-transform: none;
+      letter-spacing: -0.01em;
+      font-size: 1.35rem;
+    }
+    .confirm-clip video {
+      display: block;
+      width: 100%;
+      margin-top: 0.6rem;
+      background: #1b241e;
+      border-radius: 4px;
+    }
     footer { margin-top: 3rem; border-top: 1px solid var(--rule); padding-top: 1rem; font-size: 0.9rem; }
     @media (max-width: 640px) {
       h1 { font-size: 1.65rem; }
@@ -113,6 +128,14 @@ export function demoHtml(origin: string): string {
       ${escapeHtml(VERIFY_DESCRIPTION)}
       Price is <strong>$${PRICE_USD.toFixed(2)} USDC</strong> on Base per request.
     </p>
+
+    <section class="confirm-clip" aria-label="Confirm">
+      <h2>Did the lead actually land?</h2>
+      <p class="muted">Confirm checks the page after a side effect. A thank-you sentence by itself is not enough.</p>
+      <video controls muted playsinline preload="metadata" src="${CONFIRM_CLIP_PATH}">
+        <a href="${CONFIRM_CLIP_PATH}">Watch the Confirm clip</a>
+      </video>
+    </section>
 
     <h2>Try it</h2>
     <div class="row">
