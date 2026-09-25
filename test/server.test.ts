@@ -82,6 +82,41 @@ describe("HTTP surface", () => {
     assert.match(html, /\$0\.01 USDC/);
     assert.match(html, /\/stats\?format=json/);
     assert.match(html, /https:\/\/livecheck\.fly\.dev\/stats\?format=json/);
+    assert.match(html, /How do you know the agent actually did it\?/);
+    assert.match(
+      html,
+      /A success toast and a calendar invite aren’t proof\. Livecheck Confirm checks the real-world result — independently\./,
+    );
+    assert.match(html, /Watch the Confirm demo · then try Verify for \$0\.01 below/);
+    assert.match(
+      html,
+      /<video controls playsinline muted preload="metadata"[^>]*>\s*<source src="\/media\/Livecheck-Confirm-HowDoYouKnow-LI-v4\.mp4" type="video\/mp4" \/>/,
+    );
+    assert.ok(
+      html.indexOf("How do you know the agent actually did it?") < html.indexOf("<h2>Try it</h2>"),
+      "Confirm pitch stays above Try it",
+    );
+    assert.ok(html.includes("curl -iv"), "Verify curl stays on the page");
+    assert.ok(html.includes("Local fixtures"), "fixtures stay on the page");
+  });
+
+  it("GET Confirm demo mp4 is a free video/mp4 with range support", async () => {
+    const res = await fetch(`${origin}/media/Livecheck-Confirm-HowDoYouKnow-LI-v4.mp4`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "video/mp4");
+    assert.equal(res.headers.get("accept-ranges"), "bytes");
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    assert.ok(bytes.length > 1_000_000, "expected the committed ~2.7MB demo");
+    assert.equal(Buffer.from(bytes.subarray(4, 8)).toString("ascii"), "ftyp");
+
+    const partial = await fetch(`${origin}/media/Livecheck-Confirm-HowDoYouKnow-LI-v4.mp4`, {
+      headers: { range: "bytes=0-15" },
+    });
+    assert.equal(partial.status, 206);
+    assert.match(partial.headers.get("content-range") ?? "", /^bytes 0-15\/\d+$/);
+    const chunk = new Uint8Array(await partial.arrayBuffer());
+    assert.equal(chunk.length, 16);
+    assert.equal(Buffer.from(chunk.subarray(4, 8)).toString("ascii"), "ftyp");
   });
 
   it("POST /v1/verify without payment returns HTTP 402 and payment-required", async () => {
