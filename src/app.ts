@@ -21,6 +21,7 @@ import {
   missingLiveKeyNames,
 } from "./config.js";
 import { withConfirmPaymentContext } from "./confirm-payment.js";
+import { confirmClipResponse, CONFIRM_CLIP_PATH } from "./confirm-video.js";
 import {
   confirmUrl,
   parseConfirmRouteRequest,
@@ -73,6 +74,10 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
 
   app.get("/llms.txt", () => {
     return new Response(LLMS_TXT, { status: 200, headers: llmsTxtHeaders() });
+  });
+
+  app.on(["GET", "HEAD"], CONFIRM_CLIP_PATH, (c) => {
+    return confirmClipResponse(c.req.header("range"), c.req.method === "HEAD");
   });
 
   app.get("/stats", (c) => {
