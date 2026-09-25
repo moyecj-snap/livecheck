@@ -20,6 +20,7 @@ import {
   isLiveSettlement,
   missingLiveKeyNames,
 } from "./config.js";
+import { CONFIRM_DEMO_VIDEO_PATH, confirmDemoVideoResponse } from "./confirm-demo-video.js";
 import { withConfirmPaymentContext } from "./confirm-payment.js";
 import {
   confirmUrl,
@@ -149,6 +150,8 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
     const origin = new URL(c.req.url).origin;
     return c.html(demoHtml(origin));
   });
+
+  app.get(CONFIRM_DEMO_VIDEO_PATH, (c) => confirmDemoVideoResponse(c.req.raw));
 
   app.get("/fixtures/*", (c) => {
     const id = c.req.path.replace(/^\/fixtures\//, "");
