@@ -1,7 +1,9 @@
 {
-  "name": "livecheck-verify-then-confirm",
-  "description": "Hardcode these two x402 tools into an agent tool list. Pay with any Base USDC x402 wallet (purl, CDP, AgentCore payments plugin). Actor ≠ verifier.",
-  "demo": "docs/DEMO-AGENT-VERIFY-CONFIRM.md",
+  "name": "livecheck-demo-agent-verify-then-confirm",
+  "description": "Minimal hardcoded tool list for the paid Verify→Confirm demo. Follow docs/DEMO-AGENT-VERIFY-CONFIRM.md. Pay with purl or AgentCore payments. Actor ≠ verifier. MCP without a wallet returns 402.",
+  "follow": "docs/DEMO-AGENT-VERIFY-CONFIRM.md",
+  "origin": "https://livecheck.fly.dev",
+  "spend_usd_required": 0.11,
   "tools": [
     {
       "name": "livecheck_verify",
@@ -41,6 +43,11 @@
       }
     }
   ],
+  "demo_urls": {
+    "verify_live": "https://livecheck.fly.dev/fixtures/live-apply-now",
+    "confirm_confirmed": "https://livecheck.fly.dev/fixtures/confirm/thank-you-id",
+    "confirm_unknown": "https://livecheck.fly.dev/fixtures/confirm/thank-you-only"
+  },
   "agentcore_bazaar": {
     "gateway_mcp": "https://api.cdp.coinbase.com/platform/v2/x402/discovery/mcp",
     "search": "livecheck",
@@ -50,6 +57,7 @@
     "Cursor Marketplace live (still in review as of 2026-09-10)",
     "Trust Oracle / L3",
     "Broad public-web Confirm accuracy",
-    "Amazon search URL support"
+    "Amazon search URL support",
+    "MCP settles payment without a buyer wallet / payments plugin"
   ]
 }
