@@ -209,11 +209,26 @@ describe("POST /v1/watch HTTP", () => {
     assert.doesNotMatch(WATCH_PAYMENT_DESCRIPTION, /[^\x00-\x7F]/);
     assert.ok(WATCH_PAYMENT_DESCRIPTION.length <= 300);
     assert.ok((resource.description ?? "").length <= 300);
-    const extensions = decoded.extensions as { bazaar?: unknown } | undefined;
-    assert.equal(extensions?.bazaar, undefined);
-    // Before the hotfix this header was 7500 b64 (verify was 3608) because of
-    // the fat watch bazaar. It must stay well under that.
-    assert.ok(header.length < 4000, `watch payment-required still fat: ${header.length} b64`);
+    const extensions = decoded.extensions as {
+      bazaar?: {
+        info?: {
+          input?: { method?: string; bodyType?: string; body?: { target?: unknown; condition?: unknown; callback?: unknown } };
+          output?: { example?: { price_usd?: number; id?: string } };
+        };
+      };
+    };
+    assert.ok(extensions?.bazaar, "watch 402 must include extensions.bazaar");
+    assert.equal(extensions.bazaar.info?.input?.method, "POST");
+    assert.equal(extensions.bazaar.info?.input?.bodyType, "json");
+    assert.ok(extensions.bazaar.info?.input?.body?.target);
+    assert.ok(extensions.bazaar.info?.input?.body?.condition);
+    assert.ok(extensions.bazaar.info?.input?.body?.callback);
+    assert.equal(extensions.bazaar.info?.output?.example?.price_usd, WATCH_PRICE_USD);
+    assert.match(extensions.bazaar.info?.output?.example?.id ?? "", /^wtc_/);
+    // CDP rejects resource.description over 500 chars. The 402 copy stays short
+    // even with the discovery extension attached.
+    assert.ok((resource.description ?? "").length <= 300);
+    assert.ok(header.length > 1000, `watch payment-required missing bazaar payload: ${header.length} b64`);
   });
 
   it("verify, check, and confirm unpaid 402s stay single-price (regression)", async () => {

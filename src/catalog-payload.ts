@@ -4,6 +4,7 @@ import {
   confirmBazaarExtensions,
   orderConfirmBazaarExtensions,
   verifyBazaarExtensions,
+  watchBazaarExtensions,
   watchRenewBazaarExtensions,
 } from "./bazaar.js";
 import {
@@ -190,11 +191,10 @@ export function fillCatalogPaymentPayload(payload: PaymentEnvelope): {
   const kind = resourceKindFromUrl(inboundUrl);
   const advertised = advertisedResourceInfo(kind, inboundUrl);
   const resourceFilled = needsAdvertisedResource(inboundUrl, advertised.url);
-  // Watch: do not inject (or forward) the fat bazaar. It is byte-identical to
-  // the 402 extension that purl echoes, so backfill would hand CDP the schema
-  // that fails verify. Other routes keep the Confirm-era catalog backfill.
-  const omitWatchBazaar = kind === "watch";
-  let bazaarFilled = !omitWatchBazaar && !paymentPayloadHasBazaar(payload);
+  // Watch uses the same catalog backfill as verify/check/renew. The CDP 400
+  // on paid watch was resource.description over 500 characters, which
+  // clampResourceDescription still replaces. Do not drop extensions.bazaar.
+  let bazaarFilled = !paymentPayloadHasBazaar(payload);
 
   const next: PaymentEnvelope = { ...payload };
   if (resourceFilled) {
@@ -205,13 +205,7 @@ export function fillCatalogPaymentPayload(payload: PaymentEnvelope): {
   const clamped = clampResourceDescription(next.resource, advertised.description);
   next.resource = clamped.resource as PaymentEnvelope["resource"];
 
-  if (omitWatchBazaar) {
-    if (next.extensions && typeof next.extensions === "object" && "bazaar" in next.extensions) {
-      const rest = { ...next.extensions };
-      delete rest.bazaar;
-      next.extensions = rest;
-    }
-  } else if (bazaarFilled) {
+  if (bazaarFilled) {
     const bazaar =
       kind === "confirm_order"
         ? orderConfirmBazaarExtensions()
@@ -219,11 +213,13 @@ export function fillCatalogPaymentPayload(payload: PaymentEnvelope): {
           ? confirmBazaarExtensions()
           : kind === "check"
             ? checkBazaarExtensions()
-            : kind === "watch_renew"
-              ? watchRenewBazaarExtensions()
-              : kind === "chain_topup"
-                ? chainTopupBazaarExtensions()
-                : verifyBazaarExtensions();
+            : kind === "watch"
+              ? watchBazaarExtensions()
+              : kind === "watch_renew"
+                ? watchRenewBazaarExtensions()
+                : kind === "chain_topup"
+                  ? chainTopupBazaarExtensions()
+                  : verifyBazaarExtensions();
     next.extensions = {
       ...bazaar,
       ...(payload.extensions && typeof payload.extensions === "object" ? payload.extensions : {}),

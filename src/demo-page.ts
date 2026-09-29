@@ -178,6 +178,7 @@ curl -s ${origin}/v1/verify -H 'content-type: application/json' \\
     <p class="muted">
       Source of truth: <code>GET /stats?format=json</code>
       (<a href="https://livecheck.fly.dev/stats?format=json">https://livecheck.fly.dev/stats?format=json</a>).
+      On Fly that document sums started machines' volumes, so the strip does not flip between live Sentinel counts and an empty volume.
       Gil owns landing copy — this strip only fetches that JSON.
     </p>
     <pre id="stats">Loading /stats?format=json…</pre>

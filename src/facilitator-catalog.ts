@@ -116,7 +116,8 @@ function logPhase(
 /**
  * Facilitator wrapper: backfill paymentPayload.resource + extensions.bazaar
  * (Hono does not copy them from the 402) and log EXTENSION-RESPONSES without secrets.
- * POST /v1/watch is the exception: the fat bazaar is stripped, not backfilled.
+ * POST /v1/watch uses the same backfill. Descriptions over 500 characters are
+ * still replaced before verify/settle.
  */
 export function wrapFacilitatorForCatalog(inner: FacilitatorClient): FacilitatorClient {
   patchFetchOnce();

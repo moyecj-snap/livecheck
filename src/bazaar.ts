@@ -705,10 +705,11 @@ export function watchRenewBazaarExtensions(): Record<string, unknown> {
 }
 
 /**
- * Rich watch discovery declaration. Not attached to the POST /v1/watch 402 or
- * the facilitator verify/settle envelope until settle is proven — the fat
- * schema breaks purl→CDP the same way Confirm did before b7ab919.
- * OpenAPI still uses WATCH_OUTPUT_SCHEMA.
+ * Watch discovery declaration on the POST /v1/watch 402 and on facilitator
+ * verify/settle backfill. Input schema, output schema, and example — same
+ * pattern as verify/check/renew. OpenAPI uses WATCH_OUTPUT_SCHEMA too.
+ * resource.description on the 402 stays the short ASCII payment string;
+ * CDP rejects descriptions longer than 500 characters.
  */
 export function watchBazaarExtensions(): Record<string, unknown> {
   return withPostJsonMethod(

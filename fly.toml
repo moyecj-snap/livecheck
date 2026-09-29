@@ -16,9 +16,9 @@ primary_region = "sjc"
 
 # Privacy-safe paid_call + receipt SQLite. Patty must create this volume
 # before the first deploy that includes this mount (see README).
-# Single writer: each machine gets its own livecheck_data. Two machines
-# split /stats and CoS (one volume can show confirm paid_calls the other
-# does not). Do not scale out without a shared store. Prefer one machine.
+# Each machine still has its own livecheck_data volume. Writes stay on the
+# machine that handled the request. Public GET /stats sums started machines
+# over the Fly private network. Do not copy one volume onto the other.
 [[mounts]]
   source = "livecheck_data"
   destination = "/data"
