@@ -35,7 +35,7 @@ export function demoHtml(origin: string): string {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Livecheck — primary-source verification</title>
+  <title>Livecheck — Is it still there?</title>
   <style>
     :root {
       --ink: #14211a;
@@ -117,24 +117,21 @@ export function demoHtml(origin: string): string {
       : `<div class="banner">Settlement is disabled. Keys missing: ${escapeHtml(missingLiveKeyNames().join(", ") || "none")}. This process still returns a realistic 402 and will run the verifier against fixtures if you send <code>X-Livecheck-Mock: 1</code>.</div>`
   }
   <main>
-    <h1>How do you know the agent actually did it?</h1>
-    <p class="lede">A success toast and a calendar invite aren’t proof. Livecheck Confirm checks the real-world result — independently.</p>
-    <figure class="confirm-demo">
-      <video controls playsinline muted preload="metadata" width="1920" height="1080" aria-label="Livecheck Confirm independently checks the real-world result.">
-        <source src="${CONFIRM_DEMO_VIDEO_PATH}" type="video/mp4" />
-        Livecheck Confirm independently checks the real-world result.
-      </video>
-      <figcaption>Watch the Confirm demo · then try Verify for $0.01 below</figcaption>
-    </figure>
+    <h1>Is it still there?</h1>
+    <p class="lede">Live status of any product page, listing, or job posting, read from the page right now. $0.01 per URL, paid by your agent in USDC. No account, no API key.</p>
+    <pre><code>npx agentcash@latest add https://livecheck.fly.dev</code></pre>
+    <div class="row">
+      <a class="btn" href="#try-verify">Try Verify</a>
+      <a class="btn" href="https://github.com/moyecj-snap/livecheck-skills">Agent skill</a>
+      <a class="btn" href="#live-stats">Live stats</a>
+    </div>
+    <p class="lede"><em>Search engines tell you what they saw. Livecheck tells you what the page says now.</em></p>
 
-    <p class="muted">Per-check agent API · $0.01 USDC on Base via x402</p>
-    <h1>Livecheck</h1>
+    <h2 id="try-verify">Try Verify</h2>
     <p class="lede">
       ${escapeHtml(VERIFY_DESCRIPTION)}
       Price is <strong>$${PRICE_USD.toFixed(2)} USDC</strong> on Base per request.
     </p>
-
-    <h2>Try it</h2>
     <div class="row">
       <button type="button" id="hit-402">POST /v1/verify without payment</button>
       ${
@@ -174,7 +171,18 @@ curl -s ${origin}/v1/verify -H 'content-type: application/json' \\
   -d '{"url":"${origin}/fixtures/closed-to-new-applications"}'`
 }</pre>
 
-    <h2>Live stats</h2>
+    <h2>Confirm for operators</h2>
+    <h1>How do you know the agent actually did it?</h1>
+    <p class="lede">A success toast and a calendar invite aren’t proof. Livecheck Confirm checks the real-world result — independently.</p>
+    <figure class="confirm-demo">
+      <video controls playsinline muted preload="metadata" width="1920" height="1080" aria-label="Livecheck Confirm independently checks the real-world result.">
+        <source src="${CONFIRM_DEMO_VIDEO_PATH}" type="video/mp4" />
+        Livecheck Confirm independently checks the real-world result.
+      </video>
+      <figcaption>Watch the Confirm demo.</figcaption>
+    </figure>
+
+    <h2 id="live-stats">Live stats</h2>
     <p class="muted">
       Source of truth: <code>GET /stats?format=json</code>
       (<a href="https://livecheck.fly.dev/stats?format=json">https://livecheck.fly.dev/stats?format=json</a>).

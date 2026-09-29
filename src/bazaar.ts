@@ -558,7 +558,8 @@ export const WATCH_INPUT_SCHEMA = {
     },
     callback: {
       type: "object",
-      description: "url + secret. deliver=on_change or every_check. HMAC-SHA256 over the raw JSON body (X-Sentinel-Signature).",
+      description:
+        "Optional. Omit to pull GET /v1/watch/{id}/events with the owner token. When set: url + secret, deliver=on_change or every_check. HMAC-SHA256 over the raw JSON body (X-Sentinel-Signature).",
     },
     interval_s: {
       type: "number",
@@ -577,7 +578,7 @@ export const WATCH_INPUT_SCHEMA = {
         "run=none (default), verify, or confirm. confirm default intent=lead_submit ($0.10 internal). Optional intent/url/claim.",
     },
   },
-  required: ["target", "condition", "callback"],
+  required: ["target", "condition"],
 } as const;
 
 export const CHAIN_TOPUP_EXAMPLE = {

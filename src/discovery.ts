@@ -12,11 +12,17 @@ import {
   OPENAPI_ORDER_CONFIRM_DESCRIPTION,
   OPENAPI_ORDER_CONFIRM_INTENT_DESCRIPTION,
   OPENAPI_ORDER_CONFIRM_SUMMARY,
+  OPENAPI_INFO_DESCRIPTION,
+  OPENAPI_INFO_GUIDANCE,
+  OPENAPI_INFO_TAGS,
+  OPENAPI_INFO_TITLE,
+  OPENAPI_VERIFY_DESCRIPTION,
+  OPENAPI_VERIFY_SUMMARY,
+  OPENAPI_VERIFY_TAGS,
   OPENAPI_WATCH_DESCRIPTION,
   OPENAPI_WATCH_RENEW_DESCRIPTION,
   OPENAPI_WATCH_RENEW_SUMMARY,
   OPENAPI_WATCH_SUMMARY,
-  VERIFY_DESCRIPTION,
 } from "./config.js";
 import { publicOrigin } from "./public-url.js";
 
@@ -66,19 +72,21 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
   return {
     openapi: "3.1.0",
     info: {
-      title: "Livecheck",
+      title: OPENAPI_INFO_TITLE,
       version: OPENAPI_VERSION,
-      description: VERIFY_DESCRIPTION,
-      "x-guidance": VERIFY_DESCRIPTION,
+      description: OPENAPI_INFO_DESCRIPTION,
+      "x-guidance": OPENAPI_INFO_GUIDANCE,
+      "x-tags": [...OPENAPI_INFO_TAGS],
     },
     servers: [{ url: origin }],
     paths: {
       "/v1/verify": {
         post: {
           operationId: "verifyListing",
-          summary: "Verify a specific job, product, or eBay item URL",
-          description: VERIFY_DESCRIPTION,
-          tags: ["Verify"],
+          summary: OPENAPI_VERIFY_SUMMARY,
+          description: OPENAPI_VERIFY_DESCRIPTION,
+          "x-guidance": OPENAPI_VERIFY_DESCRIPTION,
+          tags: [...OPENAPI_VERIFY_TAGS],
           "x-payment-info": {
             price: {
               mode: "fixed",
@@ -248,7 +256,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
                     callback: {
                       type: "object",
                       description:
-                        "HTTPS callback. deliver=on_change or every_check. HMAC-SHA256 over the raw JSON body; header X-Sentinel-Signature: t=<unix>,v1=<hex>.",
+                        "Optional. Omit it and pull GET /v1/watch/{id}/events with the owner token. When set: HTTPS url, secret, deliver=on_change or every_check. HMAC-SHA256 over the raw JSON body; header X-Sentinel-Signature: t=<unix>,v1=<hex>.",
                       properties: {
                         url: { type: "string", format: "uri" },
                         secret: { type: "string" },
@@ -292,7 +300,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
                       },
                     },
                   },
-                  required: ["target", "condition", "callback"],
+                  required: ["target", "condition"],
                 },
               },
             },

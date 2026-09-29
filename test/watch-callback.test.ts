@@ -14,6 +14,7 @@ import { isEventId } from "../src/confirm-id.js";
 import { generateReceiptPrivateKeyPem, resetReceiptSignerCache } from "../src/receipt.js";
 import {
   deliverDueCallbacks,
+  deliverWatchEvent,
   hmacSha256Hex,
   nextCallbackRetryAt,
   parseSentinelSignature,
@@ -30,6 +31,7 @@ import {
   initWatchStore,
   insertWatcher,
   listDeliveryAttempts,
+  listDueCallbackEvents,
   listWatchEvents,
   setWatcherNextCheckAt,
   type WatcherRow,
@@ -139,6 +141,44 @@ describe("callback retry + events HTTP", () => {
     if (previous === undefined) delete process.env.CONFIRM_RECEIPT_PRIVATE_KEY;
     else process.env.CONFIRM_RECEIPT_PRIVATE_KEY = previous;
     resetReceiptSignerCache();
+  });
+
+  it("stores pull-only events as delivered and does not POST", async () => {
+    const watcher = stubWatcher({
+      id: "wtc_01CALLBACKPULLONLY0000001",
+      payer: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      condition_key: "pull-key".padEnd(64, "0"),
+      callback_url: "",
+      callback_secret: "",
+      next_check_at: "2099-01-01T00:00:00Z",
+    });
+    insertWatcher(watcher);
+    const now = new Date("2026-09-10T18:00:00Z");
+    let posted = false;
+    const payload = emitWatchEvent({
+      watcher,
+      type: "change",
+      previous: { hash: "aa", status: "live", http_status: 200, http_class: "2xx", summary: "live" },
+      current: { hash: "bb", status: "closed", http_status: 404, http_class: "4xx", summary: "closed" },
+      fired: true,
+      confidence: 0.82,
+      checks_remaining: 2879,
+      now,
+    });
+    const event = getWatchEvent(payload.id);
+    assert.ok(event);
+    assert.equal(event.delivered_at, "2026-09-10T18:00:00Z");
+    assert.equal(event.next_attempt_at, "2026-09-10T18:00:00Z");
+    assert.equal(
+      listDueCallbackEvents("2026-09-10T18:00:00Z", WATCH_CALLBACK_MAX_ATTEMPTS).some((row) => row.id === payload.id),
+      false,
+    );
+    const result = await deliverWatchEvent(event, now, async () => {
+      posted = true;
+      return new Response("nope", { status: 500 });
+    });
+    assert.equal(posted, false);
+    assert.equal(result.ok, true);
   });
 
   it("retries failed POSTs on the documented schedule and never drops the event", async () => {

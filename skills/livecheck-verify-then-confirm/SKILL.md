@@ -91,6 +91,36 @@ The contrast is an extra `$0.10` if paid; skip and still treat fluff as `unknown
 5. Accept only `verdict=confirmed` with Level-2 evidence (ref / ticket / lead id, or unique confirmation-URL token). Thank-you fluff alone → `unknown` — never treat as confirmed (`https://livecheck.fly.dev/fixtures/confirm/thank-you-only`).
 6. On `failed` / `unknown`, prefer abstention over false success.
 
+## Verify signals (production strings)
+
+`signals` on a paid Verify response are these exact strings. Do not expect `in_stock`, `sold_out`, `apply_form`, `ended_banner`, or a 400 `code` of `invalid_url`.
+
+HTML classifier:
+
+- `http_404` and `http_410` only (HTTP 404 and 410)
+- `close_language:<phrase>` — phrase is one of: "no longer accepting applications", "this job is closed to new applications", "this job is no longer available", "the job you are trying to apply for has been filled", "this position has been filled", "this job posting is no longer active", "no longer accepting applicants", "this requisition is closed", "sorry, this job is no longer available", "the job you are looking for is no longer available"
+- `redirected_to_board`, `ats_empty_state`, `challenge_page`, `loginwalled`, `not_a_specific_posting`, `careers_homepage`, `collection_or_category`
+- `apply form present`, `no closure banner` (spaces)
+- `sold-out`, `in-stock` (hyphens)
+- `ambiguous_html`
+
+eBay adapter, when enabled:
+
+- `ebay-ended`, `sold-out`, `ebay-in-stock`, `ebay_availability_unknown`
+- missing item: `http_404` and `ebay-ended`
+- `ebay_adapter_disabled`, `ebay_api_error`
+
+## Verify errors
+
+Bodies are `{ "error": "<message>" }`. There is no `code` field and no `invalid_url`.
+
+- 400: `JSON body must include { "url": "https://..." }.`
+- 400: `url must be an absolute http(s) URL.`
+- 400: `Only http and https URLs are accepted.`
+- 400: `Request body must be JSON.`
+- 504: `Timed out fetching <url> after 8000ms.`
+- 502: `Could not fetch URL: <message>`
+
 ## Honest limits (do not overclaim)
 - Jobs: Ashby JS / Lever Cloudflare often `unknown`.
 - Products: do not use Amazon search URLs.

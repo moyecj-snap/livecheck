@@ -12,6 +12,13 @@ import {
   OPENAPI_CONFIRM_SUMMARY,
   PRICE_ATOMIC_USDC,
   PRICE_USD,
+  OPENAPI_INFO_DESCRIPTION,
+  OPENAPI_INFO_GUIDANCE,
+  OPENAPI_INFO_TAGS,
+  OPENAPI_INFO_TITLE,
+  OPENAPI_VERIFY_DESCRIPTION,
+  OPENAPI_VERIFY_SUMMARY,
+  OPENAPI_VERIFY_TAGS,
   VERIFY_DESCRIPTION,
 } from "../src/config.js";
 import { PAID_DISCOVERY_ROUTES, WELL_KNOWN_X402_ROUTES } from "../src/discovery.js";
@@ -38,10 +45,20 @@ function stubFacilitator(): FacilitatorClient {
 
 type OpenApiDoc = {
   openapi?: string;
-  info?: { title?: string; version?: string; description?: string; "x-guidance"?: string };
+  info?: {
+    title?: string;
+    version?: string;
+    description?: string;
+    "x-guidance"?: string;
+    "x-tags"?: string[];
+  };
   paths?: {
     "/v1/verify"?: {
       post?: {
+        summary?: string;
+        description?: string;
+        "x-guidance"?: string;
+        tags?: string[];
         "x-payment-info"?: {
           price?: { mode?: string; currency?: string; amount?: string };
           protocols?: Array<{ x402?: object }>;
@@ -97,28 +114,21 @@ function assertLlmsTxt(res: Response, body: string) {
   const file = readFileSync(new URL("../public/llms.txt", import.meta.url), "utf8");
   assert.equal(body, file);
   assert.equal(body, LLMS_TXT);
-  assert.match(body, /Not a search engine/);
-  assert.match(body, /specific URL/);
-  assert.match(body, /Thank-you fluff alone is never confirmed/);
-  assert.match(body, /Level-2/);
-  assert.match(body, /ref, ticket, or lead id/);
-  assert.match(body, /Actor ≠ verifier/);
-  assert.match(body, /cookieless independent/);
-  assert.match(body, /Verify first, before you scrape or apply/);
-  assert.match(body, /Confirm only after the side-effect/);
-  assert.match(body, /Do not claim Cursor Marketplace is live/);
-  assert.match(body, /POST https:\/\/livecheck\.fly\.dev\/v1\/verify — \$0\.01/);
-  assert.match(body, /POST https:\/\/livecheck\.fly\.dev\/v1\/check — \$0\.02/);
-  assert.match(body, /POST https:\/\/livecheck\.fly\.dev\/v1\/watch — \$2\.50/);
-  assert.match(body, /POST https:\/\/livecheck\.fly\.dev\/v1\/watch\/renew — \$2\.50/);
-  assert.match(body, /POST https:\/\/livecheck\.fly\.dev\/v1\/confirm — \$0\.10/);
-  assert.match(body, /POST https:\/\/livecheck\.fly\.dev\/v1\/confirm\/order — \$0\.25/);
-  assert.match(body, /\/fixtures\/live-apply-now/);
-  assert.match(body, /\/fixtures\/confirm\/thank-you-id/);
-  assert.match(body, /\/fixtures\/confirm\/thank-you-only/);
-  assert.match(body, /\$0\.11 via purl/);
-  assert.match(body, /https:\/\/github\.com\/moyecj-snap\/livecheck\/tree\/main\/skills\/livecheck-verify-then-confirm/);
-  assert.match(body, /https:\/\/github\.com\/moyecj-snap\/livecheck\/blob\/main\/mcp\.json/);
+  assert.match(body, /Live status of a specific product page/);
+  assert.match(body, /Livecheck is not a search engine/);
+  assert.match(body, /POST \/v1\/verify \(\$0\.01\)/);
+  assert.match(body, /POST \/v1\/check \(\$0\.02\)/);
+  assert.match(body, /POST \/v1\/watch \(\$2\.50\)/);
+  assert.match(body, /HTTPS callback optional/);
+  assert.match(body, /GET \/v1\/watch\/\{id\}\/events/);
+  assert.match(body, /POST \/v1\/confirm \(\$0\.10\)/);
+  assert.match(body, /POST \/v1\/confirm\/order \(\$0\.25\)/);
+  assert.match(body, /GET \/v1\/receipt\/\{id\}/);
+  assert.match(body, /https:\/\/github\.com\/moyecj-snap\/livecheck-skills/);
+  assert.match(body, /npx agentcash@latest add https:\/\/livecheck\.fly\.dev/);
+  assert.match(body, /does not run JavaScript/);
+  assert.doesNotMatch(body, /in_stock/);
+  assert.doesNotMatch(body, /invalid_url/);
 }
 
 describe("discovery documents (mock gate)", () => {
@@ -149,13 +159,24 @@ describe("discovery documents (mock gate)", () => {
     assertJsonDiscovery(res, "openapi.json");
     const doc = (await res.json()) as OpenApiDoc;
     assert.equal(doc.openapi, "3.1.0");
-    assert.equal(doc.info?.title, "Livecheck");
+    assert.equal(doc.info?.title, OPENAPI_INFO_TITLE);
+    assert.equal(doc.info?.title, "Livecheck: Live Listing Status");
+    assert.ok((doc.info?.title ?? "").length <= 32);
     assert.ok(doc.info?.version);
-    assert.equal(doc.info?.description, VERIFY_DESCRIPTION);
-    assert.equal(doc.info?.["x-guidance"], VERIFY_DESCRIPTION);
+    assert.equal(doc.info?.description, OPENAPI_INFO_DESCRIPTION);
+    assert.equal(doc.info?.["x-guidance"], OPENAPI_INFO_GUIDANCE);
+    assert.deepEqual(doc.info?.["x-tags"], [...OPENAPI_INFO_TAGS]);
+    assert.equal((doc.info as { iconUrl?: string } | undefined)?.iconUrl, undefined);
+    assert.notEqual(doc.info?.description, VERIFY_DESCRIPTION);
     assert.match(VERIFY_DESCRIPTION, /not a search engine/i);
     const op = doc.paths?.["/v1/verify"]?.post;
     assert.ok(op, "expected POST /v1/verify");
+    assert.equal(op.summary, OPENAPI_VERIFY_SUMMARY);
+    assert.equal(op.description, OPENAPI_VERIFY_DESCRIPTION);
+    assert.equal(op["x-guidance"], OPENAPI_VERIFY_DESCRIPTION);
+    assert.deepEqual(op.tags, [...OPENAPI_VERIFY_TAGS]);
+    assert.notEqual(op.description, VERIFY_DESCRIPTION);
+    assert.ok((op.description ?? "").length > 500, "route copy is catalog text, not the 402 description");
     assert.equal(op["x-payment-info"]?.price?.mode, "fixed");
     assert.equal(op["x-payment-info"]?.price?.currency, "USD");
     assert.equal(op["x-payment-info"]?.price?.amount, "0.01");
@@ -198,6 +219,7 @@ describe("discovery documents (mock gate)", () => {
     assert.ok(watch, "expected POST /v1/watch");
     assert.equal(watch["x-payment-info"]?.price?.amount, "2.50");
     assert.equal(watch["x-payment-info"]?.intent_prices, undefined);
+    assert.deepEqual(watch.requestBody?.content?.["application/json"]?.schema?.required, ["target", "condition"]);
     const renew = (doc.paths as Record<string, { post?: typeof confirm }>)?.["/v1/watch/renew"]?.post;
     assert.ok(renew, "expected POST /v1/watch/renew");
     assert.equal(renew["x-payment-info"]?.price?.amount, "2.50");

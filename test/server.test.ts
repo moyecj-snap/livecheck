@@ -82,19 +82,28 @@ describe("HTTP surface", () => {
     assert.match(html, /\$0\.01 USDC/);
     assert.match(html, /\/stats\?format=json/);
     assert.match(html, /https:\/\/livecheck\.fly\.dev\/stats\?format=json/);
+    assert.match(html, /Is it still there\?/);
+    assert.match(html, /Live status of any product page, listing, or job posting, read from the page right now/);
+    assert.match(html, /npx agentcash@latest add https:\/\/livecheck\.fly\.dev/);
+    assert.match(html, /https:\/\/github\.com\/moyecj-snap\/livecheck-skills/);
+    assert.match(html, /Search engines tell you what they saw\. Livecheck tells you what the page says now\./);
     assert.match(html, /How do you know the agent actually did it\?/);
     assert.match(
       html,
       /A success toast and a calendar invite aren’t proof\. Livecheck Confirm checks the real-world result — independently\./,
     );
-    assert.match(html, /Watch the Confirm demo · then try Verify for \$0\.01 below/);
+    assert.match(html, /Watch the Confirm demo\./);
     assert.match(
       html,
       /<video controls playsinline muted preload="metadata"[^>]*>\s*<source src="\/media\/Livecheck-Confirm-HowDoYouKnow-LI-v4\.mp4" type="video\/mp4" \/>/,
     );
     assert.ok(
-      html.indexOf("How do you know the agent actually did it?") < html.indexOf("<h2>Try it</h2>"),
-      "Confirm pitch stays above Try it",
+      html.indexOf("Is it still there?") < html.indexOf('id="try-verify"'),
+      "listing hero stays above Try Verify",
+    );
+    assert.ok(
+      html.indexOf('id="try-verify"') < html.indexOf("How do you know the agent actually did it?"),
+      "Confirm pitch sits below Try Verify",
     );
     assert.ok(html.includes("curl -iv"), "Verify curl stays on the page");
     assert.ok(html.includes("Local fixtures"), "fixtures stay on the page");

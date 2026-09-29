@@ -92,7 +92,7 @@ describe("watch parsers", () => {
       on_change: { run: "verify" },
     });
     assert.equal(parsed.interval_s, 900);
-    assert.equal(parsed.callback.deliver, "on_change");
+    assert.equal(parsed.callback?.deliver, "on_change");
     assert.equal(parsed.chain_budget_usd, 5);
     assert.equal(parsed.run, "verify");
     const every = parseWatchRequest({
@@ -100,7 +100,12 @@ describe("watch parsers", () => {
       condition: { detector: "status_change", params: {} },
       callback: { url: "https://example.com/hook", secret: "whsec_x", deliver: "every_check" },
     });
-    assert.equal(every.callback.deliver, "every_check");
+    assert.equal(every.callback?.deliver, "every_check");
+    const pull = parseWatchRequest({
+      target: { type: "url", url: "https://example.com/item", render: "never" },
+      condition: { detector: "status_change", params: {} },
+    });
+    assert.equal(pull.callback, null);
     assert.equal(checksRemainingForInterval(900), 2880);
     assert.equal(checksRemainingForInterval(300), 2880);
   });
@@ -295,6 +300,32 @@ describe("POST /v1/watch HTTP", () => {
     assert.equal(body.run, "none");
     assert.equal(body.receipt.hash.length, 64);
     assert.ok(body.receipt.verify_url.includes(body.id));
+  });
+
+  it("omits callback and still returns a watcher the owner can read", async () => {
+    const created = await fetch(`${origin}/v1/watch`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
+      body: JSON.stringify({
+        target: { type: "url", url: `${origin}/fixtures/greenhouse-closed-job`, render: "never" },
+        condition: { detector: "status_change", params: {} },
+      }),
+    });
+    assert.equal(created.status, 201);
+    const body = (await created.json()) as { id: string; owner_token: string };
+    assert.match(body.id, /^wtc_/);
+    const viewRes = await fetch(`${origin}/v1/watch/${body.id}`, {
+      headers: { "x-livecheck-owner-token": body.owner_token },
+    });
+    assert.equal(viewRes.status, 200);
+    const view = (await viewRes.json()) as { callback?: { url?: string } };
+    assert.equal(view.callback, undefined);
+    const events = await fetch(`${origin}/v1/watch/${body.id}/events`, {
+      headers: { "x-livecheck-owner-token": body.owner_token },
+    });
+    assert.equal(events.status, 200);
+    const page = (await events.json()) as { events?: unknown[] };
+    assert.ok(Array.isArray(page.events));
   });
 
   it("GET/DELETE require a good owner token", async () => {

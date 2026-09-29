@@ -242,7 +242,8 @@ export type WatchPublicView = {
   on_change: WatchOnChange;
   chain_budget_usd: number | null;
   chain_balance_usd: number;
-  callback: { url: string; deliver: WatchCallbackDeliver };
+  /** Omitted when the watcher was created without a callback (pull events instead). */
+  callback?: { url: string; deliver: WatchCallbackDeliver };
   label?: string;
 };
 
