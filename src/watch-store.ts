@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { applyDay1FailedCheckCredit, type Day1CreditResult } from "./day1-credit.js";
 import { WATCH_MAX_CHECKS_PER_TERM, WATCH_TERM_SECONDS } from "./config.js";
 import type {
   CheckCondition,
@@ -202,7 +203,7 @@ function ensureTable(db: DatabaseSync, sql: string): void {
  * whose watch_events table has only (id, watcher_id, kind, payload_json,
  * created_at, delivered_at).
  */
-export function migrateWatchStore(db: DatabaseSync): void {
+export function migrateWatchStore(db: DatabaseSync): Day1CreditResult {
   ensureColumn(db, "watchers", "consecutive_failures", "consecutive_failures INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "watchers", "unreachable", "unreachable INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "watchers", "expiring_emitted", "expiring_emitted INTEGER NOT NULL DEFAULT 0");
@@ -231,6 +232,8 @@ export function migrateWatchStore(db: DatabaseSync): void {
      ON watch_delivery_attempts(event_id, attempt);`,
   );
   db.exec(INDEXES_AFTER_MIGRATE);
+  // Day-1 failed-check credit. No-op until wtc_01M3AW4EX4JXJCQG8PTB7GE7W1 exists; once only.
+  return applyDay1FailedCheckCredit(db);
 }
 
 export function initWatchStore(path = defaultWatchDbPath()): StoreState {
@@ -837,6 +840,7 @@ function countColumn(db: DatabaseSync, sql: string): number {
 /**
  * Point-in-time Sentinel counts from watchers.sqlite.
  * Scheduled checks_run is inferred from term quota minus checks_remaining.
+ * Failed fetches do not decrement checks_remaining, so they are not counted here.
  * Returns zeros when the store is unavailable.
  */
 export function querySentinelWatchStats(): SentinelWatchStats {

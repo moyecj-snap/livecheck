@@ -113,6 +113,17 @@ export type SentinelBenchReport = {
   chain: ChainSlice;
   chain_confirm: ChainSlice & { receipt_id: string | null; intent: string | null };
   on_change_confirm_accepted: boolean;
+  outage: {
+    keyword_change_events: number;
+    text_diff_change_events: number;
+    numeric_change_events: number;
+    status_change_events_during_outage: number;
+    status_unreachable: number;
+    status_recovered: number;
+    status_closed_on_404: boolean;
+    checks_remaining_after_failures: number;
+    pass: boolean;
+  };
   gates: GateResult[];
   pass: boolean;
 };
@@ -412,6 +423,187 @@ async function runWatchHonesty(
   return changes;
 }
 
+const OUTAGE_ERROR_HTML = `<!doctype html><html><head><title>Error 530</title></head><body>
+<h1>Error 530</h1>
+<p>Cloudflare origin DNS error. LIVE</p>
+<p>This job is closed to new applications.</p>
+<p class="price">$0.00</p>
+<h1 class="listing-title">Outage placeholder</h1>
+</body></html>`;
+
+async function runOutageCases(
+  pages: Map<string, PageState>,
+  hooks: DeliveredHook[],
+): Promise<SentinelBenchReport["outage"]> {
+  const clock = { now: new Date("2026-09-01T00:00:00Z") };
+  const fetcher = makeFetcher(pages, hooks, () => clock.now.getTime());
+  const liveJob = noisyJobHtml({ kind: "combined", tick: 0 });
+  const liveProduct = noisyProductHtml({ kind: "combined", tick: 0 });
+  const failures = [530, 500, 503] as const;
+
+  async function watchOutage(input: {
+    id: string;
+    payer: string;
+    url: string;
+    liveHtml: string;
+    condition: WatcherRow["condition"];
+    statuses: number[];
+  }): Promise<{ changes: number; remainingAfterFailures: number; events: ReturnType<typeof listWatchEvents> }> {
+    pages.set(input.url, { status: 200, html: input.liveHtml });
+    const seed = await runCheck(
+      parseCheckRequest({
+        target: { type: "url", url: input.url, render: "never" },
+        condition: input.condition,
+      }),
+      fetcher,
+      clock.now,
+    );
+    insertWatcher(
+      stubWatcher({
+        id: input.id,
+        payer: input.payer,
+        condition_key: input.id.padEnd(64, "0"),
+        target_url: input.url,
+        target: { type: "url", url: input.url, render: "never", selector: null },
+        condition: input.condition,
+        callback_url: "",
+        checks_remaining: 2880,
+        next_check_at: isoTs(clock.now),
+        expires_at: "2026-12-01T00:00:00Z",
+        baseline: { captured: true, hash: seed.observation.hash, summary: seed.observation.summary },
+        last_observation: seed.observation,
+        detector_state: {
+          last_fired: seed.fired,
+          ...(seed.content ? { last_content: seed.content } : {}),
+        },
+      }),
+    );
+
+    let remainingAfterFailures = 2880;
+    for (let i = 0; i < input.statuses.length; i += 1) {
+      const status = input.statuses[i] ?? 500;
+      const row = getWatcher(input.id);
+      clock.now = new Date(row?.next_check_at ?? clock.now);
+      pages.set(input.url, { status, html: status >= 500 ? OUTAGE_ERROR_HTML : input.liveHtml });
+      await tickDueWatchers(clock.now, fetcher);
+      if (i === failures.length - 1) {
+        remainingAfterFailures = getWatcher(input.id)?.checks_remaining ?? -1;
+      }
+    }
+    const events = listWatchEvents(input.id);
+    return {
+      changes: events.filter((event) => event.kind === "change").length,
+      remainingAfterFailures,
+      events,
+    };
+  }
+
+  const keyword = await watchOutage({
+    id: "wtc_01OUTAGEKEYWORD0000000001",
+    payer: "0x0101010101010101010101010101010101010101",
+    url: pageUrl("job", "outage-keyword", "https://bench-outage.livecheck.test"),
+    liveHtml: liveJob,
+    condition: { detector: "keyword", params: { any: ["Apply now"], all: [], none: [], selector: null, case_sensitive: false } },
+    statuses: [...failures, 200, 200],
+  });
+  // Stop before the clock moves on. Host concurrency is 2, and an earlier watcher
+  // becomes due again during the next target's back-off.
+  stopWatcher("wtc_01OUTAGEKEYWORD0000000001");
+  const textDiff = await watchOutage({
+    id: "wtc_01OUTAGETEXTDIFF000000001",
+    payer: "0x0202020202020202020202020202020202020202",
+    url: pageUrl("product", "outage-text", "https://bench-outage.livecheck.test"),
+    liveHtml: liveProduct,
+    condition: {
+      detector: "text_diff",
+      params: { selector: LISTING_TITLE_SELECTOR, ignore: [], min_change_ratio: 0.02 },
+    },
+    statuses: [...failures, 200, 200],
+  });
+  stopWatcher("wtc_01OUTAGETEXTDIFF000000001");
+  const numeric = await watchOutage({
+    id: "wtc_01OUTAGENUMERIC0000000001",
+    payer: "0x0303030303030303030303030303030303030303",
+    url: pageUrl("product", "outage-numeric", "https://bench-outage.livecheck.test"),
+    liveHtml: liveProduct,
+    condition: {
+      detector: "numeric_threshold",
+      params: { selector: ".price", jsonpath: null, op: "lt", value: 1000, currency: "USD", baseline_value: null },
+    },
+    statuses: [...failures, 200, 200],
+  });
+  stopWatcher("wtc_01OUTAGENUMERIC0000000001");
+
+  const statusId = "wtc_01OUTAGESTATUS00000000001";
+  const statusUrl = pageUrl("job", "outage-status", "https://bench-outage.livecheck.test");
+  const statusDuring = await watchOutage({
+    id: statusId,
+    payer: "0x0404040404040404040404040404040404040404",
+    url: statusUrl,
+    liveHtml: liveJob,
+    condition: { detector: "status_change", params: {} },
+    statuses: [...failures],
+  });
+  const afterFailures = getWatcher(statusId);
+  const notClosed =
+    afterFailures?.last_observation?.status !== "closed" &&
+    (afterFailures?.last_observation?.http_status ?? 0) < 500;
+  const recoveredRow = getWatcher(statusId);
+  if (recoveredRow) {
+    clock.now = new Date(recoveredRow.next_check_at);
+    pages.set(statusUrl, { status: 200, html: liveJob });
+    await tickDueWatchers(clock.now, fetcher);
+  }
+  const afterRecover = listWatchEvents(statusId);
+  const stillNoChange = afterRecover.filter((event) => event.kind === "change").length === 0;
+  for (let i = 0; i < 2; i += 1) {
+    const row = getWatcher(statusId);
+    clock.now = new Date(row?.next_check_at ?? clock.now);
+    pages.set(statusUrl, { status: 404, html: noisyJobHtml({ kind: "combined", tick: 1 }, true) });
+    await tickDueWatchers(clock.now, fetcher);
+  }
+  const statusEvents = listWatchEvents(statusId);
+  const closedChange = statusEvents.filter((event) => event.kind === "change").find((event) => {
+    try {
+      const payload = JSON.parse(event.payload_json) as { current?: { status?: string } };
+      return payload.current?.status === "closed";
+    } catch {
+      return false;
+    }
+  });
+
+  stopWatcher(statusId);
+
+  const checksHeld =
+    keyword.remainingAfterFailures === 2880 &&
+    textDiff.remainingAfterFailures === 2880 &&
+    numeric.remainingAfterFailures === 2880 &&
+    statusDuring.remainingAfterFailures === 2880;
+  const pass =
+    keyword.changes === 0 &&
+    textDiff.changes === 0 &&
+    numeric.changes === 0 &&
+    statusDuring.changes === 0 &&
+    stillNoChange &&
+    notClosed &&
+    afterRecover.filter((event) => event.kind === "unreachable").length === 1 &&
+    afterRecover.filter((event) => event.kind === "recovered").length === 1 &&
+    Boolean(closedChange) &&
+    checksHeld;
+
+  return {
+    keyword_change_events: keyword.changes,
+    text_diff_change_events: textDiff.changes,
+    numeric_change_events: numeric.changes,
+    status_change_events_during_outage: statusDuring.changes,
+    status_unreachable: afterRecover.filter((event) => event.kind === "unreachable").length,
+    status_recovered: afterRecover.filter((event) => event.kind === "recovered").length,
+    status_closed_on_404: Boolean(closedChange),
+    checks_remaining_after_failures: statusDuring.remainingAfterFailures,
+    pass,
+  };
+}
+
 const LATENCY_OFFSETS_S = [0, 5, 15, 30, 45, 60, 75, 90, 120, 150, 165, 180, 210, 225, 240, 255, 270, 285, 299, 300];
 
 async function runLatency(
@@ -693,6 +885,7 @@ export async function runSentinelBench(): Promise<SentinelBenchReport> {
   const fetcher = makeFetcher(pages, hooks, () => clock.now.getTime());
 
   try {
+    const outage = await runOutageCases(pages, hooks);
     const honesty = await runHonestyOneShot(fetcher, pages);
     const watchChangeEvents = await runWatchHonesty(pages, hooks, clock);
     const { samples, hmacVerified } = await runLatency(pages, hooks);
@@ -760,6 +953,12 @@ export async function runSentinelBench(): Promise<SentinelBenchReport> {
         pass: confirmAccepted && chain_confirm.pass,
         detail: `accepted=${confirmAccepted} funded_attached=${chain_confirm.funded_attached} skipped=${chain_confirm.skipped_reason ?? "no"} receipt=${chain_confirm.receipt_id ?? "none"}`,
       },
+      {
+        id: "outage_no_content_change",
+        gate: "2xx→5xx→2xx emits zero keyword/text_diff/numeric change events; status_change 5xx is unreachable, not closed; 404 still closes",
+        pass: outage.pass,
+        detail: `keyword=${outage.keyword_change_events} text_diff=${outage.text_diff_change_events} numeric=${outage.numeric_change_events} status_outage_changes=${outage.status_change_events_during_outage} unreachable=${outage.status_unreachable} recovered=${outage.status_recovered} closed_on_404=${outage.status_closed_on_404} checks_after_failures=${outage.checks_remaining_after_failures}`,
+      },
     ];
 
     return {
@@ -796,6 +995,7 @@ export async function runSentinelBench(): Promise<SentinelBenchReport> {
       chain,
       chain_confirm,
       on_change_confirm_accepted: confirmAccepted,
+      outage,
       gates,
       pass: gates.every((g) => g.pass),
     };
@@ -816,6 +1016,7 @@ export function formatSentinelBenchText(report: SentinelBenchReport): string {
     `hmac unit=${report.hmac.unit_pass} verified=${report.hmac.verified}/${report.hmac.delivered}`,
     `chain funded_attached=${report.chain.funded_attached} skipped=${report.chain.skipped_reason}`,
     `on_change.confirm accepted=${report.on_change_confirm_accepted} funded_attached=${report.chain_confirm.funded_attached} skipped=${report.chain_confirm.skipped_reason}`,
+    `outage keyword=${report.outage.keyword_change_events} text_diff=${report.outage.text_diff_change_events} numeric=${report.outage.numeric_change_events} recovered=${report.outage.status_recovered} closed_on_404=${report.outage.status_closed_on_404}`,
     report.pass ? "GATES PASS" : "GATES FAIL",
   ];
   for (const gate of report.gates) {
@@ -910,6 +1111,19 @@ Internal Confirm at public route prices — no public \`POST /v1/confirm\`, no n
 | \`on_change.run=confirm\` (default \`lead_submit\`) + $0.50 balance | accepted=${report.on_change_confirm_accepted} attached=${report.chain_confirm.funded_attached} verdict=${report.chain_confirm.funded_status} debit=${report.chain_confirm.funded_debit_usd} receipt=${report.chain_confirm.receipt_id ?? "none"} |
 | insufficient balance | skipped=${report.chain_confirm.skipped} reason=${report.chain_confirm.skipped_reason} |
 
+## Outage
+
+2xx → 5xx (530/500/503) → 2xx must emit **zero** \`change\` events for keyword, text_diff, and numeric. status_change treats 5xx as \`unreachable\` (not closed) and emits \`recovered\` on the way back. 404 still closes.
+
+| Detector | Change events during outage | Pass |
+| --- | ---: | --- |
+| keyword | ${report.outage.keyword_change_events} | ${report.outage.keyword_change_events === 0 ? "PASS" : "FAIL"} |
+| text_diff | ${report.outage.text_diff_change_events} | ${report.outage.text_diff_change_events === 0 ? "PASS" : "FAIL"} |
+| numeric_threshold | ${report.outage.numeric_change_events} | ${report.outage.numeric_change_events === 0 ? "PASS" : "FAIL"} |
+| status_change | ${report.outage.status_change_events_during_outage} | unreachable=${report.outage.status_unreachable} recovered=${report.outage.status_recovered} 404 closed=${report.outage.status_closed_on_404} |
+
+\`GET /stats\` \`sentinel.benches\` is **not** republished by this gate. The landed fallback remains main \`590627c\` until a separate honesty republish after \`outage_no_content_change\` is green.
+
 ## Held
 
 - Bazaar GA listing push
@@ -917,5 +1131,6 @@ Internal Confirm at public route prices — no public \`POST /v1/confirm\`, no n
 - GitHub moyecj-snap mirror
 - Price changes
 - Real $2.50 watch spends
+- \`/stats\` sentinel.benches republish (held on \`outage_no_content_change\`)
 `;
 }

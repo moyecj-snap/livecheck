@@ -2,6 +2,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+/**
+ * Outage lifecycle (2xx→5xx→2xx, gate `outage_no_content_change`) is enforced by the
+ * sentinel bench. It is not part of these /stats numbers. Do not republish
+ * sentinel.benches from a new report until that gate is green in CI.
+ * The hardcoded fallback stays main 590627c.
+ */
 /** Landed main commit that recorded `bench/sentinel-report.json` (all gates PASS). */
 export const SENTINEL_BENCH_COMMIT = "590627c";
 export const SENTINEL_BENCH_REPORT_DOC = "docs/sentinel-benches.md";

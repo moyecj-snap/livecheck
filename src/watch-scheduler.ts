@@ -24,7 +24,7 @@ import {
   updateWatcherAfterCheck,
   type WatcherRow,
 } from "./watch-store.js";
-import { jitteredDelayMs } from "./watch.js";
+import { failureBackoffDelayMs, jitteredDelayMs } from "./watch.js";
 
 let timer: ReturnType<typeof setInterval> | undefined;
 let ticking = false;
@@ -99,7 +99,8 @@ async function runOneWatcher(row: WatcherRow, now: Date, fetcher: typeof fetch):
   }
 
   const isConfirmRefetch = Boolean(row.detector_state?.pending);
-  const remaining = isConfirmRefetch ? row.checks_remaining : Math.max(0, row.checks_remaining - 1);
+  // Failed fetches (5xx/530, timeout, DNS, challenge, thrown unreachable) do not burn the term quota.
+  const remaining = fetchFailed || isConfirmRefetch ? row.checks_remaining : Math.max(0, row.checks_remaining - 1);
   const expired = remaining <= 0 || row.expires_at <= nowIso;
   const baseline =
     !row.baseline.captured && observation && !fetchFailed
@@ -108,6 +109,7 @@ async function runOneWatcher(row: WatcherRow, now: Date, fetcher: typeof fetch):
 
   const consecutive_failures = fetchFailed ? row.consecutive_failures + 1 : 0;
   let unreachable = row.unreachable;
+  let justRecovered = false;
   if (fetchFailed) {
     if (consecutive_failures >= WATCH_UNREACHABLE_FAILURES && !row.unreachable) {
       emitUnreachableIfNeeded(row, remaining, now);
@@ -116,20 +118,34 @@ async function runOneWatcher(row: WatcherRow, now: Date, fetcher: typeof fetch):
   } else if (row.unreachable && observation) {
     emitRecovered(row, observation, remaining, now);
     unreachable = false;
+    justRecovered = true;
   }
 
-  let next = isoTs(new Date(now.getTime() + jitteredDelayMs(row.interval_s)));
+  let next = isoTs(
+    new Date(
+      now.getTime() +
+        (fetchFailed ? failureBackoffDelayMs(row.interval_s, consecutive_failures) : jitteredDelayMs(row.interval_s)),
+    ),
+  );
   let lastObservation = observation;
   let detectorState = row.detector_state ?? {};
   if (!fetchFailed && observation) {
     const decision = decideConfirmation({ row, observation, fired, content, now });
-    detectorState = decision.detector_state;
-    lastObservation = decision.update_last_observation ? observation : row.last_observation;
-    if (decision.next_is_confirm_refetch && !expired) {
-      next = confirmationNextCheckAt(now);
-    }
-    if (decision.emit) {
-      await emitChangeIfNeeded(row, observation, fired, confidence, remaining, now, fetcher);
+    // Recovery is its own event. A pending confirm that would fire on this tick waits
+    // for the next check so we do not also emit `change`.
+    if (justRecovered && decision.emit) {
+      detectorState = row.detector_state ?? {};
+      lastObservation = row.last_observation;
+      if (!expired) next = confirmationNextCheckAt(now);
+    } else {
+      detectorState = decision.detector_state;
+      lastObservation = decision.update_last_observation ? observation : row.last_observation;
+      if (decision.next_is_confirm_refetch && !expired) {
+        next = confirmationNextCheckAt(now);
+      }
+      if (decision.emit) {
+        await emitChangeIfNeeded(row, observation, fired, confidence, remaining, now, fetcher);
+      }
     }
   }
 
