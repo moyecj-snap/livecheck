@@ -308,14 +308,30 @@ Event types stored and delivered:
 
 | type | when |
 | --- | --- |
-| `change` | detector `fired`, or observation hash/status differs from baseline/last |
+| `change` | detector `fired`, or observation hash/status differs from the last successful observation. Fetch failures are not changes |
 | `unreachable` | 3 consecutive fetch failures; once until recovery |
-| `recovered` | first success after `unreachable` |
+| `recovered` | first successful fetch after `unreachable`. Not a `change` event |
 | `expiring` | 24h before `expires_at` (once) |
 | `expired` | at/after expiry or `checks_remaining` hits 0 |
 | `baseline` | only if `deliver=every_check` — skipped on standard to avoid spam |
 
 Event ids are `evt_` + Crockford ULID. Same Ed25519 receipt family; `GET /v1/receipt/{id}` resolves `evt_`.
+
+#### Fetch failures, back-off, and the 2,880
+
+Keyword, `text_diff`, and `numeric_threshold` compare **successful fetches only**. HTTP 5xx (including Cloudflare 530), timeouts, DNS failures, and challenge pages produce **no observation** — one-shot `POST /v1/check` returns **422** `baseline_unreachable` (x402 does not settle), and a watcher does not update `last_observation` or emit `change`. `status_change` still treats **404 and 410 as closed**. 5xx and timeouts are **unreachable, not closed**, even if the error HTML says the job is closed.
+
+While those fetches are failing, the next check is **1×, then 2×, then 4×** `interval_s` (±10% jitter), **capped at 1 hour**. The first success goes back to the normal jittered interval and, if the watcher had been marked unreachable, emits `recovered` only. A real content change after that still uses 2-of-3; it is not folded into the recovery event.
+
+Failed fetches **do not decrement** `checks_remaining`. The confirmation re-fetch (~20s) still does not decrement. The 30-day `expires_at` is unchanged. `checks_run` on `GET /stats` stays `term quota − checks_remaining`, so failed checks are not counted as observations.
+
+Day-1 watcher `wtc_01M3AW4EX4JXJCQG8PTB7GE7W1` burned about 690 checks on those failures (measured run: 693 consecutive failures, median gap ~301s). Opening the watch store applies a **one-shot +690** to `checks_remaining` if that row is still there. It does not recreate a deleted watcher, change status, or move `expires_at`. The credit is stored in `watch_ops_applied` so a restart does not add 690 again. If the row is missing, the key is **not** marked applied — restoring the volume and booting again still credits. Ops can print the outcome without waiting for boot:
+
+```bash
+WATCH_DB_PATH=/data/watchers.sqlite npm run watch:credit-day1
+```
+
+`database_missing` or `watcher_missing` means there is nothing to credit.
 
 ### HMAC callback recipe
 
@@ -514,13 +530,15 @@ JSON and HTML include `sentinel` next to Confirm intents. Counts come from `watc
 | Field | Source |
 | --- | --- |
 | `active_watchers` | `watchers` rows with `status=active` |
-| `checks_run` | one-shot `POST /v1/check` receipts + scheduled observations (`term quota − checks_remaining`) |
+| `checks_run` | one-shot `POST /v1/check` receipts + successful scheduled observations (`term quota − checks_remaining`; failed fetches do not decrement) |
 | `change_events` | `watch_events` rows with `kind=change` |
 | `by_detector.{status_change,keyword,text_diff,numeric_threshold}` | watcher counts and change-event counts per detector |
 | `benches.false_positive_rate` | CI/local gate rates from `bench/sentinel-report.json` (fallback: main `590627c`). `status_change` 0/198, `text_diff` 0/198, `n_checks` 198, gate `status_change=0; text_diff<=0.02`. Not a live dispute rate. |
 | `benches.median_latency_ms` | 162500 (p50). Also `latency_p95_ms` 315250, `interval_s` 300, HMAC 20/20, chain Verify pass. Report: `docs/sentinel-benches.md`. |
 
 Prices on that object stay `$0.02` / `$2.50` / `$0.50`. `status` is `payable`. Unpaid `POST /v1/check`, `POST /v1/watch`, and `POST /v1/watch/renew` include `extensions.bazaar`. `sentinel.benches.commit` `590627c` is the CI bench (2026-09-10), not the live counter clock — `generated_at` is when this document was built. Missing is not zero: a machine that fails to answer is omitted and `store.scope` is `partial_fleet_volumes`, not a silent zero.
+
+The outage bench gate `outage_no_content_change` (2xx → 5xx → 2xx, zero content `change` events; 5xx is unreachable rather than closed) is **not** in `sentinel.benches`. Do not treat `GET /stats` as republished for that gate. The hardcoded fallback stays main `590627c` until a separate honesty republish after the gate is green.
 
 ### Signed receipts
 

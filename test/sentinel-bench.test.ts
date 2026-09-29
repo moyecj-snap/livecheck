@@ -85,4 +85,18 @@ describe("Sentinel honesty + latency benches", () => {
     assert.equal(report.chain_confirm.pass, true);
     assert.equal(report.pass, true, report.gates.filter((g) => !g.pass).map((g) => g.id).join(","));
   });
+
+  it("gates 2xx→5xx→2xx at zero content change events", () => {
+    assert.equal(report.outage.keyword_change_events, 0);
+    assert.equal(report.outage.text_diff_change_events, 0);
+    assert.equal(report.outage.numeric_change_events, 0);
+    assert.equal(report.outage.status_change_events_during_outage, 0);
+    assert.equal(report.outage.status_unreachable, 1);
+    assert.equal(report.outage.status_recovered, 1);
+    assert.equal(report.outage.status_closed_on_404, true);
+    assert.equal(report.outage.checks_remaining_after_failures, 2880);
+    assert.equal(report.outage.pass, true);
+    const gate = report.gates.find((item) => item.id === "outage_no_content_change");
+    assert.equal(gate?.pass, true);
+  });
 });

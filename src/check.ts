@@ -79,6 +79,26 @@ export function httpClassOf(status: number): HttpClass {
   return "other";
 }
 
+/** 500–599, including Cloudflare 530. These are not page content. */
+export function isHttpServerFailure(status: number): boolean {
+  return status >= 500 && status < 600;
+}
+
+export type NonContentFetchReason = "http_5xx" | "challenge";
+
+/**
+ * Keyword, text_diff, and numeric compare only successful fetches.
+ * 5xx/530 and challenge interstitials are not observations.
+ */
+export function nonContentFetchReason(
+  httpStatus: number,
+  signals: readonly string[],
+): NonContentFetchReason | null {
+  if (isHttpServerFailure(httpStatus)) return "http_5xx";
+  if (signals.includes("challenge_page")) return "challenge";
+  return null;
+}
+
 /** Fingerprint of status + HTTP class. Clients store this as baseline_hash. */
 function stableJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -428,6 +448,14 @@ export async function runCheck(
   try {
     if (condition.detector === "status_change") {
       const verdict = await verifyUrl(target.url, fetcher, now);
+      // 404/410 stay closed via classify. 5xx (including 530) is unreachable, not closed.
+      if (isHttpServerFailure(verdict.http_status)) {
+        throw new CheckError(
+          "baseline_unreachable",
+          `HTTP ${verdict.http_status} is unreachable, not a closed page.`,
+          422,
+        );
+      }
       const observation = asObservation(
         verdict.status,
         verdict.http_status,
@@ -449,6 +477,16 @@ export async function runCheck(
 
     const page = await fetchPage(target.url, fetcher);
     const verdict = classify(page, now);
+    const blocked = nonContentFetchReason(page.httpStatus, verdict.signals);
+    if (blocked) {
+      throw new CheckError(
+        "baseline_unreachable",
+        blocked === "challenge"
+          ? "Challenge page is not comparable content."
+          : `HTTP ${page.httpStatus} is not comparable content.`,
+        422,
+      );
+    }
 
     if (condition.detector === "text_diff") {
       const selector = condition.params.selector ?? target.selector;

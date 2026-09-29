@@ -155,7 +155,7 @@ export function statsNotes(
     "Payable Confirm intents: lead_submit (GA, $0.10) and listing_published ($0.10) on POST /v1/confirm; order_placed ($0.25) on POST /v1/confirm/order.",
     BAZAAR_NOTE,
     "paid_calls are confirm-route rows with that intent stored. Pre-intent-column confirm rows are store.confirm_unscoped_paid_calls and are not attributed to lead_submit.",
-    "Sentinel checks_run is one-shot POST /v1/check receipts plus scheduled watcher observations (term quota minus checks_remaining). by_detector is SQLite watchers + change events. sentinel.benches are CI/local gate results from bench/sentinel-report.json (fallback: main 590627c), not a live dispute rate.",
+    "Sentinel checks_run is one-shot POST /v1/check receipts plus successful scheduled observations (term quota minus checks_remaining; failed fetches do not decrement checks_remaining). by_detector is SQLite watchers + change events. sentinel.benches are CI/local gate results from bench/sentinel-report.json (fallback: main 590627c), not a live dispute rate. The outage gate outage_no_content_change is not in sentinel.benches; do not treat this payload as a republish of that gate.",
     "Confirm benches.false_confirmed_rate is per-intent CI/local honesty (lead_submit / listing_published / order_placed) from bench/*-report.json, not a live dispute rate. Do not infer FC from paid_calls.",
     volumeNote,
   ];

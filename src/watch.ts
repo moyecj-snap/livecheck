@@ -13,6 +13,7 @@ import {
   WATCH_EVENTS_DEFAULT_LIMIT,
   WATCH_EVENTS_MAX_LIMIT,
   WATCH_EVENTS_RETENTION_DAYS,
+  WATCH_FAILURE_BACKOFF_CAP_S,
   WATCH_MAX_ACTIVE_PER_WALLET,
   WATCH_MAX_CHECKS_PER_TERM,
   WATCH_MIN_INTERVAL_S,
@@ -136,6 +137,30 @@ export function checksRemainingForInterval(intervalS: number): number {
 export function jitteredDelayMs(intervalS: number, random: () => number = Math.random): number {
   const factor = 1 + (random() * 0.2 - 0.1);
   return Math.max(1_000, Math.round(intervalS * 1000 * factor));
+}
+
+/** 1× on the first failure, 2× on the second, 4× from the third onward. */
+export function failureBackoffMultiplier(consecutiveFailures: number): 1 | 2 | 4 {
+  const n = Math.max(1, Math.floor(consecutiveFailures));
+  if (n <= 1) return 1;
+  if (n === 2) return 2;
+  return 4;
+}
+
+/**
+ * Next delay while fetches are failing. Multiplier × interval, hard-capped at one hour
+ * (including jitter, so a ±10% wiggle cannot schedule past the cap).
+ */
+export function failureBackoffDelayMs(
+  intervalS: number,
+  consecutiveFailures: number,
+  random: () => number = Math.random,
+): number {
+  const scaledS = Math.min(
+    Math.max(1, intervalS) * failureBackoffMultiplier(consecutiveFailures),
+    WATCH_FAILURE_BACKOFF_CAP_S,
+  );
+  return Math.min(jitteredDelayMs(scaledS, random), WATCH_FAILURE_BACKOFF_CAP_S * 1000);
 }
 
 export function parseWatchTarget(raw: unknown): CheckTarget {
