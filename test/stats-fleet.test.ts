@@ -186,6 +186,65 @@ describe("stats fleet merge", () => {
     assert.equal(doc.store.machines?.filter((machine) => machine.included).length, 2);
   });
 
+  it("sums the wallet split and does not treat a pre-split peer as external", () => {
+    const local = volume("8e4766c7d59608", (doc) => {
+      doc.sentinel.active_watchers = 0;
+      doc.sentinel.checks_run = 1;
+      doc.sentinel.change_events = 0;
+      doc.traffic.all.sentinel.active_watchers = 0;
+      doc.traffic.all.sentinel.checks_run = 1;
+      doc.traffic.all.sentinel.checks_run_unattributed = 1;
+      doc.traffic.external.sentinel.active_watchers = 0;
+      doc.traffic.external.sentinel.checks_run = 1;
+      doc.traffic.external.sentinel.checks_run_unattributed = 1;
+      doc.traffic.all.payers.available = true;
+      doc.traffic.external.payers.available = true;
+      doc.traffic.all.payers.l7d.verify = { calls: 2, unique_payers: 2 };
+      doc.traffic.external.payers.l7d.verify = { calls: 1, unique_payers: 1 };
+    });
+    const peer = volume("860792be4622e8", (doc) => {
+      doc.sentinel.active_watchers = 2;
+      doc.sentinel.checks_run = 10;
+      doc.traffic.all.sentinel.active_watchers = 2;
+      doc.traffic.all.sentinel.checks_run = 10;
+      doc.traffic.external.sentinel.active_watchers = 0;
+      doc.traffic.external.sentinel.checks_run = 0;
+      doc.traffic.all.payers.available = true;
+      doc.traffic.external.payers.available = true;
+      doc.traffic.all.payers.l7d.verify = { calls: 3, unique_payers: 1 };
+      doc.traffic.external.payers.l7d.verify = { calls: 0, unique_payers: 0 };
+    });
+    const merged = mergeFleetStats(local, [{ doc: peer, machineId: peer.store.fly_machine_id, included: true }]);
+    assert.equal(merged.sentinel.active_watchers, 2);
+    assert.equal(merged.sentinel.checks_run, 11);
+    assert.equal(merged.traffic.all.sentinel.active_watchers, 2);
+    assert.equal(merged.traffic.all.sentinel.checks_run, 11);
+    assert.equal(merged.traffic.external.sentinel.active_watchers, 0);
+    assert.equal(merged.traffic.external.sentinel.checks_run, 1);
+    assert.equal(merged.traffic.all.payers.l7d.verify.calls, 5);
+    assert.equal(merged.traffic.all.payers.l7d.verify.unique_payers, 3);
+    assert.equal(merged.traffic.external.payers.l7d.verify.calls, 1);
+    assert.equal(merged.traffic.external_complete, true);
+    assert.match(merged.traffic.note, /not a fleet-wide distinct/);
+    assert.match(merged.notes[0] ?? "", /Includes internal test traffic/);
+
+    const legacy = volume("860792be4622e8", (doc) => {
+      doc.sentinel.active_watchers = 2;
+      doc.sentinel.checks_run = 3127;
+      delete (doc as { traffic?: unknown }).traffic;
+    });
+    const partial = mergeFleetStats(local, [{ doc: legacy, machineId: "860792be4622e8", included: true }]);
+    assert.equal(partial.sentinel.active_watchers, 2);
+    assert.equal(partial.sentinel.checks_run, 3128);
+    assert.equal(partial.traffic.external_complete, false);
+    assert.equal(partial.traffic.all.sentinel.active_watchers, 2);
+    assert.equal(partial.traffic.all.sentinel.checks_run, 3128);
+    assert.equal(partial.traffic.external.sentinel.active_watchers, 0);
+    assert.equal(partial.traffic.external.sentinel.checks_run, 1);
+    assert.equal(partial.traffic.all.payers.available, false);
+    assert.match(partial.traffic.note, /incomplete/);
+  });
+
   it("marks the fleet partial when discovery fails and no peer list is configured", async () => {
     const doc = await buildPublicStatsDocument({
       env: { FLY_APP_NAME: "livecheck", FLY_MACHINE_ID: "8e4766c7d59608" },

@@ -14,6 +14,7 @@ Livecheck is not a search engine. Bring one specific item URL.
 - POST /v1/verify ($0.01) — body {"url": "..."} → {status: live|closed|unknown, title, signals[], http_status, canonical_url, checked_at, confidence}
 - POST /v1/check ($0.02) — one-shot condition on a page: status_change, keyword, text_diff, numeric_threshold (e.g. price below X)
 - POST /v1/watch ($2.50) — 30-day watcher; signed HMAC webhook when the condition fires (HTTPS callback optional; omit it and pull GET /v1/watch/{id}/events with the owner token)
+- POST /v1/watch/renew ($2.50) — extend an active watcher; body {"id":"wtc_..."}; owner token required in addition to payment
 - POST /v1/confirm ($0.10) — did a lead/contact/application form submission land? intent: lead_submit | listing_published
 - POST /v1/confirm/order ($0.25) — does the order exist? intent: order_placed
 - GET /v1/receipt/{id} (free) — verify any signed receipt
@@ -30,6 +31,6 @@ Livecheck is not a search engine. Bring one specific item URL.
 
 ## Links
 - OpenAPI: https://livecheck.fly.dev/openapi.json
-- Stats: https://livecheck.fly.dev/stats
+- Stats: https://livecheck.fly.dev/stats (headline counts include internal test traffic; traffic.external omits configured team wallets)
 - Agent skill: https://github.com/moyecj-snap/livecheck-skills
 - Install for agentcash: npx agentcash@latest add https://livecheck.fly.dev

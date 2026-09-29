@@ -8,7 +8,20 @@ Copy for Gil. Do not spray this on the homepage. The landing hero is the "Is it 
 
 OpenAPI `info` title, description, `x-guidance`, and `x-tags` are the AgentCash service metadata. `POST /v1/verify` summary, description, `x-guidance`, and tags are the route copy. The unpaid 402 `resource.description` stays the short `VERIFY_DESCRIPTION`. The route description is longer than CDP's 500-character cap.
 
-`/llms.txt` follows the agent-first listing text. The watch line says the HTTPS callback is optional and events can be pulled with `GET /v1/watch/{id}/events` plus the owner token. That is the only deviation from the brief's watch parenthetical ("requires HTTPS callback").
+`/llms.txt` follows the agent-first listing text. The watch line says the HTTPS callback is optional and events can be pulled with `GET /v1/watch/{id}/events` plus the owner token. That is the only deviation from the brief's watch parenthetical ("requires HTTPS callback"). `POST /v1/watch/renew` is listed next to watch. The skill URL is `https://github.com/moyecj-snap/livecheck-skills`.
+
+## Re-crawl (agentic.market still showing 4 endpoints)
+
+The origin already publishes watch and renew. A stale catalog will keep showing four endpoints until it fetches these again. No new route is required.
+
+Ping, in order:
+
+1. `GET https://livecheck.fly.dev/.well-known/x402` — `resources` includes `https://livecheck.fly.dev/v1/watch` and `https://livecheck.fly.dev/v1/watch/renew` (plus verify, check, confirm, confirm/order). Chain topup stays off this list because its URL has a path parameter.
+2. `GET https://livecheck.fly.dev/openapi.json` — `paths` includes `POST /v1/watch` and `POST /v1/watch/renew`, each with `x-payment-info` amount `2.50`. `info.x-guidance` names both.
+3. `GET https://livecheck.fly.dev/llms.txt` — watch (callback optional) and watch/renew.
+4. Unpaid `POST https://livecheck.fly.dev/v1/watch` and `POST https://livecheck.fly.dev/v1/watch/renew` — HTTP 402 with `extensions.bazaar` (input schema, output schema, example). That is the Bazaar discovery metadata. Do not treat a 402 as a missing route.
+
+If Agentic.market or CDP Bazaar indexed an older document, re-crawl those four URLs. This repo cannot push their index.
 
 ## Canonical Verify `signals`
 

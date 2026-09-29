@@ -119,7 +119,10 @@ function assertLlmsTxt(res: Response, body: string) {
   assert.match(body, /POST \/v1\/verify \(\$0\.01\)/);
   assert.match(body, /POST \/v1\/check \(\$0\.02\)/);
   assert.match(body, /POST \/v1\/watch \(\$2\.50\)/);
+  assert.match(body, /POST \/v1\/watch\/renew \(\$2\.50\)/);
   assert.match(body, /HTTPS callback optional/);
+  assert.match(body, /headline counts include internal test traffic/);
+  assert.doesNotMatch(body, /<org>/);
   assert.match(body, /GET \/v1\/watch\/\{id\}\/events/);
   assert.match(body, /POST \/v1\/confirm \(\$0\.10\)/);
   assert.match(body, /POST \/v1\/confirm\/order \(\$0\.25\)/);
@@ -263,6 +266,8 @@ describe("discovery documents (mock gate)", () => {
     }
     const stats = paths["/stats"] as { get?: { description?: string; tags?: string[] } } | undefined;
     assert.match(stats?.get?.description ?? "", /Sentinel/);
+    assert.match(doc.info?.["x-guidance"] ?? "", /\/v1\/watch\/renew/);
+    assert.match(doc.info?.description ?? "", /watcher renew/);
     assert.ok(stats?.get?.tags?.includes("Sentinel"));
   });
 

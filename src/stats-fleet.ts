@@ -2,6 +2,7 @@ import { DEFAULT_PORT } from "./config.js";
 import {
   FLEET_VOLUME_NOTE,
   PARTIAL_FLEET_VOLUME_NOTE,
+  mergeTrafficHonesty,
   statsNotes,
   type IntentWindow,
   type StatsDocument,
@@ -199,6 +200,7 @@ export function mergeFleetStats(local: StatsDocument, peers: readonly FleetPeerR
       confirm_unscoped_paid_calls: unscoped,
       note: volumeNote,
     },
+    traffic: mergeTrafficHonesty(local, peers),
     notes: statsNotes(unscoped, volumeNote, "fleet"),
   };
 }

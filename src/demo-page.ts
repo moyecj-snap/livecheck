@@ -103,6 +103,7 @@ export function demoHtml(origin: string): string {
       border-radius: 4px;
     }
     .confirm-demo figcaption { margin-top: 0.45rem; }
+    .honesty { border: 1px solid #8a6d1b; background: #f8e7c7; padding: 0.65rem 0.8rem; max-width: 40rem; }
     footer { margin-top: 3rem; border-top: 1px solid var(--rule); padding-top: 1rem; font-size: 0.9rem; }
     @media (max-width: 640px) {
       h1 { font-size: 1.65rem; }
@@ -172,7 +173,7 @@ curl -s ${origin}/v1/verify -H 'content-type: application/json' \\
 }</pre>
 
     <h2>Confirm for operators</h2>
-    <h1>How do you know the agent actually did it?</h1>
+    <h3>How do you know the agent actually did it?</h3>
     <p class="lede">A success toast and a calendar invite aren’t proof. Livecheck Confirm checks the real-world result — independently.</p>
     <figure class="confirm-demo">
       <video controls playsinline muted preload="metadata" width="1920" height="1080" aria-label="Livecheck Confirm independently checks the real-world result.">
@@ -183,6 +184,7 @@ curl -s ${origin}/v1/verify -H 'content-type: application/json' \\
     </figure>
 
     <h2 id="live-stats">Live stats</h2>
+    <p class="honesty"><strong>Includes internal test traffic.</strong> Headline watchers, checks, and confirm windows are all wallets. <code>traffic.external</code> omits configured team wallets.</p>
     <p class="muted">
       Source of truth: <code>GET /stats?format=json</code>
       (<a href="https://livecheck.fly.dev/stats?format=json">https://livecheck.fly.dev/stats?format=json</a>).
