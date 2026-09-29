@@ -553,7 +553,7 @@ cp .env.example .env   # optional — omit keys to boot in mock/dev mode
 npm start
 ```
 
-The process binds `0.0.0.0` and uses `process.env.PORT || 43127`. On a Mac that is still `http://127.0.0.1:43127` unless you set `PORT`. Without live keys it prints a banner: settlement is disabled. Unpaid verify still returns a realistic x402 `402` with a `payment-required` header. The verifier still runs against local fixtures. Successful mock-paid checks write `livecheck.paid_call` to stdout and a row in `./data/paid-calls.sqlite` (`npm run paid-call:cos` to count L7d/L30d).
+The process binds `0.0.0.0` (IPv4, Fly Proxy) and `[::]` (IPv6, Fly 6PN) and uses `process.env.PORT || 43127`. Peer stats call `<machine-id>.vm.<app>.internal`, which is IPv6; an IPv4-only socket refuses those connections. On a Mac that is still `http://127.0.0.1:43127` unless you set `PORT`. Without live keys it prints a banner: settlement is disabled. Unpaid verify still returns a realistic x402 `402` with a `payment-required` header. The verifier still runs against local fixtures. Successful mock-paid checks write `livecheck.paid_call` to stdout and a row in `./data/paid-calls.sqlite` (`npm run paid-call:cos` to count L7d/L30d).
 
 ```bash
 # Free discovery docs (no 402)

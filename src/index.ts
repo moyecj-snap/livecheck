@@ -1,4 +1,3 @@
-import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { DEFAULT_PORT, isLiveSettlement, missingLiveKeyNames, port } from "./config.js";
 import { isEbayAdapterEnabled, logEbayAdapterDisabled } from "./ebay.js";
@@ -9,6 +8,7 @@ import { initReceiptStore } from "./receipt-store.js";
 import { startWatchScheduler } from "./watch-scheduler.js";
 import { confirmBenchesLoadInfo } from "./confirm-stats-benches.js";
 import { sentinelBenchesLoadInfo } from "./sentinel-stats-benches.js";
+import { formatListenBinding, listenHttp } from "./listen.js";
 import { initWatchStore } from "./watch-store.js";
 
 loadDotEnvIfPresent();
@@ -95,7 +95,19 @@ if (isEbayAdapterEnabled()) {
   logEbayAdapterDisabled();
 }
 
-serve({ fetch: app.fetch, port: listenPort, hostname: "0.0.0.0" }, (info) => {
-  const shown = info.port || listenPort || DEFAULT_PORT;
-  console.log(`Livecheck listening on 0.0.0.0:${shown} (local: http://127.0.0.1:${shown})`);
-});
+const onFly = Boolean(process.env.FLY_APP_NAME?.trim());
+listenHttp({ fetch: app.fetch, port: listenPort, requireIPv6: onFly })
+  .then((listened) => {
+    const shown = listened.bindings[0]?.port || listenPort || DEFAULT_PORT;
+    const where = listened.bindings.map(formatListenBinding).join(" and ");
+    console.log(`Livecheck listening on ${where} (local: http://127.0.0.1:${shown})`);
+    if (listened.ipv6Error) {
+      console.warn(
+        `IPv6 listen failed (${listened.ipv6Error}). Fly 6PN peer fetches to <machine>.vm.<app>.internal will be refused until [::] is bound.`,
+      );
+    }
+  })
+  .catch((error: unknown) => {
+    console.error(error);
+    process.exit(1);
+  });

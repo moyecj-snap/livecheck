@@ -254,6 +254,7 @@ async function fetchPeerStats(
       return { doc: cached.doc, machineId, included: true };
     }
   }
+  // AAAA-only 6PN name. The peer must be listening on :: or this connect is ECONNREFUSED.
   const url = `http://${machineId}.vm.${app}.internal:${port}/stats?format=json&scope=local`;
   try {
     const res = await fetchImpl(url, {
