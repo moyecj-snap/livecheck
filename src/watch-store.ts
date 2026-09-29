@@ -832,47 +832,69 @@ function isSentinelDetector(value: string): value is SentinelDetector {
   return (SENTINEL_DETECTORS as readonly string[]).includes(value);
 }
 
-function countColumn(db: DatabaseSync, sql: string): number {
-  const row = db.prepare(sql).get() as { n?: number | bigint } | undefined;
+function countSql(db: DatabaseSync, sql: string, params: readonly string[] = []): number {
+  const row = db.prepare(sql).get(...params) as { n?: number | bigint } | undefined;
   return Number(row?.n ?? 0);
 }
+
+const SCHEDULED_CHECKS_EXPR = `COALESCE(SUM(
+         CASE
+           WHEN interval_s IS NULL OR interval_s <= 0 THEN 0
+           ELSE MAX(0, MIN(${WATCH_MAX_CHECKS_PER_TERM}, CAST(${WATCH_TERM_SECONDS} / interval_s AS INTEGER)) - checks_remaining)
+         END
+       ), 0)`;
+
+export type SentinelWatchStatsQuery = {
+  /** Lowercase 0x payers omitted from this slice. Empty keeps every watcher. */
+  excludePayers?: readonly string[];
+};
 
 /**
  * Point-in-time Sentinel counts from watchers.sqlite.
  * Scheduled checks_run is inferred from term quota minus checks_remaining.
  * Failed fetches do not decrement checks_remaining, so they are not counted here.
+ * `excludePayers` drops those wallets. Rows with a null payer stay (unattributed).
  * Returns zeros when the store is unavailable.
  */
-export function querySentinelWatchStats(): SentinelWatchStats {
+export function querySentinelWatchStats(query: SentinelWatchStatsQuery = {}): SentinelWatchStats {
   const empty = emptySentinelWatchStats();
+  const exclude = [...new Set((query.excludePayers ?? []).map((payer) => payer.toLowerCase()))];
   try {
     const db = requireDb();
     const by_detector = emptySentinelDetectorCounts();
-    const active_watchers = countColumn(
+    const placeholders = exclude.map(() => "?").join(", ");
+    const watcherFilter = exclude.length > 0 ? ` AND lower(payer) NOT IN (${placeholders})` : "";
+    const joinedFilter =
+      exclude.length > 0 ? ` AND (w.payer IS NULL OR lower(w.payer) NOT IN (${placeholders}))` : "";
+    const active_watchers = countSql(
       db,
-      `SELECT COUNT(*) AS n FROM watchers WHERE status = 'active'`,
+      `SELECT COUNT(*) AS n FROM watchers WHERE status = 'active'${watcherFilter}`,
+      exclude,
     );
-    const change_events = countColumn(
+    const change_events =
+      exclude.length === 0
+        ? countSql(db, `SELECT COUNT(*) AS n FROM watch_events WHERE kind = 'change'`)
+        : countSql(
+            db,
+            `SELECT COUNT(*) AS n
+             FROM watch_events e
+             LEFT JOIN watchers w ON w.id = e.watcher_id
+             WHERE e.kind = 'change'${joinedFilter}`,
+            exclude,
+          );
+    const checks_run_scheduled = countSql(
       db,
-      `SELECT COUNT(*) AS n FROM watch_events WHERE kind = 'change'`,
-    );
-    const checks_run_scheduled = countColumn(
-      db,
-      `SELECT COALESCE(SUM(
-         CASE
-           WHEN interval_s IS NULL OR interval_s <= 0 THEN 0
-           ELSE MAX(0, MIN(${WATCH_MAX_CHECKS_PER_TERM}, CAST(${WATCH_TERM_SECONDS} / interval_s AS INTEGER)) - checks_remaining)
-         END
-       ), 0) AS n
-       FROM watchers`,
+      `SELECT ${SCHEDULED_CHECKS_EXPR} AS n FROM watchers${exclude.length > 0 ? ` WHERE lower(payer) NOT IN (${placeholders})` : ""}`,
+      exclude,
     );
     const watcherRows = db
       .prepare(
         `SELECT COALESCE(json_extract(condition_json, '$.detector'), '') AS detector, COUNT(*) AS n
          FROM watchers
+         ${exclude.length > 0 ? `WHERE lower(payer) NOT IN (${placeholders})` : ""}
          GROUP BY 1`,
       )
-      .all() as Array<{ detector?: string; n?: number | bigint }>;
+      .all(...exclude) as Array<{ detector?: string; n?: number | bigint }>;
     for (const row of watcherRows) {
       const detector = String(row.detector ?? "");
       if (isSentinelDetector(detector)) {
@@ -884,10 +906,10 @@ export function querySentinelWatchStats(): SentinelWatchStats {
         `SELECT COALESCE(json_extract(w.condition_json, '$.detector'), '') AS detector, COUNT(*) AS n
          FROM watch_events e
          JOIN watchers w ON w.id = e.watcher_id
-         WHERE e.kind = 'change'
+         WHERE e.kind = 'change'${joinedFilter}
          GROUP BY 1`,
       )
-      .all() as Array<{ detector?: string; n?: number | bigint }>;
+      .all(...exclude) as Array<{ detector?: string; n?: number | bigint }>;
     for (const row of changeRows) {
       const detector = String(row.detector ?? "");
       if (isSentinelDetector(detector)) {

@@ -171,9 +171,9 @@ export const USDC_EIP712 = { name: "USD Coin", version: "2" } as const;
 /** OpenAPI info.title. AgentCash serviceName cap is 32 ASCII characters. */
 export const OPENAPI_INFO_TITLE = "Livecheck: Live Listing Status";
 export const OPENAPI_INFO_DESCRIPTION =
-  "Live status of a specific product page, marketplace listing, or job posting, read from the page at call time. Returns live, closed, or unknown plus title and evidence signals. Also one-shot page condition checks, 30-day URL watchers, and signed confirmation of form submissions and orders.";
+  "Live status of a specific product page, marketplace listing, or job posting, read from the page at call time. Returns live, closed, or unknown plus title and evidence signals. Also one-shot page condition checks, 30-day URL watchers, watcher renew, and signed confirmation of form submissions and orders.";
 export const OPENAPI_INFO_GUIDANCE =
-  'POST /v1/verify with {"url": "<one specific item URL>"} for $0.01. Returns {status: live|closed|unknown, title, signals[], confidence}. Use before recommending, buying, applying, or scraping. Not a search engine: bring the URL. POST /v1/check ($0.02) for one-shot keyword / price-threshold / text-change checks. POST /v1/watch ($2.50) for 30-day watchers with signed webhooks. POST /v1/confirm ($0.10) and /v1/confirm/order ($0.25) after a form submission or checkout.';
+  'POST /v1/verify with {"url": "<one specific item URL>"} for $0.01. Returns {status: live|closed|unknown, title, signals[], confidence}. Use before recommending, buying, applying, or scraping. Not a search engine: bring the URL. POST /v1/check ($0.02) for one-shot keyword / price-threshold / text-change checks. POST /v1/watch ($2.50) for 30-day watchers; HTTPS callback is optional (pull GET /v1/watch/{id}/events). POST /v1/watch/renew ($2.50) extends an active watcher. POST /v1/confirm ($0.10) and /v1/confirm/order ($0.25) after a form submission or checkout.';
 export const OPENAPI_INFO_TAGS = [
   "listing-status",
   "product-availability",

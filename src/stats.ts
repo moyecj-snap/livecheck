@@ -5,11 +5,15 @@ import {
   ORDER_PLACED_PRICE_USD,
   WATCH_PRICE_USD,
 } from "./config.js";
+import { internalWallets } from "./internal-wallets.js";
 import {
+  emptyWindowCounts,
   isoCutoff,
   paidCallStoreStatus,
   queryConfirmIntentWindowsFromStore,
+  queryRetentionWindowsFromStore,
   type ConfirmIntentCounts,
+  type WindowCounts,
 } from "./paid-call-store.js";
 import { countReceiptsSince, emptyReceiptVerdictCounts, receiptStoreStatus } from "./receipt-store.js";
 import {
@@ -21,9 +25,11 @@ import {
   type SentinelBenches,
 } from "./sentinel-stats-benches.js";
 import {
+  emptySentinelDetectorCounts,
   emptySentinelWatchStats,
   querySentinelWatchStats,
   type SentinelDetectorCounts,
+  type SentinelWatchStats,
 } from "./watch-store.js";
 
 export type { ConfirmBenches } from "./confirm-stats-benches.js";
@@ -72,10 +78,54 @@ export type StatsStoreScope = {
   note: string;
 };
 
+/** Sentinel aggregates for one audience (all wallets, or external only). */
+export type TrafficSentinelCounts = {
+  active_watchers: number;
+  checks_run: number;
+  change_events: number;
+  /**
+   * One-shot chk_ receipts inside checks_run. Receipts have no payer column,
+   * so external does not remove them.
+   */
+  checks_run_unattributed: number;
+  by_detector: SentinelDetectorCounts;
+};
+
+export type TrafficPayers = {
+  /** False when this volume's paid-call store is closed. Zeros are not a measurement. */
+  available: boolean;
+  l7d: WindowCounts;
+  l30d: WindowCounts;
+};
+
+export type TrafficSlice = {
+  sentinel: TrafficSentinelCounts;
+  /** verify + confirm paid_calls only. Check and watch payers live on sentinel. */
+  payers: TrafficPayers;
+};
+
+export const INTERNAL_TEST_TRAFFIC_LABEL = "Includes internal test traffic.";
+
+export type TrafficHonesty = {
+  includes_internal_test_traffic: true;
+  label: typeof INTERNAL_TEST_TRAFFIC_LABEL;
+  note: string;
+  /** Count only. Addresses stay off the public document. */
+  internal_wallets_configured: number;
+  /**
+   * False when an included fleet volume did not publish this split
+   * (older build). external is then not a full-fleet figure.
+   */
+  external_complete: boolean;
+  all: TrafficSlice;
+  external: TrafficSlice;
+};
+
 export type StatsDocument = {
   ok: true;
   service: "livecheck";
   generated_at: string;
+  traffic: TrafficHonesty;
   intents: {
     lead_submit: ConfirmIntentStats;
     listing_published: ConfirmIntentStats;
@@ -146,12 +196,87 @@ export function unscopedPaidCallsNote(
   return `${who} ${unscoped.l7d} L7d / ${unscoped.l30d} L30d confirm-route paid_calls with no stored intent. Signed receipts cannot be reconstructed from paid_calls alone (no cfm_ id, evidence, or signature). Backfill intent from logs: npm run receipt:backfill.`;
 }
 
+export function trafficHonestyNote(input: {
+  walletCount: number;
+  externalComplete: boolean;
+  fleet: boolean;
+  walletCountsDisagree?: boolean;
+}): string {
+  const parts = [
+    INTERNAL_TEST_TRAFFIC_LABEL,
+    "Headline confirm windows and sentinel counts are all wallets.",
+    input.walletCount === 0
+      ? "No internal wallets are configured, so traffic.external matches traffic.all."
+      : `traffic.external omits ${input.walletCount} configured team wallets (built-in list plus LIVECHECK_INTERNAL_WALLETS).`,
+    "One-shot check receipts have no payer and stay in both checks_run totals. paid_calls with a null payer stay in external.",
+    "traffic.payers counts verify and confirm paid_calls only.",
+  ];
+  if (input.fleet) {
+    parts.push(
+      "On a fleet sum, unique_payers adds per-volume distinct payers and is not a fleet-wide distinct.",
+    );
+  }
+  if (input.walletCountsDisagree) {
+    parts.push("Included machines disagree on how many internal wallets are configured. This count is the answering machine.");
+  }
+  if (!input.externalComplete) {
+    parts.push(
+      "traffic.external is incomplete: at least one included machine did not publish a wallet split. Do not read external as the full fleet.",
+    );
+  }
+  return parts.join(" ");
+}
+
+export function emptyTrafficPayers(): TrafficPayers {
+  return { available: false, l7d: emptyWindowCounts(), l30d: emptyWindowCounts() };
+}
+
+export function cloneDetectorCounts(counts: SentinelDetectorCounts): SentinelDetectorCounts {
+  return {
+    status_change: { ...counts.status_change },
+    keyword: { ...counts.keyword },
+    text_diff: { ...counts.text_diff },
+    numeric_threshold: { ...counts.numeric_threshold },
+  };
+}
+
+export function emptyTrafficSentinelCounts(): TrafficSentinelCounts {
+  return {
+    active_watchers: 0,
+    checks_run: 0,
+    change_events: 0,
+    checks_run_unattributed: 0,
+    by_detector: emptySentinelDetectorCounts(),
+  };
+}
+
+export function cloneTrafficSlice(slice: TrafficSlice): TrafficSlice {
+  return {
+    sentinel: {
+      ...slice.sentinel,
+      by_detector: cloneDetectorCounts(slice.sentinel.by_detector),
+    },
+    payers: {
+      available: slice.payers.available,
+      l7d: {
+        verify: { ...slice.payers.l7d.verify },
+        confirm: { ...slice.payers.l7d.confirm },
+      },
+      l30d: {
+        verify: { ...slice.payers.l30d.verify },
+        confirm: { ...slice.payers.l30d.confirm },
+      },
+    },
+  };
+}
+
 export function statsNotes(
   unscoped: { l7d: number; l30d: number },
   volumeNote: string,
   subject: "volume" | "fleet" = "volume",
 ): string[] {
   const notes = [
+    INTERNAL_TEST_TRAFFIC_LABEL,
     "Payable Confirm intents: lead_submit (GA, $0.10) and listing_published ($0.10) on POST /v1/confirm; order_placed ($0.25) on POST /v1/confirm/order.",
     BAZAAR_NOTE,
     "paid_calls are confirm-route rows with that intent stored. Pre-intent-column confirm rows are store.confirm_unscoped_paid_calls and are not attributed to lead_submit.",
@@ -177,15 +302,171 @@ function buildStoreScope(unscoped: { l7d: number; l30d: number }): StatsStoreSco
   };
 }
 
-export function buildSentinelStats(): SentinelStats {
-  const watch = (() => {
-    try {
-      return querySentinelWatchStats();
-    } catch {
-      return emptySentinelWatchStats();
+function loadWatchStats(excludePayers: readonly string[] = []): SentinelWatchStats {
+  try {
+    return querySentinelWatchStats(excludePayers.length > 0 ? { excludePayers } : {});
+  } catch {
+    return emptySentinelWatchStats();
+  }
+}
+
+function trafficSentinelFromWatch(watch: SentinelWatchStats, oneShotChecks: number): TrafficSentinelCounts {
+  return {
+    active_watchers: watch.active_watchers,
+    checks_run: oneShotChecks + watch.checks_run_scheduled,
+    change_events: watch.change_events,
+    checks_run_unattributed: oneShotChecks,
+    by_detector: watch.by_detector,
+  };
+}
+
+function copyWindowCounts(window: WindowCounts): WindowCounts {
+  return {
+    verify: { ...window.verify },
+    confirm: { ...window.confirm },
+  };
+}
+
+function trafficPayersFromStore(windows: ReturnType<typeof queryRetentionWindowsFromStore>): TrafficPayers {
+  if (!windows) return emptyTrafficPayers();
+  return { available: true, l7d: copyWindowCounts(windows.l7d), l30d: copyWindowCounts(windows.l30d) };
+}
+
+function addRouteCounts(
+  left: WindowCounts["verify"],
+  right: WindowCounts["verify"],
+): WindowCounts["verify"] {
+  return {
+    calls: left.calls + right.calls,
+    unique_payers: left.unique_payers + right.unique_payers,
+  };
+}
+
+function addWindowCounts(left: WindowCounts, right: WindowCounts): WindowCounts {
+  return {
+    verify: addRouteCounts(left.verify, right.verify),
+    confirm: addRouteCounts(left.confirm, right.confirm),
+  };
+}
+
+function addTrafficPayers(left: TrafficPayers, right: TrafficPayers): TrafficPayers {
+  return {
+    available: left.available && right.available,
+    l7d: addWindowCounts(left.l7d, right.l7d),
+    l30d: addWindowCounts(left.l30d, right.l30d),
+  };
+}
+
+const TRAFFIC_DETECTORS = ["status_change", "keyword", "text_diff", "numeric_threshold"] as const;
+
+function addTrafficSentinel(
+  left: TrafficSentinelCounts,
+  right: TrafficSentinelCounts,
+  includeUnattributed: boolean,
+): TrafficSentinelCounts {
+  const by_detector = cloneDetectorCounts(left.by_detector);
+  for (const detector of TRAFFIC_DETECTORS) {
+    const extra = right.by_detector[detector];
+    by_detector[detector] = {
+      watchers: by_detector[detector].watchers + (extra?.watchers ?? 0),
+      change_events: by_detector[detector].change_events + (extra?.change_events ?? 0),
+    };
+  }
+  return {
+    active_watchers: left.active_watchers + right.active_watchers,
+    checks_run: left.checks_run + right.checks_run,
+    change_events: left.change_events + right.change_events,
+    checks_run_unattributed: includeUnattributed
+      ? left.checks_run_unattributed + right.checks_run_unattributed
+      : left.checks_run_unattributed,
+    by_detector,
+  };
+}
+
+/** Headline sentinel fields from a peer that predates the traffic split. */
+export function legacyTrafficSentinel(doc: StatsDocument): TrafficSentinelCounts {
+  return {
+    active_watchers: doc.sentinel.active_watchers,
+    checks_run: doc.sentinel.checks_run,
+    change_events: doc.sentinel.change_events,
+    checks_run_unattributed: 0,
+    by_detector: cloneDetectorCounts(doc.sentinel.by_detector),
+  };
+}
+
+export function publishedTraffic(doc: StatsDocument): TrafficHonesty | undefined {
+  const traffic = doc.traffic;
+  if (!traffic?.all?.sentinel || !traffic.external?.sentinel) return undefined;
+  if (!traffic.all.payers || !traffic.external.payers) return undefined;
+  if (traffic.label !== INTERNAL_TEST_TRAFFIC_LABEL) return undefined;
+  return traffic;
+}
+
+/**
+ * Sum per-volume wallet splits. A peer without `traffic` still adds its
+ * sentinel headlines to `all` (that is what the old document counted) and
+ * marks external incomplete. unique_payers stays a per-volume sum.
+ */
+export function mergeTrafficHonesty(
+  local: StatsDocument,
+  peers: readonly { included: boolean; doc?: StatsDocument }[],
+): TrafficHonesty {
+  const localTraffic = publishedTraffic(local);
+  let all = localTraffic
+    ? cloneTrafficSlice(localTraffic.all)
+    : { sentinel: legacyTrafficSentinel(local), payers: emptyTrafficPayers() };
+  let external = localTraffic
+    ? cloneTrafficSlice(localTraffic.external)
+    : { sentinel: emptyTrafficSentinelCounts(), payers: emptyTrafficPayers() };
+  let externalComplete = Boolean(localTraffic?.external_complete);
+  const walletCounts = new Set<number>();
+  if (localTraffic) walletCounts.add(localTraffic.internal_wallets_configured);
+
+  for (const peer of peers) {
+    if (!peer.included || !peer.doc) continue;
+    const traffic = publishedTraffic(peer.doc);
+    if (!traffic) {
+      externalComplete = false;
+      all = {
+        sentinel: addTrafficSentinel(all.sentinel, legacyTrafficSentinel(peer.doc), false),
+        payers: { ...all.payers, available: false },
+      };
+      external = { ...external, payers: { ...external.payers, available: false } };
+      continue;
     }
-  })();
-  const oneShot = countReceiptsSince("1970-01-01T00:00:00Z", "check").receipts;
+    if (!traffic.external_complete) externalComplete = false;
+    walletCounts.add(traffic.internal_wallets_configured);
+    all = {
+      sentinel: addTrafficSentinel(all.sentinel, traffic.all.sentinel, true),
+      payers: addTrafficPayers(all.payers, traffic.all.payers),
+    };
+    external = {
+      sentinel: addTrafficSentinel(external.sentinel, traffic.external.sentinel, true),
+      payers: addTrafficPayers(external.payers, traffic.external.payers),
+    };
+  }
+
+  const walletCount = localTraffic?.internal_wallets_configured ?? 0;
+  return {
+    includes_internal_test_traffic: true,
+    label: INTERNAL_TEST_TRAFFIC_LABEL,
+    note: trafficHonestyNote({
+      walletCount,
+      externalComplete,
+      fleet: true,
+      walletCountsDisagree: walletCounts.size > 1,
+    }),
+    internal_wallets_configured: walletCount,
+    external_complete: externalComplete,
+    all,
+    external,
+  };
+}
+
+export function buildSentinelStats(
+  watch = loadWatchStats(),
+  oneShotChecks = countReceiptsSince("1970-01-01T00:00:00Z", "check").receipts,
+): SentinelStats {
   return {
     payable: true,
     status: "payable",
@@ -195,10 +476,35 @@ export function buildSentinelStats(): SentinelStats {
       chain_topup_usd: CHAIN_TOPUP_PRICE_USD,
     },
     active_watchers: watch.active_watchers,
-    checks_run: oneShot + watch.checks_run_scheduled,
+    checks_run: oneShotChecks + watch.checks_run_scheduled,
     change_events: watch.change_events,
     by_detector: watch.by_detector,
     benches: loadSentinelBenches(),
+  };
+}
+
+export function buildTrafficHonesty(
+  watchAll: SentinelWatchStats,
+  watchExternal: SentinelWatchStats,
+  oneShotChecks: number,
+  payersAll: ReturnType<typeof queryRetentionWindowsFromStore>,
+  payersExternal: ReturnType<typeof queryRetentionWindowsFromStore>,
+  walletCount: number,
+): TrafficHonesty {
+  return {
+    includes_internal_test_traffic: true,
+    label: INTERNAL_TEST_TRAFFIC_LABEL,
+    note: trafficHonestyNote({ walletCount, externalComplete: true, fleet: false }),
+    internal_wallets_configured: walletCount,
+    external_complete: true,
+    all: {
+      sentinel: trafficSentinelFromWatch(watchAll, oneShotChecks),
+      payers: trafficPayersFromStore(payersAll),
+    },
+    external: {
+      sentinel: trafficSentinelFromWatch(watchExternal, oneShotChecks),
+      payers: trafficPayersFromStore(payersExternal),
+    },
   };
 }
 
@@ -214,10 +520,17 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
   const scoped30: ConfirmIntentCounts | undefined = confirmWindows?.l30d;
   const unscoped = { l7d: scoped7?.unscoped ?? 0, l30d: scoped30?.unscoped ?? 0 };
   const notes = statsNotes(unscoped, LOCAL_VOLUME_NOTE, "volume");
+  const wallets = internalWallets();
+  const watchAll = loadWatchStats();
+  const watchExternal = loadWatchStats(wallets);
+  const oneShotChecks = countReceiptsSince("1970-01-01T00:00:00Z", "check").receipts;
+  const payersAll = queryRetentionWindowsFromStore(now);
+  const payersExternal = wallets.length > 0 ? queryRetentionWindowsFromStore(now, wallets) : payersAll;
   return {
     ok: true,
     service: "livecheck",
     generated_at: now.toISOString().replace(/\.\d{3}Z$/, "Z"),
+    traffic: buildTrafficHonesty(watchAll, watchExternal, oneShotChecks, payersAll, payersExternal, wallets.length),
     intents: {
       lead_submit: {
         payable: true,
@@ -241,7 +554,7 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
         l30d: windowFromReceipts(order30, scoped30?.order_placed),
       },
     },
-    sentinel: buildSentinelStats(),
+    sentinel: buildSentinelStats(watchAll, oneShotChecks),
     benches: loadConfirmBenches(),
     store: buildStoreScope(unscoped),
     notes,
@@ -270,6 +583,30 @@ function statsMachineSummary(doc: StatsDocument): string {
       return machine.error ? `${id} (${escHtml(machine.error)})` : id;
     });
   return ` Included: ${included.join(", ") || "none"}. Failed: ${failed.join(", ") || "none"}.`;
+}
+
+function payerTable(doc: StatsDocument): string {
+  const all = doc.traffic.all.payers;
+  const external = doc.traffic.external.payers;
+  if (!all.available || !external.available) {
+    return `<h3>Payers</h3>
+  <p class="muted">Verify and confirm payer windows are not published for this response. A closed paid-call store is missing, not zero. Check and watch payers are not in this table.</p>`;
+  }
+  const row = (audience: string, windowLabel: string, counts: WindowCounts) =>
+    `<tr><td>${audience}</td><td>${windowLabel}</td><td>${counts.verify.calls}</td><td>${counts.verify.unique_payers}</td><td>${counts.confirm.calls}</td><td>${counts.confirm.unique_payers}</td></tr>`;
+  return `<h3>Payers</h3>
+  <p class="muted">Verify and confirm paid_calls only. All includes internal test traffic. External omits configured team wallets. Null payers stay in external calls and are not a unique payer. On a fleet sum, unique payers add per volume.</p>
+  <table>
+    <thead>
+      <tr><th>Audience</th><th>Window</th><th>Verify calls</th><th>Verify unique payers</th><th>Confirm calls</th><th>Confirm unique payers</th></tr>
+    </thead>
+    <tbody>
+      ${row("All (includes internal test traffic)", "L7d", all.l7d)}
+      ${row("External", "L7d", external.l7d)}
+      ${row("All (includes internal test traffic)", "L30d", all.l30d)}
+      ${row("External", "L30d", external.l30d)}
+    </tbody>
+  </table>`;
 }
 
 export function statsHtml(doc: StatsDocument): string {
@@ -302,10 +639,12 @@ export function statsHtml(doc: StatsDocument): string {
     .muted { color: #5c5346; max-width: 40rem; }
     code { font-size: 0.9em; }
     h2 { margin-top: 2rem; }
+    .honesty { border: 1px solid #8a6d1b; background: #f8e7c7; padding: 0.7rem 0.85rem; max-width: 42rem; }
   </style>
 </head>
 <body>
   <h1>Livecheck stats</h1>
+  <p class="honesty"><strong>${escHtml(doc.traffic.label)}</strong> ${escHtml(doc.traffic.note)}</p>
   <p>Generated ${doc.generated_at}. Payable Confirm intents: <code>lead_submit</code> (GA) and <code>listing_published</code> at $${lead.price_usd.toFixed(2)} USDC; <code>order_placed</code> at $${order.price_usd.toFixed(2)} USDC.</p>
   <p class="muted">Volume scope: ${doc.store.scope}${doc.store.fly_machine_id ? ` · serving machine <code>${doc.store.fly_machine_id}</code>` : ""}. Unscoped confirm paid_calls (no stored intent): L7d ${doc.store.confirm_unscoped_paid_calls.l7d} / L30d ${doc.store.confirm_unscoped_paid_calls.l30d}.${statsMachineSummary(doc)}</p>
   <table>
@@ -321,6 +660,7 @@ export function statsHtml(doc: StatsDocument): string {
       ${row("order_placed", "L30d", order.l30d)}
     </tbody>
   </table>
+  <p class="muted">Paid calls and receipts in this table include internal test traffic. Receipts have no payer, so they are not split. External confirm calls and unique payers are in the payer table below.</p>
   <h3>Confirm benches</h3>
   <table>
     <thead>
@@ -337,18 +677,36 @@ export function statsHtml(doc: StatsDocument): string {
   <p>Payable: <code>POST /v1/check</code> $${sentinel.prices.check_usd.toFixed(2)}, <code>POST /v1/watch</code> $${sentinel.prices.watch_usd.toFixed(2)}, <code>POST /v1/watch/{id}/chain/topup</code> $${sentinel.prices.chain_topup_usd.toFixed(2)}. Status: ${sentinel.status}. Unpaid 402 bazaar: check, watch, renew.</p>
   <table>
     <thead>
-      <tr><th>Active watchers</th><th>Checks run</th><th>Change events</th><th>False-positive rate</th><th>Median latency</th></tr>
+      <tr><th>Audience</th><th>Active watchers</th><th>Checks run</th><th>Change events</th></tr>
     </thead>
     <tbody>
       <tr>
-        <td>${sentinel.active_watchers}</td>
-        <td>${sentinel.checks_run}</td>
-        <td>${sentinel.change_events}</td>
+        <td>All (includes internal test traffic)</td>
+        <td>${doc.traffic.all.sentinel.active_watchers}</td>
+        <td>${doc.traffic.all.sentinel.checks_run}</td>
+        <td>${doc.traffic.all.sentinel.change_events}</td>
+      </tr>
+      <tr>
+        <td>External${doc.traffic.external_complete ? "" : " (incomplete — not the full fleet)"}</td>
+        <td>${doc.traffic.external.sentinel.active_watchers}</td>
+        <td>${doc.traffic.external.sentinel.checks_run}</td>
+        <td>${doc.traffic.external.sentinel.change_events}</td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="muted">Both check totals include ${doc.traffic.all.sentinel.checks_run_unattributed} one-shot check receipts with no stored payer. Those receipts stay in external. False-positive rate and latency below are CI benches, not live usage.</p>
+  <table>
+    <thead>
+      <tr><th>False-positive rate</th><th>Median latency</th></tr>
+    </thead>
+    <tbody>
+      <tr>
         <td>status_change ${fires(fp.status_change, fp.n_checks)} (rate ${fp.status_change}); text_diff ${fires(fp.text_diff, fp.n_checks)} (rate ${fp.text_diff})</td>
         <td>${sentinel.benches.median_latency_ms} ms (p95 ${sentinel.benches.latency_p95_ms} ms)</td>
       </tr>
     </tbody>
   </table>
+  <p class="muted">Detector rows below are all wallets (includes internal test traffic). External detector counts are <code>traffic.external.sentinel.by_detector</code>.</p>
   <table>
     <thead>
       <tr><th>Detector</th><th>Watchers</th><th>Change events</th></tr>
@@ -360,6 +718,7 @@ export function statsHtml(doc: StatsDocument): string {
       ${detectorRow("numeric_threshold", sentinel.by_detector.numeric_threshold)}
     </tbody>
   </table>
+  ${payerTable(doc)}
   <h3>Sentinel benches</h3>
   <table>
     <thead>

@@ -25,6 +25,8 @@ OpenAPI · skill: `npx skills add moyecj-snap/livecheck` · Bazaar search `livec
 ## Live stats panel (wire to `/stats`)
 Label clearly **live from API** — never invent numbers.
 
+**Honesty:** the hero of this panel must say **includes internal test traffic**. Headline `sentinel.active_watchers`, `sentinel.checks_run`, `sentinel.change_events`, and confirm intent windows are all wallets. Render `traffic.external` beside them (known team wallets omitted). Do not present the all-wallet headline as organic usage. One-shot check receipts have no payer and stay in both check totals.
+
 **Confirm (per intent)** — from `intents.*.l7d` / `l30d`:
 - paid_calls, receipts, by_verdict (confirmed / failed / unknown)
 - status badge: `ga` / payable

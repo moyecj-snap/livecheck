@@ -390,25 +390,34 @@ export function listPaidCallRows(db: DatabaseSync, sinceIso?: string): PaidCallR
   return rows;
 }
 
-export function queryRetentionWindows(db: DatabaseSync, now = new Date()): RetentionWindows {
+export function queryRetentionWindows(
+  db: DatabaseSync,
+  now = new Date(),
+  excludePayers: readonly string[] = [],
+): RetentionWindows {
   return {
-    l7d: queryWindow(db, isoCutoff(now, 7)),
-    l30d: queryWindow(db, isoCutoff(now, 30)),
+    l7d: queryWindow(db, isoCutoff(now, 7), excludePayers),
+    l30d: queryWindow(db, isoCutoff(now, 30), excludePayers),
   };
 }
 
-function queryWindow(db: DatabaseSync, sinceIso: string): WindowCounts {
+function queryWindow(db: DatabaseSync, sinceIso: string, excludePayers: readonly string[] = []): WindowCounts {
   const out = emptyWindowCounts();
+  const exclude = [...new Set(excludePayers.map((payer) => payer.toLowerCase()))];
+  const payerClause =
+    exclude.length > 0
+      ? ` AND (payer IS NULL OR lower(payer) NOT IN (${exclude.map(() => "?").join(", ")}))`
+      : "";
   const rows = db
     .prepare(
       `SELECT route,
               COUNT(*) AS calls,
               COUNT(DISTINCT payer) AS unique_payers
        FROM paid_calls
-       WHERE ts >= ?
+       WHERE ts >= ?${payerClause}
        GROUP BY route`,
     )
-    .all(sinceIso) as Array<{ route: string; calls: number | bigint; unique_payers: number | bigint }>;
+    .all(sinceIso, ...exclude) as Array<{ route: string; calls: number | bigint; unique_payers: number | bigint }>;
   for (const row of rows) {
     if (row.route !== "verify" && row.route !== "confirm") continue;
     out[row.route] = {
@@ -419,9 +428,12 @@ function queryWindow(db: DatabaseSync, sinceIso: string): WindowCounts {
   return out;
 }
 
-export function queryRetentionWindowsFromStore(now = new Date()): RetentionWindows | undefined {
+export function queryRetentionWindowsFromStore(
+  now = new Date(),
+  excludePayers: readonly string[] = [],
+): RetentionWindows | undefined {
   if (!state?.ok) return undefined;
-  return queryRetentionWindows(state.db, now);
+  return queryRetentionWindows(state.db, now, excludePayers);
 }
 
 export function queryConfirmIntentCounts(db: DatabaseSync, sinceIso: string): ConfirmIntentCounts {

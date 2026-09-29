@@ -540,6 +540,8 @@ Prices on that object stay `$0.02` / `$2.50` / `$0.50`. `status` is `payable`. U
 
 The outage bench gate `outage_no_content_change` (2xx → 5xx → 2xx, zero content `change` events; 5xx is unreachable rather than closed) is **not** in `sentinel.benches`. Do not treat `GET /stats` as republished for that gate. The hardcoded fallback stays main `590627c` until a separate honesty republish after the gate is green.
 
+Headline `sentinel` counts and confirm windows **include internal test traffic**. `notes[0]` and the HTML banner say so. `traffic.external` omits the built-in team wallets in `src/internal-wallets.ts` plus any `LIVECHECK_INTERNAL_WALLETS` addresses (`off` disables the split). `traffic.all` matches the headlines. One-shot `chk_` receipts have no payer, so they stay in both `checks_run` totals. Verify/confirm `traffic.*.payers` is calls and distinct payers; on a fleet sum, `unique_payers` adds per volume and is not a fleet-wide distinct. A peer that predates `traffic` still contributes its sentinel headlines to the fleet sum, and `traffic.external_complete` is false.
+
 ### Signed receipts
 
 Set `CONFIRM_RECEIPT_PRIVATE_KEY` to an Ed25519 **PKCS#8 PEM** (recommended) or a **32-byte seed** as hex (64 chars) or base64. Generate PEM:
@@ -938,7 +940,7 @@ No new secrets. `PAID_CALL_DB_PATH`, `WATCH_DB_PATH`, and `RECEIPT_DB_PATH` are 
 ## How agents find this
 
 - **Wallet-agents:** [CDP x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) / Agentic.market. They search a free catalog of paid APIs, then pay $0.01 USDC on Base to `POST /v1/verify`.
-- **Machine Payments / agents:** `GET /llms.txt` is free `text/plain` discovery (agent-first listing status: verify, check, watch, confirm). It does not add APIs or prices. The installable skill package is `github.com/moyecj-snap/livecheck-skills`. Copy for agentic.market is in [`docs/agentcash-listing-blurb.md`](docs/agentcash-listing-blurb.md). Cursor Marketplace is not live.
+- **Machine Payments / agents:** `GET /llms.txt` is free `text/plain` discovery (agent-first listing status: verify, check, watch, watch/renew, confirm). It does not add APIs or prices. The installable skill package is `github.com/moyecj-snap/livecheck-skills`. Copy for agentic.market, and the re-crawl URLs if that index still shows four endpoints, are in [`docs/agentcash-listing-blurb.md`](docs/agentcash-listing-blurb.md). Cursor Marketplace is not live.
 - **Humans in Cursor:** Cursor Marketplace (later). Needs a public GitHub repository for submit. Do not create one here. Until then, point Cursor at the stdio MCP in this repo (`verify`, `check`, `confirm`, `watch`; `verify_listing` remains). The MCP reports 402; paying is x402.
 
 ## Honest limits

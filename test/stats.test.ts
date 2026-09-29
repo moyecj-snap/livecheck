@@ -22,11 +22,13 @@ import {
   benchesFromSentinelReport,
   resetSentinelBenches,
 } from "../src/sentinel-stats-benches.js";
-import { hashUrl } from "../src/paid-call.js";
+import { buildPaidCallEvent, hashUrl } from "../src/paid-call.js";
+import { DEFAULT_INTERNAL_WALLETS, internalWallets } from "../src/internal-wallets.js";
 import {
   closePaidCallStore,
   initPaidCallStore,
   insertPaidCallRow,
+  retainPaidCall,
 } from "../src/paid-call-store.js";
 import {
   clearConfirmReceiptMemory,
@@ -241,10 +243,20 @@ describe("GET /stats", () => {
     const res = await fetch(`${origin}/stats?format=json`);
     assert.equal(res.status, 200);
     assert.match(res.headers.get("content-type") ?? "", /application\/json/);
-    const body = (await res.json()) as { ok?: boolean; service?: string; sentinel?: { payable?: boolean } };
+    const body = (await res.json()) as {
+      ok?: boolean;
+      service?: string;
+      notes?: string[];
+      sentinel?: { payable?: boolean };
+      traffic?: { label?: string; includes_internal_test_traffic?: boolean; external_complete?: boolean };
+    };
     assert.equal(body.ok, true);
     assert.equal(body.service, "livecheck");
     assert.equal(body.sentinel?.payable, true);
+    assert.equal(body.notes?.[0], "Includes internal test traffic.");
+    assert.equal(body.traffic?.includes_internal_test_traffic, true);
+    assert.equal(body.traffic?.label, "Includes internal test traffic.");
+    assert.equal(body.traffic?.external_complete, true);
   });
 
   it("returns HTML Sentinel section when Accept: text/html", async () => {
@@ -259,6 +271,8 @@ describe("GET /stats", () => {
     assert.match(html, /0\/100/);
     assert.match(html, /not a live dispute rate/);
     assert.match(html, /<h2>Sentinel<\/h2>/);
+    assert.match(html, /Includes internal test traffic/);
+    assert.match(html, /All \(includes internal test traffic\)/);
     assert.match(html, /Active watchers/);
     assert.match(html, /False-positive rate/);
     assert.match(html, /Median latency/);
@@ -364,6 +378,47 @@ describe("Sentinel /stats from SQLite", () => {
     assert.equal(doc.sentinel.benches.median_latency_ms, 162500);
     assert.equal(doc.sentinel.benches.latency_p95_ms, 315250);
   });
+
+  it("omits a known team wallet from external watchers and checks", () => {
+    insertWatcher(
+      stubWatcher({
+        id: "wtc_01STATSINTERNAL000000004",
+        payer: "0xE4A34FB0F642778F612793acCdF1FAD8AE358eE8",
+        target_url: "https://example.com/jobs/4",
+        target: { type: "url", url: "https://example.com/jobs/4", render: "never", selector: null },
+        condition: { detector: "status_change", params: {} },
+        condition_key: "internal-d".padEnd(64, "0"),
+        checks_remaining: 2870,
+      }),
+    );
+    insertWatchEvent({
+      id: "evt_01STATSINTERNALCHANGE0001",
+      watcher_id: "wtc_01STATSINTERNAL000000004",
+      kind: "change",
+      payload_json: "{}",
+      created_at: "2026-09-10T18:03:00Z",
+      delivered_at: null,
+      delivery_attempts: 0,
+      next_attempt_at: null,
+      last_error: null,
+    });
+    const doc = buildStatsDocument();
+    assert.equal(doc.sentinel.active_watchers, 3);
+    assert.equal(doc.sentinel.checks_run, 2 + 80 + 10);
+    assert.equal(doc.sentinel.change_events, 2);
+    assert.equal(doc.traffic.all.sentinel.active_watchers, doc.sentinel.active_watchers);
+    assert.equal(doc.traffic.all.sentinel.checks_run, doc.sentinel.checks_run);
+    assert.equal(doc.traffic.all.sentinel.change_events, doc.sentinel.change_events);
+    assert.equal(doc.traffic.external.sentinel.active_watchers, 2);
+    assert.equal(doc.traffic.external.sentinel.checks_run, 2 + 80);
+    assert.equal(doc.traffic.external.sentinel.change_events, 1);
+    assert.equal(doc.traffic.external.sentinel.by_detector.status_change.watchers, 1);
+    assert.equal(doc.traffic.external.sentinel.by_detector.status_change.change_events, 1);
+    assert.equal(doc.traffic.all.sentinel.by_detector.status_change.watchers, 2);
+    assert.equal(doc.traffic.all.sentinel.by_detector.status_change.change_events, 2);
+    assert.equal(doc.traffic.internal_wallets_configured, DEFAULT_INTERNAL_WALLETS.length);
+    assert.equal(doc.traffic.external_complete, true);
+  });
 });
 
 describe("OpenAPI Confirm v1.0 spine", () => {
@@ -429,6 +484,7 @@ describe("OpenAPI Confirm v1.0 spine", () => {
     assert.match(doc.paths?.["/stats"]?.get?.description ?? "", /Sentinel/);
     assert.match(doc.paths?.["/stats"]?.get?.description ?? "", /sentinel-report\.json/);
     assert.match(doc.paths?.["/stats"]?.get?.description ?? "", /false_confirmed_rate/);
+    assert.match(doc.paths?.["/stats"]?.get?.description ?? "", /internal test traffic/);
     assert.match(doc.paths?.["/stats"]?.get?.description ?? "", /listing-published-report\.json/);
     assert.doesNotMatch(doc.paths?.["/stats"]?.get?.description ?? "", /structured null/);
     assert.ok(doc.paths?.["/stats"]?.get?.tags?.includes("Sentinel"));
@@ -582,5 +638,76 @@ describe("GET /stats Confirm paid_calls vs receipts honesty", () => {
     assert.equal(doc.benches.lead_submit.false_confirmed_rate, 0);
     assert.equal(doc.benches.lead_submit.n, 77);
     assert.notEqual(doc.benches.listing_published.n, doc.intents.listing_published.l7d.paid_calls);
+  });
+});
+
+describe("internal wallet list and external payers", () => {
+  afterEach(() => {
+    closePaidCallStore();
+  });
+
+  it("keeps the built-in list and adds valid env addresses", () => {
+    assert.deepEqual(internalWallets({}), [...DEFAULT_INTERNAL_WALLETS]);
+    assert.deepEqual(internalWallets({ LIVECHECK_INTERNAL_WALLETS: "off" }), []);
+    const extra = "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd";
+    const list = internalWallets({
+      LIVECHECK_INTERNAL_WALLETS: `not-a-wallet, 0x${extra.slice(2).toUpperCase()}`,
+    });
+    assert.equal(list.length, DEFAULT_INTERNAL_WALLETS.length + 1);
+    assert.equal(list.includes(extra), true);
+    assert.equal(list.includes(DEFAULT_INTERNAL_WALLETS[3]), true);
+  });
+
+  it("drops team wallets from external verify and confirm payers", () => {
+    initPaidCallStore(":memory:");
+    const now = new Date("2026-09-12T12:00:00Z");
+    const external = "0x9999999999999999999999999999999999999999";
+    assert.equal(
+      retainPaidCall(
+        buildPaidCallEvent(
+          { route: "verify", host: "example.com", url_hash: hashUrl("https://example.com/a"), status: "live" },
+          { payer: DEFAULT_INTERNAL_WALLETS[0] },
+          new Date("2026-09-10T12:00:00Z"),
+        ),
+      ),
+      true,
+    );
+    assert.equal(
+      retainPaidCall(
+        buildPaidCallEvent(
+          { route: "verify", host: "example.com", url_hash: hashUrl("https://example.com/b"), status: "live" },
+          { payer: external },
+          new Date("2026-09-10T12:00:00Z"),
+        ),
+      ),
+      true,
+    );
+    assert.equal(
+      retainPaidCall(
+        buildPaidCallEvent(
+          {
+            route: "confirm",
+            host: "example.com",
+            url_hash: hashUrl("https://example.com/c"),
+            intent: "lead_submit",
+            verdict: "unknown",
+          },
+          {},
+          new Date("2026-09-10T12:00:00Z"),
+        ),
+      ),
+      true,
+    );
+    const doc = buildStatsDocument(now);
+    assert.equal(doc.traffic.all.payers.available, true);
+    assert.equal(doc.traffic.all.payers.l7d.verify.calls, 2);
+    assert.equal(doc.traffic.all.payers.l7d.verify.unique_payers, 2);
+    assert.equal(doc.traffic.all.payers.l7d.confirm.calls, 1);
+    assert.equal(doc.traffic.all.payers.l7d.confirm.unique_payers, 0);
+    assert.equal(doc.traffic.external.payers.l7d.verify.calls, 1);
+    assert.equal(doc.traffic.external.payers.l7d.verify.unique_payers, 1);
+    assert.equal(doc.traffic.external.payers.l7d.confirm.calls, 1);
+    assert.equal(doc.traffic.external.payers.l7d.confirm.unique_payers, 0);
+    assert.equal(doc.intents.lead_submit.l7d.paid_calls, 1);
   });
 });
