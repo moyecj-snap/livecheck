@@ -46,6 +46,7 @@ import {
   sealWatchResult,
   sealWatchRenewResult,
 } from "./receipt.js";
+import { buildPublicStatsDocument, statsScopeIsLocal } from "./stats-fleet.js";
 import { buildStatsDocument, statsHtml } from "./stats.js";
 import { VerifyError, parseTargetUrl, verifyUrl } from "./verify.js";
 import { WatchError, createWatch, deleteWatch, listWatchEventsForOwner, readWatch, renewWatch, topupWatchChain, watchErrorBody } from "./watch.js";
@@ -76,8 +77,10 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
     return new Response(LLMS_TXT, { status: 200, headers: llmsTxtHeaders() });
   });
 
-  app.get("/stats", (c) => {
-    const doc = buildStatsDocument();
+  app.get("/stats", async (c) => {
+    const doc = statsScopeIsLocal(c.req.header("x-livecheck-stats-scope"), c.req.query("scope"))
+      ? buildStatsDocument()
+      : await buildPublicStatsDocument();
     const format = c.req.query("format");
     const accept = c.req.header("accept") ?? "";
     const wantsHtml =

@@ -95,7 +95,8 @@ export class WatchError extends Error {
 export type ParsedWatchRequest = {
   target: CheckTarget;
   condition: CheckCondition;
-  callback: { url: string; secret: string; deliver: WatchCallbackDeliver };
+  /** Null when the caller omits callback and will pull GET /v1/watch/{id}/events. */
+  callback: { url: string; secret: string; deliver: WatchCallbackDeliver } | null;
   interval_s: number;
   label: string | null;
   context: Record<string, unknown> | null;
@@ -172,6 +173,7 @@ export function parseWatchCondition(raw: unknown): CheckCondition {
 }
 
 function parseCallback(raw: unknown): ParsedWatchRequest["callback"] {
+  if (raw === undefined || raw === null) return null;
   if (!isRecord(raw)) {
     throw new WatchError("invalid_callback", "callback must be { url, secret, deliver? }.", 400);
   }
@@ -420,8 +422,10 @@ export function publicWatcherView(row: WatcherRow): WatchPublicView {
     on_change: onChangeView(row.run, row.chain_confirm),
     chain_budget_usd: row.chain_budget_usd,
     chain_balance_usd: usdFromAtomic(row.chain_balance_atomic),
-    callback: { url: row.callback_url, deliver: row.callback_deliver },
   };
+  if (row.callback_url) {
+    view.callback = { url: row.callback_url, deliver: row.callback_deliver };
+  }
   if (row.label) view.label = row.label;
   return view;
 }
@@ -495,9 +499,9 @@ export async function createWatch(
     next_check_at: nextCheckAt,
     baseline,
     last_observation: observation,
-    callback_url: parsed.callback.url,
-    callback_secret: parsed.callback.secret,
-    callback_deliver: parsed.callback.deliver,
+    callback_url: parsed.callback?.url ?? "",
+    callback_secret: parsed.callback?.secret ?? "",
+    callback_deliver: parsed.callback?.deliver ?? "on_change",
     run: parsed.run,
     chain_confirm: parsed.chain_confirm,
     chain_budget_usd: parsed.chain_budget_usd,

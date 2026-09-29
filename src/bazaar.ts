@@ -558,7 +558,8 @@ export const WATCH_INPUT_SCHEMA = {
     },
     callback: {
       type: "object",
-      description: "url + secret. deliver=on_change or every_check. HMAC-SHA256 over the raw JSON body (X-Sentinel-Signature).",
+      description:
+        "Optional. Omit to pull GET /v1/watch/{id}/events with the owner token. When set: url + secret, deliver=on_change or every_check. HMAC-SHA256 over the raw JSON body (X-Sentinel-Signature).",
     },
     interval_s: {
       type: "number",
@@ -577,7 +578,7 @@ export const WATCH_INPUT_SCHEMA = {
         "run=none (default), verify, or confirm. confirm default intent=lead_submit ($0.10 internal). Optional intent/url/claim.",
     },
   },
-  required: ["target", "condition", "callback"],
+  required: ["target", "condition"],
 } as const;
 
 export const CHAIN_TOPUP_EXAMPLE = {
@@ -705,10 +706,11 @@ export function watchRenewBazaarExtensions(): Record<string, unknown> {
 }
 
 /**
- * Rich watch discovery declaration. Not attached to the POST /v1/watch 402 or
- * the facilitator verify/settle envelope until settle is proven — the fat
- * schema breaks purl→CDP the same way Confirm did before b7ab919.
- * OpenAPI still uses WATCH_OUTPUT_SCHEMA.
+ * Watch discovery declaration on the POST /v1/watch 402 and on facilitator
+ * verify/settle backfill. Input schema, output schema, and example — same
+ * pattern as verify/check/renew. OpenAPI uses WATCH_OUTPUT_SCHEMA too.
+ * resource.description on the 402 stays the short ASCII payment string;
+ * CDP rejects descriptions longer than 500 characters.
  */
 export function watchBazaarExtensions(): Record<string, unknown> {
   return withPostJsonMethod(

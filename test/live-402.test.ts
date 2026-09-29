@@ -165,11 +165,24 @@ describe("live @x402/hono 402 (decoded payment-required)", () => {
     assert.equal(accepts.length, 1);
     assert.equal(accepts[0]?.amount, "2500000");
     assert.deepEqual(accepts[0]?.extra, { name: "USD Coin", version: "2" });
-    const extensions = decoded.extensions as { bazaar?: unknown } | undefined;
-    assert.equal(extensions?.bazaar, undefined);
+    const extensions = decoded.extensions as {
+      bazaar?: {
+        info?: {
+          input?: { method?: string; bodyType?: string; body?: { target?: unknown; callback?: unknown } };
+          output?: { example?: { price_usd?: number } };
+        };
+      };
+    };
+    assert.ok(extensions?.bazaar, "expected extensions.bazaar in decoded payment-required");
+    assert.equal(extensions.bazaar.info?.input?.method, "POST");
+    assert.equal(extensions.bazaar.info?.input?.bodyType, "json");
+    assert.ok(extensions.bazaar.info?.input?.body?.target);
+    assert.ok(extensions.bazaar.info?.input?.body?.callback);
+    assert.equal(extensions.bazaar.info?.output?.example?.price_usd, 2.5);
+    assertInfoInputMatchesSchema(extensions.bazaar, "live watch 402");
     const header = res.headers.get("payment-required");
     assert.ok(header);
-    assert.ok(header.length < 4000, `live watch payment-required still fat: ${header.length} b64`);
+    assert.ok((resource.description ?? "").length <= 300);
   });
 
   it("logs a paid watch attempt before facilitator handling and the reject reason", async () => {
@@ -434,7 +447,7 @@ describe("advertisePaymentRequired on a production-shaped 402", () => {
       const resource = decoded.resource as { url: string; description: string };
       assert.equal(resource.url, "https://livecheck.fly.dev/v1/watch");
       assert.equal(resource.description, WATCH_PAYMENT_DESCRIPTION);
-      assert.equal((decoded.extensions as { bazaar?: unknown }).bazaar, undefined);
+      assert.ok((decoded.extensions as { bazaar?: unknown }).bazaar);
     } finally {
       if (previousPublic === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
       else process.env.LIVECHECK_PUBLIC_URL = previousPublic;

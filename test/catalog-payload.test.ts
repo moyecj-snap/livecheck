@@ -97,7 +97,8 @@ describe("fillCatalogPaymentPayload", () => {
       assert.equal(resourceFilled, true);
       assert.equal(paymentPayloadResourceUrl(payload), "https://livecheck.fly.dev/v1/watch");
       assert.notEqual(paymentPayloadResourceUrl(payload), advertised);
-      assert.equal(paymentPayloadHasBazaar(payload), false);
+      assert.equal(paymentPayloadHasBazaar(payload), true);
+      assertInfoInputMatchesSchema(payload.extensions?.bazaar as BazaarExt, "watch http upgrade");
     } finally {
       if (previous === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
       else process.env.LIVECHECK_PUBLIC_URL = previous;
@@ -168,22 +169,48 @@ describe("fillCatalogPaymentPayload", () => {
     }
   });
 
-  it("strips an echoed watch bazaar instead of forwarding it to CDP", () => {
+  it("forwards an echoed watch bazaar to CDP", () => {
     const previous = process.env.LIVECHECK_PUBLIC_URL;
     process.env.LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev";
     try {
+      const echoed = { info: { input: { bodyType: "json" } } };
       const { payload, bazaarFilled } = fillCatalogPaymentPayload({
         resource: {
           url: "https://livecheck.fly.dev/v1/watch",
           description: "Livecheck Sentinel watch",
           mimeType: "application/json",
         },
-        extensions: { bazaar: { info: { input: { bodyType: "json" } } }, other: true },
+        extensions: { bazaar: echoed, other: true },
         payload: { signature: "do-not-log" },
       });
       assert.equal(bazaarFilled, false);
-      assert.equal(paymentPayloadHasBazaar(payload), false);
+      assert.equal(paymentPayloadHasBazaar(payload), true);
+      assert.equal((payload.extensions as { bazaar?: unknown }).bazaar, echoed);
       assert.equal((payload.extensions as { other?: boolean }).other, true);
+      assert.equal((payload.payload as { signature?: string }).signature, "do-not-log");
+    } finally {
+      if (previous === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
+      else process.env.LIVECHECK_PUBLIC_URL = previous;
+    }
+  });
+
+  it("backfills watch bazaar when the client omits it", () => {
+    const previous = process.env.LIVECHECK_PUBLIC_URL;
+    process.env.LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev";
+    try {
+      const { payload, bazaarFilled, descriptionClamped } = fillCatalogPaymentPayload({
+        resource: {
+          url: "https://livecheck.fly.dev/v1/watch",
+          description: WATCH_PAYMENT_DESCRIPTION,
+          mimeType: "application/json",
+        },
+        payload: { signature: "do-not-log" },
+      });
+      assert.equal(bazaarFilled, true);
+      assert.equal(descriptionClamped, false);
+      assert.equal((payload.resource as { description?: string }).description, WATCH_PAYMENT_DESCRIPTION);
+      assert.ok(paymentPayloadHasBazaar(payload));
+      assertInfoInputMatchesSchema(payload.extensions?.bazaar as BazaarExt, "watch settle backfill");
       assert.equal((payload.payload as { signature?: string }).signature, "do-not-log");
     } finally {
       if (previous === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
@@ -218,7 +245,7 @@ describe("fillCatalogPaymentPayload", () => {
     }
   });
 
-  it("clamps a 743-char watch description and does not invent extensions", () => {
+  it("clamps a 743-char watch description and backfills bazaar without touching the authorization", () => {
     const previous = process.env.LIVECHECK_PUBLIC_URL;
     process.env.LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev";
     try {
@@ -235,7 +262,8 @@ describe("fillCatalogPaymentPayload", () => {
       const { payload, descriptionClamped } = fillCatalogPaymentPayload(inbound);
       assert.equal(descriptionClamped, true);
       assert.equal((payload.resource as { description?: string }).description, WATCH_PAYMENT_DESCRIPTION);
-      assert.equal(Object.prototype.hasOwnProperty.call(payload, "extensions"), false);
+      assert.ok(paymentPayloadHasBazaar(payload));
+      assertInfoInputMatchesSchema(payload.extensions?.bazaar as BazaarExt, "clamped watch settle");
       assert.equal((payload.payload as { signature?: string }).signature, "do-not-log");
       assert.equal((payload.accepted as { amount?: string }).amount, "2500000");
     } finally {

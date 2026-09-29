@@ -92,7 +92,7 @@ describe("watch parsers", () => {
       on_change: { run: "verify" },
     });
     assert.equal(parsed.interval_s, 900);
-    assert.equal(parsed.callback.deliver, "on_change");
+    assert.equal(parsed.callback?.deliver, "on_change");
     assert.equal(parsed.chain_budget_usd, 5);
     assert.equal(parsed.run, "verify");
     const every = parseWatchRequest({
@@ -100,7 +100,12 @@ describe("watch parsers", () => {
       condition: { detector: "status_change", params: {} },
       callback: { url: "https://example.com/hook", secret: "whsec_x", deliver: "every_check" },
     });
-    assert.equal(every.callback.deliver, "every_check");
+    assert.equal(every.callback?.deliver, "every_check");
+    const pull = parseWatchRequest({
+      target: { type: "url", url: "https://example.com/item", render: "never" },
+      condition: { detector: "status_change", params: {} },
+    });
+    assert.equal(pull.callback, null);
     assert.equal(checksRemainingForInterval(900), 2880);
     assert.equal(checksRemainingForInterval(300), 2880);
   });
@@ -209,11 +214,26 @@ describe("POST /v1/watch HTTP", () => {
     assert.doesNotMatch(WATCH_PAYMENT_DESCRIPTION, /[^\x00-\x7F]/);
     assert.ok(WATCH_PAYMENT_DESCRIPTION.length <= 300);
     assert.ok((resource.description ?? "").length <= 300);
-    const extensions = decoded.extensions as { bazaar?: unknown } | undefined;
-    assert.equal(extensions?.bazaar, undefined);
-    // Before the hotfix this header was 7500 b64 (verify was 3608) because of
-    // the fat watch bazaar. It must stay well under that.
-    assert.ok(header.length < 4000, `watch payment-required still fat: ${header.length} b64`);
+    const extensions = decoded.extensions as {
+      bazaar?: {
+        info?: {
+          input?: { method?: string; bodyType?: string; body?: { target?: unknown; condition?: unknown; callback?: unknown } };
+          output?: { example?: { price_usd?: number; id?: string } };
+        };
+      };
+    };
+    assert.ok(extensions?.bazaar, "watch 402 must include extensions.bazaar");
+    assert.equal(extensions.bazaar.info?.input?.method, "POST");
+    assert.equal(extensions.bazaar.info?.input?.bodyType, "json");
+    assert.ok(extensions.bazaar.info?.input?.body?.target);
+    assert.ok(extensions.bazaar.info?.input?.body?.condition);
+    assert.ok(extensions.bazaar.info?.input?.body?.callback);
+    assert.equal(extensions.bazaar.info?.output?.example?.price_usd, WATCH_PRICE_USD);
+    assert.match(extensions.bazaar.info?.output?.example?.id ?? "", /^wtc_/);
+    // CDP rejects resource.description over 500 chars. The 402 copy stays short
+    // even with the discovery extension attached.
+    assert.ok((resource.description ?? "").length <= 300);
+    assert.ok(header.length > 1000, `watch payment-required missing bazaar payload: ${header.length} b64`);
   });
 
   it("verify, check, and confirm unpaid 402s stay single-price (regression)", async () => {
@@ -280,6 +300,32 @@ describe("POST /v1/watch HTTP", () => {
     assert.equal(body.run, "none");
     assert.equal(body.receipt.hash.length, 64);
     assert.ok(body.receipt.verify_url.includes(body.id));
+  });
+
+  it("omits callback and still returns a watcher the owner can read", async () => {
+    const created = await fetch(`${origin}/v1/watch`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
+      body: JSON.stringify({
+        target: { type: "url", url: `${origin}/fixtures/greenhouse-closed-job`, render: "never" },
+        condition: { detector: "status_change", params: {} },
+      }),
+    });
+    assert.equal(created.status, 201);
+    const body = (await created.json()) as { id: string; owner_token: string };
+    assert.match(body.id, /^wtc_/);
+    const viewRes = await fetch(`${origin}/v1/watch/${body.id}`, {
+      headers: { "x-livecheck-owner-token": body.owner_token },
+    });
+    assert.equal(viewRes.status, 200);
+    const view = (await viewRes.json()) as { callback?: { url?: string } };
+    assert.equal(view.callback, undefined);
+    const events = await fetch(`${origin}/v1/watch/${body.id}/events`, {
+      headers: { "x-livecheck-owner-token": body.owner_token },
+    });
+    assert.equal(events.status, 200);
+    const page = (await events.json()) as { events?: unknown[] };
+    assert.ok(Array.isArray(page.events));
   });
 
   it("GET/DELETE require a good owner token", async () => {

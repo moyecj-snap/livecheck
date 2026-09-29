@@ -12,11 +12,17 @@ import {
   OPENAPI_ORDER_CONFIRM_DESCRIPTION,
   OPENAPI_ORDER_CONFIRM_INTENT_DESCRIPTION,
   OPENAPI_ORDER_CONFIRM_SUMMARY,
+  OPENAPI_INFO_DESCRIPTION,
+  OPENAPI_INFO_GUIDANCE,
+  OPENAPI_INFO_TAGS,
+  OPENAPI_INFO_TITLE,
+  OPENAPI_VERIFY_DESCRIPTION,
+  OPENAPI_VERIFY_SUMMARY,
+  OPENAPI_VERIFY_TAGS,
   OPENAPI_WATCH_DESCRIPTION,
   OPENAPI_WATCH_RENEW_DESCRIPTION,
   OPENAPI_WATCH_RENEW_SUMMARY,
   OPENAPI_WATCH_SUMMARY,
-  VERIFY_DESCRIPTION,
 } from "./config.js";
 import { publicOrigin } from "./public-url.js";
 
@@ -66,19 +72,21 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
   return {
     openapi: "3.1.0",
     info: {
-      title: "Livecheck",
+      title: OPENAPI_INFO_TITLE,
       version: OPENAPI_VERSION,
-      description: VERIFY_DESCRIPTION,
-      "x-guidance": VERIFY_DESCRIPTION,
+      description: OPENAPI_INFO_DESCRIPTION,
+      "x-guidance": OPENAPI_INFO_GUIDANCE,
+      "x-tags": [...OPENAPI_INFO_TAGS],
     },
     servers: [{ url: origin }],
     paths: {
       "/v1/verify": {
         post: {
           operationId: "verifyListing",
-          summary: "Verify a specific job, product, or eBay item URL",
-          description: VERIFY_DESCRIPTION,
-          tags: ["Verify"],
+          summary: OPENAPI_VERIFY_SUMMARY,
+          description: OPENAPI_VERIFY_DESCRIPTION,
+          "x-guidance": OPENAPI_VERIFY_DESCRIPTION,
+          tags: [...OPENAPI_VERIFY_TAGS],
           "x-payment-info": {
             price: {
               mode: "fixed",
@@ -248,7 +256,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
                     callback: {
                       type: "object",
                       description:
-                        "HTTPS callback. deliver=on_change or every_check. HMAC-SHA256 over the raw JSON body; header X-Sentinel-Signature: t=<unix>,v1=<hex>.",
+                        "Optional. Omit it and pull GET /v1/watch/{id}/events with the owner token. When set: HTTPS url, secret, deliver=on_change or every_check. HMAC-SHA256 over the raw JSON body; header X-Sentinel-Signature: t=<unix>,v1=<hex>.",
                       properties: {
                         url: { type: "string", format: "uri" },
                         secret: { type: "string" },
@@ -292,7 +300,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
                       },
                     },
                   },
-                  required: ["target", "condition", "callback"],
+                  required: ["target", "condition"],
                 },
               },
             },
@@ -702,7 +710,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
           operationId: "livecheckStats",
           summary: "Confirm and Sentinel counts",
           description:
-            "Free. Confirm: lead_submit, listing_published, and order_placed rolling counts. benches publishes per-intent CI/local honesty false_confirmed_rate + N from bench/lead-submit-report.json, bench/listing-published-report.json, and bench/order-placed-report.json (hardcoded fallback if a report is missing). Not a live dispute rate — do not infer FC from paid_calls. paid_calls are intent-scoped confirm-route rows on this machine's volume (store.scope=this_machine_volume); unscoped pre-intent rows are not attributed to lead_submit. Sentinel: active_watchers, checks_run, change_events, by_detector from SQLite; sentinel.benches publishes CI/local gate numbers from bench/sentinel-report.json (status_change/text_diff FP, latency p50/p95, HMAC, chain Verify) with a hardcoded fallback from main 590627c. Not a live dispute rate or 1000-watcher soak. Not a payable route.",
+            "Free. Confirm: lead_submit, listing_published, and order_placed rolling counts. benches publishes per-intent CI/local honesty false_confirmed_rate + N from bench/lead-submit-report.json, bench/listing-published-report.json, and bench/order-placed-report.json (hardcoded fallback if a report is missing). Not a live dispute rate — do not infer FC from paid_calls. paid_calls are intent-scoped confirm-route rows and are not invented from receipts. On Fly, store.scope=fleet_volumes sums started machines' livecheck_data volumes (writes are partitioned, not replicated); local dev stays store.scope=this_machine_volume. Unscoped pre-intent rows are not attributed to lead_submit. Sentinel active_watchers, checks_run, change_events, and by_detector use the same sum. sentinel.benches publishes CI/local gate numbers from bench/sentinel-report.json (status_change/text_diff FP, latency p50/p95, HMAC, chain Verify) with a hardcoded fallback from main 590627c and is not summed. Not a live dispute rate or 1000-watcher soak. Not a payable route. Unpaid POST /v1/check, /v1/watch, and /v1/watch/renew 402s include extensions.bazaar.",
           tags: ["Confirm", "Sentinel"],
           responses: {
             "200": { description: "JSON stats (HTML when Accept: text/html)" },

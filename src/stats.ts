@@ -52,10 +52,20 @@ export type SentinelStats = {
   benches: SentinelBenches;
 };
 
+export type StatsVolumeScope = "this_machine_volume" | "fleet_volumes" | "partial_fleet_volumes";
+
+export type StatsMachineContribution = {
+  fly_machine_id: string | null;
+  included: boolean;
+  error?: string;
+};
+
 export type StatsStoreScope = {
-  scope: "this_machine_volume";
+  scope: StatsVolumeScope;
   fly_app_name: string | null;
   fly_machine_id: string | null;
+  /** Present when this response summed or attempted to sum other machines. */
+  machines?: StatsMachineContribution[];
   paid_calls: ReturnType<typeof paidCallStoreStatus>;
   receipts: ReturnType<typeof receiptStoreStatus>;
   confirm_unscoped_paid_calls: { l7d: number; l30d: number };
@@ -116,8 +126,44 @@ export function statsMachineId(): string | null {
   return alloc || null;
 }
 
-const VOLUME_NOTE =
-  "Counts are this Fly machine's livecheck_data volume only. Two machines each with their own volume are not summed. CoS: fly machines list -a livecheck, then fly ssh console -a livecheck --machine <id> -C \"npm run paid-call:cos\".";
+export const LOCAL_VOLUME_NOTE =
+  "Counts are this Fly machine's livecheck_data volume only. On Fly, public GET /stats sums started machines (store.scope=fleet_volumes); this document is one volume. CoS: fly machines list -a livecheck, then fly ssh console -a livecheck --machine <id> -C \"npm run paid-call:cos\".";
+
+export const FLEET_VOLUME_NOTE =
+  "Counts sum each started Fly machine's livecheck_data volume (store.scope=fleet_volumes). Writes are partitioned across volumes, not replicated, so the sum is the fleet total and is not a second copy of one machine. CI benches are not summed. Stopped machines are omitted. Per-machine CoS: fly machines list -a livecheck, then fly ssh console -a livecheck --machine <id> -C \"npm run paid-call:cos\". scope=local reads only the machine that answered.";
+
+export const PARTIAL_FLEET_VOLUME_NOTE =
+  "Fleet sum is incomplete: at least one started machine did not answer. Included machines are store.machines. Missing machines are omitted, not treated as zero. Do not read active_watchers, checks_run, change_events, or paid_calls as the full fleet until scope is fleet_volumes.";
+
+const BAZAAR_NOTE =
+  "Unpaid POST /v1/check, POST /v1/watch, and POST /v1/watch/renew include extensions.bazaar (input schema, output schema, and an example). Bazaar copy on POST /v1/confirm stays lead_submit-primary. order_placed is a separate fixed-price resource. This is 402 discovery metadata, not a claim that a CDP catalog index is complete.";
+
+export function unscopedPaidCallsNote(
+  unscoped: { l7d: number; l30d: number },
+  subject: "volume" | "fleet",
+): string {
+  const who = subject === "fleet" ? "These volumes have" : "This volume has";
+  return `${who} ${unscoped.l7d} L7d / ${unscoped.l30d} L30d confirm-route paid_calls with no stored intent. Signed receipts cannot be reconstructed from paid_calls alone (no cfm_ id, evidence, or signature). Backfill intent from logs: npm run receipt:backfill.`;
+}
+
+export function statsNotes(
+  unscoped: { l7d: number; l30d: number },
+  volumeNote: string,
+  subject: "volume" | "fleet" = "volume",
+): string[] {
+  const notes = [
+    "Payable Confirm intents: lead_submit (GA, $0.10) and listing_published ($0.10) on POST /v1/confirm; order_placed ($0.25) on POST /v1/confirm/order.",
+    BAZAAR_NOTE,
+    "paid_calls are confirm-route rows with that intent stored. Pre-intent-column confirm rows are store.confirm_unscoped_paid_calls and are not attributed to lead_submit.",
+    "Sentinel checks_run is one-shot POST /v1/check receipts plus scheduled watcher observations (term quota minus checks_remaining). by_detector is SQLite watchers + change events. sentinel.benches are CI/local gate results from bench/sentinel-report.json (fallback: main 590627c), not a live dispute rate.",
+    "Confirm benches.false_confirmed_rate is per-intent CI/local honesty (lead_submit / listing_published / order_placed) from bench/*-report.json, not a live dispute rate. Do not infer FC from paid_calls.",
+    volumeNote,
+  ];
+  if (unscoped.l7d > 0 || unscoped.l30d > 0) {
+    notes.push(unscopedPaidCallsNote(unscoped, subject));
+  }
+  return notes;
+}
 
 function buildStoreScope(unscoped: { l7d: number; l30d: number }): StatsStoreScope {
   return {
@@ -127,7 +173,7 @@ function buildStoreScope(unscoped: { l7d: number; l30d: number }): StatsStoreSco
     paid_calls: paidCallStoreStatus(),
     receipts: receiptStoreStatus(),
     confirm_unscoped_paid_calls: unscoped,
-    note: VOLUME_NOTE,
+    note: LOCAL_VOLUME_NOTE,
   };
 }
 
@@ -167,19 +213,7 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
   const scoped7: ConfirmIntentCounts | undefined = confirmWindows?.l7d;
   const scoped30: ConfirmIntentCounts | undefined = confirmWindows?.l30d;
   const unscoped = { l7d: scoped7?.unscoped ?? 0, l30d: scoped30?.unscoped ?? 0 };
-  const notes = [
-    "Payable Confirm intents: lead_submit (GA, $0.10) and listing_published ($0.10) on POST /v1/confirm; order_placed ($0.25) on POST /v1/confirm/order.",
-    "Bazaar 402 copy stays lead_submit-primary on /v1/confirm. order_placed is a separate fixed-price resource. Sentinel Bazaar GA is held.",
-    "paid_calls are confirm-route rows with that intent stored. Pre-intent-column confirm rows are store.confirm_unscoped_paid_calls and are not attributed to lead_submit.",
-    "Sentinel checks_run is one-shot POST /v1/check receipts plus scheduled watcher observations (term quota minus checks_remaining). by_detector is SQLite watchers + change events. sentinel.benches are CI/local gate results from bench/sentinel-report.json (fallback: main 590627c), not a live dispute rate.",
-    "Confirm benches.false_confirmed_rate is per-intent CI/local honesty (lead_submit / listing_published / order_placed) from bench/*-report.json, not a live dispute rate. Do not infer FC from paid_calls.",
-    VOLUME_NOTE,
-  ];
-  if (unscoped.l7d > 0 || unscoped.l30d > 0) {
-    notes.push(
-      `This volume has ${unscoped.l7d} L7d / ${unscoped.l30d} L30d confirm-route paid_calls with no stored intent. Signed receipts cannot be reconstructed from paid_calls alone (no cfm_ id, evidence, or signature). Backfill intent from logs: npm run receipt:backfill.`,
-    );
-  }
+  const notes = statsNotes(unscoped, LOCAL_VOLUME_NOTE, "volume");
   return {
     ok: true,
     service: "livecheck",
@@ -212,6 +246,30 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
     store: buildStoreScope(unscoped),
     notes,
   };
+}
+
+function escHtml(value: string): string {
+  return value.replace(/[&<>"]/g, (ch) => {
+    if (ch === "&") return "&amp;";
+    if (ch === "<") return "&lt;";
+    if (ch === ">") return "&gt;";
+    return "&quot;";
+  });
+}
+
+function statsMachineSummary(doc: StatsDocument): string {
+  const machines = doc.store.machines;
+  if (!machines?.length) return "";
+  const included = machines
+    .filter((machine) => machine.included)
+    .map((machine) => escHtml(machine.fly_machine_id ?? "unknown"));
+  const failed = machines
+    .filter((machine) => !machine.included)
+    .map((machine) => {
+      const id = escHtml(machine.fly_machine_id ?? "unknown");
+      return machine.error ? `${id} (${escHtml(machine.error)})` : id;
+    });
+  return ` Included: ${included.join(", ") || "none"}. Failed: ${failed.join(", ") || "none"}.`;
 }
 
 export function statsHtml(doc: StatsDocument): string {
@@ -249,7 +307,7 @@ export function statsHtml(doc: StatsDocument): string {
 <body>
   <h1>Livecheck stats</h1>
   <p>Generated ${doc.generated_at}. Payable Confirm intents: <code>lead_submit</code> (GA) and <code>listing_published</code> at $${lead.price_usd.toFixed(2)} USDC; <code>order_placed</code> at $${order.price_usd.toFixed(2)} USDC.</p>
-  <p class="muted">Volume scope: ${doc.store.scope}${doc.store.fly_machine_id ? ` · machine <code>${doc.store.fly_machine_id}</code>` : ""}. Unscoped confirm paid_calls (no stored intent): L7d ${doc.store.confirm_unscoped_paid_calls.l7d} / L30d ${doc.store.confirm_unscoped_paid_calls.l30d}.</p>
+  <p class="muted">Volume scope: ${doc.store.scope}${doc.store.fly_machine_id ? ` · serving machine <code>${doc.store.fly_machine_id}</code>` : ""}. Unscoped confirm paid_calls (no stored intent): L7d ${doc.store.confirm_unscoped_paid_calls.l7d} / L30d ${doc.store.confirm_unscoped_paid_calls.l30d}.${statsMachineSummary(doc)}</p>
   <table>
     <thead>
       <tr><th>Intent</th><th>Window</th><th>Paid calls</th><th>Receipts</th><th>confirmed</th><th>failed</th><th>unknown</th></tr>
@@ -276,7 +334,7 @@ export function statsHtml(doc: StatsDocument): string {
   </table>
   <p class="muted">${confirmBenches.note} Report: <code>${confirmBenches.report}</code>.</p>
   <h2>Sentinel</h2>
-  <p>Payable: <code>POST /v1/check</code> $${sentinel.prices.check_usd.toFixed(2)}, <code>POST /v1/watch</code> $${sentinel.prices.watch_usd.toFixed(2)}, <code>POST /v1/watch/{id}/chain/topup</code> $${sentinel.prices.chain_topup_usd.toFixed(2)}. Status: ${sentinel.status} (Bazaar GA held).</p>
+  <p>Payable: <code>POST /v1/check</code> $${sentinel.prices.check_usd.toFixed(2)}, <code>POST /v1/watch</code> $${sentinel.prices.watch_usd.toFixed(2)}, <code>POST /v1/watch/{id}/chain/topup</code> $${sentinel.prices.chain_topup_usd.toFixed(2)}. Status: ${sentinel.status}. Unpaid 402 bazaar: check, watch, renew.</p>
   <table>
     <thead>
       <tr><th>Active watchers</th><th>Checks run</th><th>Change events</th><th>False-positive rate</th><th>Median latency</th></tr>

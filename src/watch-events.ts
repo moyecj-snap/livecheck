@@ -106,13 +106,16 @@ export function emitWatchEvent(input: {
     host: input.host,
   });
   const payload: WatchCallbackPayload = { ...unsigned, receipt };
+  // No callback: mark delivered so listDueCallbackEvents (delivered_at IS NULL) never POSTs.
+  // next_attempt_at stays createdAt; the store treats a null next_attempt as "due now".
+  const pullOnly = !input.watcher.callback_url;
   insertWatchEvent({
     id,
     watcher_id: input.watcher.id,
     kind: input.type,
     payload_json: JSON.stringify(payload),
     created_at: createdAt,
-    delivered_at: null,
+    delivered_at: pullOnly ? createdAt : null,
     delivery_attempts: 0,
     next_attempt_at: createdAt,
     last_error: null,

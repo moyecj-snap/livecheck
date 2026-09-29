@@ -146,6 +146,18 @@ export async function deliverWatchEvent(
     return { ok: false, http_status: null, error: "watcher_missing" };
   }
 
+  if (!watcher.callback_url) {
+    const at = isoTs(now);
+    updateWatchEventDelivery({
+      id: event.id,
+      delivery_attempts: event.delivery_attempts,
+      delivered_at: at,
+      next_attempt_at: null,
+      last_error: null,
+    });
+    return { ok: true, http_status: null, error: null };
+  }
+
   const result = await postSignedCallback(
     {
       url: watcher.callback_url,
