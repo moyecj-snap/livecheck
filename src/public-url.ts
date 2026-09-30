@@ -7,7 +7,7 @@ function stripTrailingSlash(value: string): string {
 /** Strip a paid Livecheck path so MCP can keep LIVECHECK_URL=/v1/verify. */
 export function originOnly(value: string): string {
   return stripTrailingSlash(value).replace(
-    /\/v1\/(verify|check|watch(\/renew|\/[^/]+\/chain\/topup)?|confirm(\/order)?)$/i,
+    /\/v1\/(verify(\/(job|listing))?|check|watch(\/renew|\/[^/]+\/chain\/topup)?|confirm(\/order)?)$/i,
     "",
   );
 }
@@ -66,6 +66,14 @@ export function publicVerifyUrl(requestUrl?: string, host?: string): string {
   return `${publicOrigin(requestUrl, host)}/v1/verify`;
 }
 
+export function publicVerifyJobUrl(requestUrl?: string, host?: string): string {
+  return `${publicOrigin(requestUrl, host)}/v1/verify/job`;
+}
+
+export function publicVerifyListingUrl(requestUrl?: string, host?: string): string {
+  return `${publicOrigin(requestUrl, host)}/v1/verify/listing`;
+}
+
 export function publicConfirmUrl(requestUrl?: string, host?: string): string {
   return `${publicOrigin(requestUrl, host)}/v1/confirm`;
 }
@@ -111,6 +119,8 @@ export function publicWatchChainTopupUrl(requestUrl?: string, host?: string, wat
 
 export type PaidResourceKind =
   | "verify"
+  | "verify_job"
+  | "verify_listing"
   | "confirm"
   | "confirm_order"
   | "check"
@@ -138,6 +148,18 @@ export function isConfirmRequestPath(requestUrl?: string): boolean {
   const pathname = pathnameOf(requestUrl);
   if (pathname) return pathname.endsWith("/v1/confirm");
   return Boolean(requestUrl && /\/v1\/confirm\/?(\?|$)/i.test(requestUrl));
+}
+
+export function isVerifyJobRequestPath(requestUrl?: string): boolean {
+  const pathname = pathnameOf(requestUrl);
+  if (pathname) return pathname.endsWith("/v1/verify/job");
+  return Boolean(requestUrl && /\/v1\/verify\/job\/?(\?|$)/i.test(requestUrl));
+}
+
+export function isVerifyListingRequestPath(requestUrl?: string): boolean {
+  const pathname = pathnameOf(requestUrl);
+  if (pathname) return pathname.endsWith("/v1/verify/listing");
+  return Boolean(requestUrl && /\/v1\/verify\/listing\/?(\?|$)/i.test(requestUrl));
 }
 
 export function isCheckRequestPath(requestUrl?: string): boolean {
@@ -172,6 +194,8 @@ export function paidResourceKind(requestUrl?: string): PaidResourceKind {
   if (isWatchRenewRequestPath(requestUrl)) return "watch_renew";
   if (isWatchRequestPath(requestUrl)) return "watch";
   if (isCheckRequestPath(requestUrl)) return "check";
+  if (isVerifyJobRequestPath(requestUrl)) return "verify_job";
+  if (isVerifyListingRequestPath(requestUrl)) return "verify_listing";
   return "verify";
 }
 
@@ -179,6 +203,8 @@ export function isPaidPostPath(path: string): boolean {
   const normalized = path.replace(/\/+$/, "") || "/";
   return (
     normalized === "/v1/verify" ||
+    normalized === "/v1/verify/job" ||
+    normalized === "/v1/verify/listing" ||
     normalized === "/v1/check" ||
     normalized === "/v1/watch" ||
     normalized === "/v1/watch/renew" ||

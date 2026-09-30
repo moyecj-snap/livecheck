@@ -17,6 +17,24 @@ import { assertInfoInputMatchesSchema, type BazaarExt } from "./bazaar-schema.js
 const advertised = "https://livecheck.fly.dev/v1/verify";
 
 describe("fillCatalogPaymentPayload", () => {
+  it("keeps verify/job and verify/listing resource URLs instead of rewriting them to /v1/verify", () => {
+    const previous = process.env.LIVECHECK_PUBLIC_URL;
+    process.env.LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev";
+    try {
+      for (const path of ["/v1/verify/job", "/v1/verify/listing"]) {
+        const { payload, resourceFilled } = fillCatalogPaymentPayload({
+          resource: { url: `http://livecheck.fly.dev${path}`, description: "old" },
+        });
+        assert.equal(resourceFilled, true);
+        assert.equal(paymentPayloadResourceUrl(payload), `https://livecheck.fly.dev${path}`);
+        assert.equal((payload.resource as { description?: string }).description, VERIFY_DESCRIPTION);
+      }
+    } finally {
+      if (previous === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
+      else process.env.LIVECHECK_PUBLIC_URL = previous;
+    }
+  });
+
   it("backfills missing resource and bazaar onto the settle envelope", () => {
     const previous = process.env.LIVECHECK_PUBLIC_URL;
     process.env.LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev";

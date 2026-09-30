@@ -11,6 +11,8 @@
 Livecheck is not a search engine. Bring one specific item URL.
 
 ## Endpoints
+- POST /v1/verify/job ($0.01) — is this specific job posting still open? body {"url"} → {status: live|closed|unknown, title, signals[], confidence}
+- POST /v1/verify/listing ($0.01) — is this product listing still available or sold out? body {"url"} → same response
 - POST /v1/verify ($0.01) — body {"url": "..."} → {status: live|closed|unknown, title, signals[], http_status, canonical_url, checked_at, confidence}
 - POST /v1/check ($0.02) — one-shot condition on a page: status_change, keyword, text_diff, numeric_threshold (e.g. price below X)
 - POST /v1/watch ($2.50) — 30-day watcher; signed HMAC webhook when the condition fires (HTTPS callback optional; omit it and pull GET /v1/watch/{id}/events with the owner token)

@@ -166,26 +166,9 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
     return c.html(fixture.body ?? "", fixture.status as 200 | 404);
   });
 
-  app.post("/v1/verify", async (c) => {
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "Request body must be JSON." }, 400);
-    }
-    const url = typeof body === "object" && body !== null ? (body as { url?: unknown }).url : undefined;
-    try {
-      const target = parseTargetUrl(url);
-      const verdict = await verifyUrl(target);
-      recordSuccessfulPaidCheck({ route: "verify", url: target, status: verdict.status });
-      return c.json(withWatchHint(verdict));
-    } catch (error) {
-      if (error instanceof VerifyError) {
-        return c.json({ error: error.message }, error.status as 400 | 502 | 504);
-      }
-      throw error;
-    }
-  });
+  app.post("/v1/verify", handlePaidVerify);
+  app.post("/v1/verify/job", handlePaidVerify);
+  app.post("/v1/verify/listing", handlePaidVerify);
 
   app.post("/v1/confirm", (c) => handlePaidConfirm(c, parseConfirmRouteRequest));
   app.post("/v1/confirm/order", (c) => handlePaidConfirm(c, parseOrderConfirmRequest));
@@ -198,6 +181,27 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
   app.delete("/v1/watch/:id", handleDeleteWatch);
 
   return app;
+}
+
+async function handlePaidVerify(c: Context) {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Request body must be JSON." }, 400);
+  }
+  const url = typeof body === "object" && body !== null ? (body as { url?: unknown }).url : undefined;
+  try {
+    const target = parseTargetUrl(url);
+    const verdict = await verifyUrl(target);
+    recordSuccessfulPaidCheck({ route: "verify", url: target, status: verdict.status });
+    return c.json(withWatchHint(verdict));
+  } catch (error) {
+    if (error instanceof VerifyError) {
+      return c.json({ error: error.message }, error.status as 400 | 502 | 504);
+    }
+    throw error;
+  }
 }
 
 async function handlePaidCheck(c: Context) {

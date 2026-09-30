@@ -17,6 +17,12 @@ import {
   OPENAPI_INFO_TAGS,
   OPENAPI_INFO_TITLE,
   OPENAPI_VERIFY_DESCRIPTION,
+  OPENAPI_VERIFY_JOB_DESCRIPTION,
+  OPENAPI_VERIFY_JOB_SUMMARY,
+  OPENAPI_VERIFY_JOB_TAGS,
+  OPENAPI_VERIFY_LISTING_DESCRIPTION,
+  OPENAPI_VERIFY_LISTING_SUMMARY,
+  OPENAPI_VERIFY_LISTING_TAGS,
   OPENAPI_VERIFY_SUMMARY,
   OPENAPI_VERIFY_TAGS,
   VERIFY_DESCRIPTION,
@@ -116,7 +122,23 @@ function assertLlmsTxt(res: Response, body: string) {
   assert.equal(body, LLMS_TXT);
   assert.match(body, /Live status of a specific product page/);
   assert.match(body, /Livecheck is not a search engine/);
+  const endpointLines = body
+    .split("## Endpoints\n")[1]
+    ?.split("## How to act on Verify")[0]
+    ?.split("\n")
+    .filter((line) => line.startsWith("- "));
+  assert.ok(endpointLines && endpointLines.length >= 3, "expected endpoint lines");
+  assert.equal(
+    endpointLines[0],
+    '- POST /v1/verify/job ($0.01) — is this specific job posting still open? body {"url"} → {status: live|closed|unknown, title, signals[], confidence}',
+  );
+  assert.equal(
+    endpointLines[1],
+    '- POST /v1/verify/listing ($0.01) — is this product listing still available or sold out? body {"url"} → same response',
+  );
+  assert.match(endpointLines[2] ?? "", /^- POST \/v1\/verify \(\$0\.01\)/);
   assert.match(body, /POST \/v1\/verify \(\$0\.01\)/);
+  assert.doesNotMatch(body, /\/v1\/judge/);
   assert.match(body, /POST \/v1\/check \(\$0\.02\)/);
   assert.match(body, /POST \/v1\/watch \(\$2\.50\)/);
   assert.match(body, /POST \/v1\/watch\/renew \(\$2\.50\)/);
@@ -180,6 +202,24 @@ describe("discovery documents (mock gate)", () => {
     assert.deepEqual(op.tags, [...OPENAPI_VERIFY_TAGS]);
     assert.notEqual(op.description, VERIFY_DESCRIPTION);
     assert.ok((op.description ?? "").length > 500, "route copy is catalog text, not the 402 description");
+    const paths = doc.paths as Record<string, { post?: typeof op; get?: unknown }>;
+    assert.equal(paths["/v1/judge"], undefined, "GET /v1/judge stays a code stub and is not in OpenAPI");
+    const job = paths["/v1/verify/job"]?.post;
+    assert.ok(job, "expected POST /v1/verify/job");
+    assert.equal((job as { operationId?: string }).operationId, "verifyJob");
+    assert.equal(job.summary, OPENAPI_VERIFY_JOB_SUMMARY);
+    assert.equal(job.description, OPENAPI_VERIFY_JOB_DESCRIPTION);
+    assert.equal(job["x-guidance"], OPENAPI_VERIFY_JOB_DESCRIPTION);
+    assert.deepEqual(job.tags, [...OPENAPI_VERIFY_JOB_TAGS]);
+    assert.equal(job["x-payment-info"]?.price?.amount, "0.01");
+    const listing = paths["/v1/verify/listing"]?.post;
+    assert.ok(listing, "expected POST /v1/verify/listing");
+    assert.equal((listing as { operationId?: string }).operationId, "verifyProductListing");
+    assert.equal(listing.summary, OPENAPI_VERIFY_LISTING_SUMMARY);
+    assert.equal(listing.description, OPENAPI_VERIFY_LISTING_DESCRIPTION);
+    assert.equal(listing["x-guidance"], OPENAPI_VERIFY_LISTING_DESCRIPTION);
+    assert.deepEqual(listing.tags, [...OPENAPI_VERIFY_LISTING_TAGS]);
+    assert.equal(listing["x-payment-info"]?.price?.amount, "0.01");
     assert.equal(op["x-payment-info"]?.price?.mode, "fixed");
     assert.equal(op["x-payment-info"]?.price?.currency, "USD");
     assert.equal(op["x-payment-info"]?.price?.amount, "0.01");
@@ -245,24 +285,20 @@ describe("discovery documents (mock gate)", () => {
     );
     assert.ok(PAID_DISCOVERY_ROUTES.some((r) => r.path === "/v1/watch/{id}/chain/topup"));
     const paid = PAID_DISCOVERY_ROUTES;
-    const paths = doc.paths as Record<
-      string,
-      {
-        post?: {
-          "x-payment-info"?: {
-            price?: { mode?: string; currency?: string; amount?: string };
-            intent_prices?: unknown;
-          };
-        };
-      }
-    >;
     for (const route of paid) {
-      const op = paths[route.path]?.post;
-      assert.ok(op, `expected POST ${route.path}`);
-      assert.equal(op["x-payment-info"]?.price?.mode, "fixed", `${route.path} must be fixed`);
-      assert.equal(op["x-payment-info"]?.price?.currency, "USD");
-      assert.equal(op["x-payment-info"]?.price?.amount, route.amount);
-      assert.equal(op["x-payment-info"]?.intent_prices, undefined, `${route.path} must have one price, no intent_prices`);
+      const routeOp = paths[route.path]?.post as
+        | {
+            "x-payment-info"?: {
+              price?: { mode?: string; currency?: string; amount?: string };
+              intent_prices?: unknown;
+            };
+          }
+        | undefined;
+      assert.ok(routeOp, `expected POST ${route.path}`);
+      assert.equal(routeOp["x-payment-info"]?.price?.mode, "fixed", `${route.path} must be fixed`);
+      assert.equal(routeOp["x-payment-info"]?.price?.currency, "USD");
+      assert.equal(routeOp["x-payment-info"]?.price?.amount, route.amount);
+      assert.equal(routeOp["x-payment-info"]?.intent_prices, undefined, `${route.path} must have one price, no intent_prices`);
     }
     const stats = paths["/stats"] as { get?: { description?: string; tags?: string[] } } | undefined;
     assert.match(stats?.get?.description ?? "", /Sentinel/);
@@ -278,6 +314,8 @@ describe("discovery documents (mock gate)", () => {
     assert.equal(body.version, 1);
     assert.deepEqual(body.resources, [
       "https://livecheck.fly.dev/v1/verify",
+      "https://livecheck.fly.dev/v1/verify/job",
+      "https://livecheck.fly.dev/v1/verify/listing",
       "https://livecheck.fly.dev/v1/check",
       "https://livecheck.fly.dev/v1/watch",
       "https://livecheck.fly.dev/v1/watch/renew",
@@ -288,7 +326,16 @@ describe("discovery documents (mock gate)", () => {
     assert.equal(typeof body.resources[0], "string");
     assert.deepEqual(
       WELL_KNOWN_X402_ROUTES.map((r) => r.path),
-      ["/v1/verify", "/v1/check", "/v1/watch", "/v1/watch/renew", "/v1/confirm", "/v1/confirm/order"],
+      [
+        "/v1/verify",
+        "/v1/verify/job",
+        "/v1/verify/listing",
+        "/v1/check",
+        "/v1/watch",
+        "/v1/watch/renew",
+        "/v1/confirm",
+        "/v1/confirm/order",
+      ],
     );
     for (const url of body.resources as string[]) {
       assert.equal(url.includes("{"), false, `crawler resource must not be templated: ${url}`);
@@ -363,5 +410,24 @@ describe("discovery documents (live @x402/hono gate)", () => {
     assertLlmsTxt(llms, await llms.text());
     const verify = await fetch(`${origin}/v1/verify`, { method: "POST" });
     assert.equal(verify.status, 402);
+    process.env.LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev";
+    for (const path of ["/v1/verify/job", "/v1/verify/listing"] as const) {
+      const unpaid = await fetch(`${origin}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "not-json",
+      });
+      assert.equal(unpaid.status, 402, `${path} must 402 before body validation`);
+      const header = unpaid.headers.get("payment-required");
+      assert.ok(header, `${path} payment-required`);
+      const decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8")) as {
+        accepts?: Array<{ amount?: string }>;
+        resource?: { url?: string; description?: string };
+      };
+      assert.equal(decoded.accepts?.length, 1);
+      assert.equal(decoded.accepts?.[0]?.amount, "10000");
+      assert.equal(decoded.resource?.url, `https://livecheck.fly.dev${path}`);
+      assert.equal(decoded.resource?.description, VERIFY_DESCRIPTION);
+    }
   });
 });

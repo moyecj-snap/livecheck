@@ -186,6 +186,18 @@ export const OPENAPI_VERIFY_SUMMARY = "Is this listing, product, or job posting 
 export const OPENAPI_VERIFY_DESCRIPTION =
   'POST {"url"} for one specific product page, marketplace listing (eBay, Shopify, Etsy, Poshmark, Mercari), or job posting (Greenhouse, Lever, Workday, Ashby, company careers pages). Livecheck fetches the page at call time and returns status live, closed, or unknown, with title, evidence signals (e.g. in stock, sold out, ended, apply form present, 404), HTTP status, canonical URL, and confidence. Use it before recommending, buying, applying, or scraping, and to clean stale URLs out of search results or datasets. Search engines and job boards are snapshots; this reads the page now. Not a search engine: bring the URL. Reads HTML only (no JavaScript); unknown means the page couldn\'t be read reliably. Availability only, not legitimacy or fraud risk. Fixed $0.01 USDC on Base.';
 export const OPENAPI_VERIFY_TAGS = ["listing-status", "product-availability", "job-postings"] as const;
+/** OpenAPI POST /v1/verify/job. Same $0.01 handler as /v1/verify. Craig Sept 30 brief, word for word. */
+export const OPENAPI_VERIFY_JOB_SUMMARY =
+  "Is this job posting still open? Check one specific job URL before applying ($0.01)";
+export const OPENAPI_VERIFY_JOB_DESCRIPTION =
+  'POST {"url"} for one specific job posting page. Livecheck fetches the posting at call time and returns open or closed status as live, closed, or unknown, with the job title and evidence signals. Works on company careers pages and applicant tracking systems such as Greenhouse, Lever, Workday, Ashby, SmartRecruiters, and iCIMS. Detects closed postings from 404 and 410 responses, redirects back to the job board, empty ATS listings, and closure language such as "position filled", "no longer accepting applications", and "this job has expired". Use it before tailoring a resume, before submitting an application, and to remove stale postings from job search results or scraped job lists. Not a job search: bring the posting URL. Reads HTML only; unknown means the page could not be read reliably (login wall, bot challenge, JavaScript-only). Fixed $0.01 USDC on Base.';
+export const OPENAPI_VERIFY_JOB_TAGS = ["job-postings", "job-status", "listing-status"] as const;
+/** OpenAPI POST /v1/verify/listing. Same $0.01 handler as /v1/verify. Craig Sept 30 brief, word for word. */
+export const OPENAPI_VERIFY_LISTING_SUMMARY =
+  "Is this product listing still available or sold out? Check one eBay, Shopify, or product page URL ($0.01)";
+export const OPENAPI_VERIFY_LISTING_DESCRIPTION =
+  'POST {"url"} for one specific product page or marketplace listing. Livecheck fetches the page at call time and returns live, closed, or unknown with the title and evidence signals such as in-stock, sold-out, and eBay listing ended. Works on eBay item pages, Shopify product pages, and standard HTML product pages. Use it before recommending a product, before adding to cart or buying, and to remove sold-out or deleted items from shopping search results, price comparisons, and scraped product lists. Search engines and shopping indexes are snapshots; this reads the page now. Not a product search: bring the item URL. Reads HTML only; unknown means the page could not be read reliably. Availability only, not legitimacy or fraud risk. Fixed $0.01 USDC on Base.';
+export const OPENAPI_VERIFY_LISTING_TAGS = ["product-availability", "listing-status", "ecommerce"] as const;
 /**
  * ASCII-only 402 / health description for POST /v1/verify.
  * Keep this short. OPENAPI_VERIFY_DESCRIPTION is the catalog copy and is longer than CDP's 500-character resource.description cap.

@@ -31,6 +31,8 @@ import {
   publicCheckUrl,
   publicConfirmOrderUrl,
   publicConfirmUrl,
+  publicVerifyJobUrl,
+  publicVerifyListingUrl,
   publicVerifyUrl,
   publicWatchChainTopupUrl,
   publicWatchRenewUrl,
@@ -215,6 +217,18 @@ function advertisedResource(kind: ReturnType<typeof paidResourceKind>, requestUr
     return {
       url: publicWatchChainTopupUrl(requestUrl, host),
       description: CHAIN_TOPUP_PAYMENT_DESCRIPTION,
+    };
+  }
+  if (kind === "verify_job") {
+    return {
+      url: publicVerifyJobUrl(requestUrl, host),
+      description: VERIFY_DESCRIPTION,
+    };
+  }
+  if (kind === "verify_listing") {
+    return {
+      url: publicVerifyListingUrl(requestUrl, host),
+      description: VERIFY_DESCRIPTION,
     };
   }
   return {

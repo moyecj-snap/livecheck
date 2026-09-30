@@ -20,6 +20,8 @@ function withoutPublicUrl(fn: () => void) {
 describe("public verify URL", () => {
   it("strips paid paths so MCP can keep LIVECHECK_URL=/v1/verify", () => {
     assert.equal(originOnly("https://livecheck.fly.dev/v1/verify"), "https://livecheck.fly.dev");
+    assert.equal(originOnly("https://livecheck.fly.dev/v1/verify/job"), "https://livecheck.fly.dev");
+    assert.equal(originOnly("https://livecheck.fly.dev/v1/verify/listing"), "https://livecheck.fly.dev");
     assert.equal(originOnly("https://livecheck.fly.dev/v1/confirm/order"), "https://livecheck.fly.dev");
     assert.equal(originOnly("http://127.0.0.1:43127/v1/watch"), "http://127.0.0.1:43127");
     assert.equal(originOnly("http://127.0.0.1:43127/v1/watch/renew"), "http://127.0.0.1:43127");

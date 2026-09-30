@@ -17,6 +17,12 @@ import {
   OPENAPI_INFO_TAGS,
   OPENAPI_INFO_TITLE,
   OPENAPI_VERIFY_DESCRIPTION,
+  OPENAPI_VERIFY_JOB_DESCRIPTION,
+  OPENAPI_VERIFY_JOB_SUMMARY,
+  OPENAPI_VERIFY_JOB_TAGS,
+  OPENAPI_VERIFY_LISTING_DESCRIPTION,
+  OPENAPI_VERIFY_LISTING_SUMMARY,
+  OPENAPI_VERIFY_LISTING_TAGS,
   OPENAPI_VERIFY_SUMMARY,
   OPENAPI_VERIFY_TAGS,
   OPENAPI_WATCH_DESCRIPTION,
@@ -41,6 +47,8 @@ const OPENAPI_CHAIN_TOPUP_PRICE_AMOUNT = "0.50";
  */
 export const WELL_KNOWN_X402_ROUTES = [
   { path: "/v1/verify", amount: OPENAPI_PRICE_AMOUNT },
+  { path: "/v1/verify/job", amount: OPENAPI_PRICE_AMOUNT },
+  { path: "/v1/verify/listing", amount: OPENAPI_PRICE_AMOUNT },
   { path: "/v1/check", amount: OPENAPI_CHECK_PRICE_AMOUNT },
   { path: "/v1/watch", amount: OPENAPI_WATCH_PRICE_AMOUNT },
   { path: "/v1/watch/renew", amount: OPENAPI_WATCH_PRICE_AMOUNT },
@@ -51,6 +59,8 @@ export const WELL_KNOWN_X402_ROUTES = [
 /** Paid routes documented on OpenAPI. One fixed price each. Includes path-param topup. */
 export const PAID_DISCOVERY_ROUTES = [
   { path: "/v1/verify", amount: OPENAPI_PRICE_AMOUNT },
+  { path: "/v1/verify/job", amount: OPENAPI_PRICE_AMOUNT },
+  { path: "/v1/verify/listing", amount: OPENAPI_PRICE_AMOUNT },
   { path: "/v1/check", amount: OPENAPI_CHECK_PRICE_AMOUNT },
   { path: "/v1/watch", amount: OPENAPI_WATCH_PRICE_AMOUNT },
   { path: "/v1/watch/renew", amount: OPENAPI_WATCH_PRICE_AMOUNT },
@@ -58,6 +68,66 @@ export const PAID_DISCOVERY_ROUTES = [
   { path: "/v1/confirm", amount: OPENAPI_CONFIRM_PRICE_AMOUNT },
   { path: "/v1/confirm/order", amount: OPENAPI_ORDER_PLACED_PRICE_AMOUNT },
 ] as const;
+
+const VERIFY_URL_FIELD_DESCRIPTION =
+  "Absolute http(s) URL of the specific job, product, or eBay item page to check. Not a search-results URL.";
+const VERIFY_200_DESCRIPTION =
+  "Primary-source live, closed, or unknown verdict. Paid 200 includes watch suggest for POST /v1/watch (detector status_change, $2.50). Unpaid 402 has no watch field.";
+
+function verifyPostOperation(input: {
+  operationId: string;
+  summary: string;
+  description: string;
+  tags: readonly string[];
+}): Record<string, unknown> {
+  return {
+    operationId: input.operationId,
+    summary: input.summary,
+    description: input.description,
+    "x-guidance": input.description,
+    tags: [...input.tags],
+    "x-payment-info": {
+      price: {
+        mode: "fixed",
+        currency: "USD",
+        amount: OPENAPI_PRICE_AMOUNT,
+      },
+      protocols: [{ x402: {} }],
+    },
+    requestBody: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: {
+            type: "object",
+            properties: {
+              url: {
+                type: "string",
+                format: "uri",
+                description: VERIFY_URL_FIELD_DESCRIPTION,
+              },
+            },
+            required: ["url"],
+          },
+        },
+      },
+    },
+    responses: {
+      "200": {
+        description: VERIFY_200_DESCRIPTION,
+        content: {
+          "application/json": {
+            schema: VERIFY_OUTPUT_SCHEMA,
+            example: VERIFY_PAID_EXAMPLE,
+          },
+        },
+      },
+      "402": {
+        description: "Payment Required",
+      },
+    },
+  };
+}
 
 export function discoveryHeaders(): Record<string, string> {
   return {
@@ -81,55 +151,28 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
     servers: [{ url: origin }],
     paths: {
       "/v1/verify": {
-        post: {
+        post: verifyPostOperation({
           operationId: "verifyListing",
           summary: OPENAPI_VERIFY_SUMMARY,
           description: OPENAPI_VERIFY_DESCRIPTION,
-          "x-guidance": OPENAPI_VERIFY_DESCRIPTION,
-          tags: [...OPENAPI_VERIFY_TAGS],
-          "x-payment-info": {
-            price: {
-              mode: "fixed",
-              currency: "USD",
-              amount: OPENAPI_PRICE_AMOUNT,
-            },
-            protocols: [{ x402: {} }],
-          },
-          requestBody: {
-            required: true,
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object",
-                  properties: {
-                    url: {
-                      type: "string",
-                      format: "uri",
-                      description:
-                        "Absolute http(s) URL of the specific job, product, or eBay item page to check. Not a search-results URL.",
-                    },
-                  },
-                  required: ["url"],
-                },
-              },
-            },
-          },
-          responses: {
-            "200": {
-              description:
-                "Primary-source live, closed, or unknown verdict. Paid 200 includes watch suggest for POST /v1/watch (detector status_change, $2.50). Unpaid 402 has no watch field.",
-              content: {
-                "application/json": {
-                  schema: VERIFY_OUTPUT_SCHEMA,
-                  example: VERIFY_PAID_EXAMPLE,
-                },
-              },
-            },
-            "402": {
-              description: "Payment Required",
-            },
-          },
-        },
+          tags: OPENAPI_VERIFY_TAGS,
+        }),
+      },
+      "/v1/verify/job": {
+        post: verifyPostOperation({
+          operationId: "verifyJob",
+          summary: OPENAPI_VERIFY_JOB_SUMMARY,
+          description: OPENAPI_VERIFY_JOB_DESCRIPTION,
+          tags: OPENAPI_VERIFY_JOB_TAGS,
+        }),
+      },
+      "/v1/verify/listing": {
+        post: verifyPostOperation({
+          operationId: "verifyProductListing",
+          summary: OPENAPI_VERIFY_LISTING_SUMMARY,
+          description: OPENAPI_VERIFY_LISTING_DESCRIPTION,
+          tags: OPENAPI_VERIFY_LISTING_TAGS,
+        }),
       },
       "/v1/check": {
         post: {
@@ -717,18 +760,6 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
           },
         },
       },
-      "/v1/judge": {
-        get: {
-          operationId: "confirmJudgeStub",
-          summary: "Human review stub",
-          description:
-            "Not implemented in this phase. Returns 501. Not a payable x402 resource; est_price_usd on next_step is a stub only.",
-          tags: ["Confirm"],
-          responses: {
-            "501": { description: "not_implemented" },
-          },
-        },
-      },
     },
   };
 }
@@ -737,8 +768,9 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
  * x402scan DISCOVERY.md compatibility fan-out.
  * resources must be absolute URL strings (not objects) — @agentcash/discovery
  * WellKnownDocSchema is z.array(z.string()).
- * Concrete paid URLs, one fixed accept each: verify $0.01, check $0.02,
- * watch $2.50, watch/renew $2.50, confirm $0.10, confirm/order $0.25.
+ * Concrete paid URLs, one fixed accept each: verify, verify/job, and
+ * verify/listing $0.01, check $0.02, watch $2.50, watch/renew $2.50,
+ * confirm $0.10, confirm/order $0.25.
  * POST /v1/watch/{id}/chain/topup ($0.50) stays on OpenAPI as a path-param
  * implementation detail — listing a literal `{id}` URL makes crawlers probe
  * https://…/v1/watch/{id}/chain/topup and get a 402 with an empty body.
