@@ -14,9 +14,12 @@ import {
   looksLikeEmail,
   paidCallLineContainsSensitive,
   rememberPaidCall,
+  sanitizeHttpStatus,
   sanitizePayer,
   sanitizePaymentIntent,
   sanitizeTx,
+  sanitizeUserAgent,
+  sanitizeVerifyStatus,
   serializePaidCall,
   urlHostAndHash,
   withPaidCallContext,
@@ -100,6 +103,43 @@ describe("payer / tx / payment_intent sanitizers", () => {
     assert.equal(sanitizePaymentIntent("pi_3abcXYZ"), "pi_3abcXYZ");
     assert.equal(sanitizePaymentIntent("not_a_pi"), undefined);
     assert.equal(sanitizePaymentIntent("user@example.com"), undefined);
+  });
+
+  it("keeps a target HTTP status and a caller user-agent, and drops emails and queries", () => {
+    assert.equal(sanitizeHttpStatus(200), 200);
+    assert.equal(sanitizeHttpStatus(404), 404);
+    assert.equal(sanitizeHttpStatus(99), undefined);
+    assert.equal(sanitizeHttpStatus(1.5), undefined);
+    assert.equal(sanitizeVerifyStatus("live"), "live");
+    assert.equal(sanitizeVerifyStatus("closed"), "closed");
+    assert.equal(sanitizeVerifyStatus("maybe"), undefined);
+    assert.equal(sanitizeUserAgent("AgentCash/1.0"), "AgentCash/1.0");
+    assert.equal(sanitizeUserAgent("  bot\nname  "), "bot name");
+    assert.equal(sanitizeUserAgent("payer@example.com"), undefined);
+    assert.equal(
+      sanitizeUserAgent("AgentCash/1.0 https://example.com/job?email=ada@example.com&token=secret"),
+      undefined,
+    );
+    assert.equal(
+      sanitizeUserAgent("AgentCash/1.0 (+https://livecheck.local)"),
+      "AgentCash/1.0 (+https://livecheck.local)",
+    );
+    const { host, url_hash } = urlHostAndHash("https://example.com/job");
+    const event = buildPaidCallEvent(
+      {
+        route: "verify",
+        host,
+        url_hash,
+        status: "live",
+        http_status: 200,
+        user_agent: "AgentCash/1.0 https://jobs.example/posting?email=ada@example.com",
+      },
+      {},
+    );
+    assert.equal(event.http_status, 200);
+    assert.equal(event.user_agent, undefined);
+    assert.equal(serializePaidCall(event).includes("ada@example.com"), false);
+    assert.equal(serializePaidCall(event).includes("?"), false);
   });
 });
 

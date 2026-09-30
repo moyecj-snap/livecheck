@@ -6,7 +6,14 @@ import { retainPaidCall } from "./paid-call-store.js";
 
 export const PAID_CALL_EVENT = "livecheck.paid_call" as const;
 
+/**
+ * Routes written to `paid_calls`. Check and watch stay on receipts and the
+ * watch store (sentinel counts). Widening this union needs a table rebuild:
+ * the SQL CHECK is `route IN ('verify', 'confirm')`.
+ */
 export type PaidCallRoute = "verify" | "confirm";
+
+export type VerifyPaidStatus = "live" | "closed" | "unknown";
 
 export type PaidCallSettlement = {
   payer?: string;
@@ -17,25 +24,39 @@ export type PaidCallSettlement = {
 export type PaidCallRemembered = {
   route: PaidCallRoute;
   intent?: string;
+  /** Verify product verdict. Confirm uses `verdict`. */
   status?: string;
   verdict?: string;
+  /** Target domain (hostname only). Never a raw URL. */
   host: string;
   url_hash: string;
+  /** HTTP status of the fetched target page, when the handler has it. */
+  http_status?: number;
+  /** Caller User-Agent. Sanitized before it is logged or stored. */
+  user_agent?: string;
 };
 
 export type PaidCallEvent = {
   event: typeof PAID_CALL_EVENT;
   route: PaidCallRoute;
   intent?: string;
-  status?: string;
+  status?: VerifyPaidStatus;
   verdict?: string;
+  /** Target domain (hostname only). Never a raw URL, path, or query. */
   host: string;
   url_hash: string;
   payer?: string;
   tx?: string;
   payment_intent?: string;
+  /** Fetched target HTTP status. Omitted when the handler did not have one. */
+  http_status?: number;
+  /** Sanitized caller User-Agent. Omitted when missing or rejected. */
+  user_agent?: string;
   ts: string;
 };
+
+/** Cap caller User-Agent length. Longer values are truncated, not rejected. */
+export const USER_AGENT_MAX = 256;
 
 type PaidCallStore = {
   remembered?: PaidCallRemembered;
@@ -104,6 +125,33 @@ export function sanitizePaymentIntent(value: unknown): string | undefined {
   return undefined;
 }
 
+export function sanitizeVerifyStatus(value: unknown): VerifyPaidStatus | undefined {
+  return value === "live" || value === "closed" || value === "unknown" ? value : undefined;
+}
+
+/** Target-page HTTP status. Livecheck's own 200 is not stored here. */
+export function sanitizeHttpStatus(value: unknown): number | undefined {
+  const n = typeof value === "number" ? value : Number.NaN;
+  if (!Number.isInteger(n) || n < 100 || n > 599) return undefined;
+  return n;
+}
+
+/**
+ * Caller User-Agent for the durable row and the log line.
+ * Drops emails. Strips query strings and fragments so a UA cannot carry
+ * the target URL's secrets. Truncates to USER_AGENT_MAX.
+ */
+export function sanitizeUserAgent(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  let cleaned = value.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim();
+  if (!cleaned || looksLikeEmail(cleaned)) return undefined;
+  cleaned = cleaned.replace(/[?#][^\s]*/g, "").replace(/\s+/g, " ").trim();
+  if (!cleaned || looksLikeEmail(cleaned)) return undefined;
+  if (cleaned.length > USER_AGENT_MAX) cleaned = cleaned.slice(0, USER_AGENT_MAX).trim();
+  if (!cleaned || looksLikeEmail(cleaned)) return undefined;
+  return cleaned;
+}
+
 function walkForString(value: unknown, keys: string[]): unknown {
   let current: unknown = value;
   for (const key of keys) {
@@ -155,12 +203,17 @@ export function buildPaidCallEvent(
   if (remembered.route === "confirm" && remembered.intent) {
     event.intent = remembered.intent;
   }
-  if (remembered.route === "verify" && remembered.status) {
-    event.status = remembered.status;
+  if (remembered.route === "verify") {
+    const status = sanitizeVerifyStatus(remembered.status);
+    if (status) event.status = status;
   }
   if (remembered.route === "confirm" && remembered.verdict) {
     event.verdict = remembered.verdict;
   }
+  const httpStatus = sanitizeHttpStatus(remembered.http_status);
+  const userAgent = sanitizeUserAgent(remembered.user_agent);
+  if (httpStatus !== undefined) event.http_status = httpStatus;
+  if (userAgent) event.user_agent = userAgent;
   const payer = sanitizePayer(settlement.payer);
   const tx = sanitizeTx(settlement.tx);
   const paymentIntent = sanitizePaymentIntent(settlement.payment_intent);
@@ -213,6 +266,8 @@ export function rememberPaidCall(input: {
   intent?: string;
   status?: string;
   verdict?: string;
+  http_status?: number;
+  user_agent?: string;
 }): PaidCallRemembered {
   const remembered: PaidCallRemembered = {
     route: input.route,
@@ -222,6 +277,8 @@ export function rememberPaidCall(input: {
   if (input.route === "confirm" && input.intent) remembered.intent = input.intent;
   if (input.route === "verify" && input.status) remembered.status = input.status;
   if (input.route === "confirm" && input.verdict) remembered.verdict = input.verdict;
+  if (input.http_status !== undefined) remembered.http_status = input.http_status;
+  if (input.user_agent) remembered.user_agent = input.user_agent;
   const store = paidCallAls.getStore();
   if (store) store.remembered = remembered;
   return remembered;
@@ -244,9 +301,11 @@ export function emitPaidCall(
 }
 
 /**
- * After a 200 verify/confirm: remember host+hash+verdict.
+ * After a 200 verify/confirm: remember host+hash+verdict, target HTTP status,
+ * and the caller User-Agent. `host` is the target domain only.
  * Mock/dev emits immediately (no settle hook). Live waits for onAfterSettle
  * so the same line can include payer / tx / payment_intent.
+ * The x402 SettleResponse has no facilitator field; this record does not invent one.
  */
 export function recordSuccessfulPaidCheck(input: {
   route: PaidCallRoute;
@@ -254,6 +313,8 @@ export function recordSuccessfulPaidCheck(input: {
   intent?: string;
   status?: string;
   verdict?: string;
+  http_status?: number;
+  user_agent?: string;
 }): void {
   rememberPaidCall(input);
   if (!isLiveSettlement()) {
@@ -261,7 +322,11 @@ export function recordSuccessfulPaidCheck(input: {
   }
 }
 
-/** Live settle hook: Stripe already recorded; attach payment fields and emit. */
+/**
+ * Live settle hook: Stripe already recorded; attach payment fields and emit.
+ * `settlement` is payer / tx / payment_intent only. Facilitator identity is
+ * not on the settle payload (success, payer, transaction, network).
+ */
 export function emitPaidCallAfterSettle(settlement: PaidCallSettlement): void {
   emitPaidCall(settlement);
 }

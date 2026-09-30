@@ -310,7 +310,11 @@ describe("HTTP paid check writes a retained row", () => {
     try {
       const res = await fetch(`${origin}/v1/verify`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
+        headers: {
+          "content-type": "application/json",
+          "x-livecheck-mock": "1",
+          "user-agent": "AgentCash/1.0",
+        },
         body: JSON.stringify({ url: target }),
       });
       assert.equal(res.status, 200);
@@ -331,6 +335,10 @@ describe("HTTP paid check writes a retained row", () => {
     assert.equal(rows[0].host, "127.0.0.1");
     assert.equal(rows[0].url_sha256, hashUrl(target));
     assert.equal(rows[0].payer, undefined);
+    assert.equal(rows[0].status, "live");
+    assert.equal(rows[0].http_status, 200);
+    assert.equal(rows[0].user_agent, "AgentCash/1.0");
+    assert.equal(rows[0].verdict, undefined);
     assert.deepEqual(rowContainsSensitive(rows[0], target), []);
     assert.equal(JSON.stringify(rows[0]).includes(target), false);
   });
@@ -339,7 +347,11 @@ describe("HTTP paid check writes a retained row", () => {
     const target = `${origin}/fixtures/confirm/thank-you-id`;
     const res = await fetch(`${origin}/v1/confirm`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
+      headers: {
+        "content-type": "application/json",
+        "x-livecheck-mock": "1",
+        "user-agent": "livecheck-test/confirm",
+      },
       body: JSON.stringify({ url: target, intent: "lead_submit" }),
     });
     assert.equal(res.status, 200);
@@ -348,6 +360,9 @@ describe("HTTP paid check writes a retained row", () => {
     assert.equal(confirm.length, 1);
     assert.equal(confirm[0].intent, "lead_submit");
     assert.equal(confirm[0].verdict, "confirmed");
+    assert.equal(confirm[0].status, undefined);
+    assert.equal(confirm[0].http_status, 200);
+    assert.equal(confirm[0].user_agent, "livecheck-test/confirm");
     const scoped = queryConfirmIntentWindowsFromStore();
     assert.ok(scoped);
     assert.equal(scoped.l7d.lead_submit, 1);
@@ -460,6 +475,14 @@ describe("paid_calls intent migrate and backfill", () => {
     migratePaidCallStore(db);
     assert.equal(paidCallStoreTableColumns(db, "paid_calls").has("intent"), true);
     assert.equal(paidCallStoreTableColumns(db, "paid_calls").has("verdict"), true);
+    assert.equal(paidCallStoreTableColumns(db, "paid_calls").has("http_status"), true);
+    assert.equal(paidCallStoreTableColumns(db, "paid_calls").has("user_agent"), true);
+    assert.equal(paidCallStoreTableColumns(db, "paid_calls").has("status"), true);
+    const listed = listPaidCallRows(db);
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0].http_status, undefined);
+    assert.equal(listed[0].user_agent, undefined);
+    assert.equal(listed[0].status, undefined);
     const intents = queryConfirmIntentWindows(db, new Date("2026-09-11T19:00:00.000Z"));
     assert.equal(intents.l7d.unscoped, 1);
     assert.equal(intents.l7d.lead_submit, 0);

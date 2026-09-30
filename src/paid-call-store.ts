@@ -4,11 +4,15 @@ import { DatabaseSync } from "node:sqlite";
 import {
   PAID_CALL_EVENT,
   looksLikeEmail,
+  sanitizeHttpStatus,
   sanitizePayer,
   sanitizePaymentIntent,
   sanitizeTx,
+  sanitizeUserAgent,
+  sanitizeVerifyStatus,
   type PaidCallEvent,
   type PaidCallRoute,
+  type VerifyPaidStatus,
 } from "./paid-call.js";
 
 export const PAID_CALLS_TABLE = "paid_calls" as const;
@@ -25,11 +29,28 @@ export type PaidCallRow = {
   payer?: string;
   tx?: string;
   payment_intent?: string;
+  /**
+   * Target domain (hostname only). Same fact as the brief's "target domain".
+   * Never a raw URL, path, query, or userinfo.
+   */
   host: string;
   url_sha256: string;
   /** Confirm only. Absent on verify rows and on pre-intent-column history. */
   intent?: ConfirmPaidIntent;
+  /** Confirm product verdict. Absent on verify rows. */
   verdict?: ConfirmPaidVerdict;
+  /**
+   * Verify product verdict (`live` | `closed` | `unknown`).
+   * Absent on confirm rows and on rows written before this column.
+   */
+  status?: VerifyPaidStatus;
+  /**
+   * HTTP status of the fetched target page. Not Livecheck's response code
+   * (a row is written only when that response is about to be 200).
+   */
+  http_status?: number;
+  /** Caller User-Agent, truncated, with emails and query strings removed. */
+  user_agent?: string;
 };
 
 export type RouteCounts = {
@@ -75,7 +96,10 @@ CREATE TABLE IF NOT EXISTS paid_calls (
   host TEXT NOT NULL,
   url_sha256 TEXT NOT NULL,
   intent TEXT,
-  verdict TEXT
+  verdict TEXT,
+  http_status INTEGER,
+  user_agent TEXT,
+  status TEXT
 );
 `;
 
@@ -144,8 +168,12 @@ function ensureColumn(db: DatabaseSync, table: string, name: string, ddl: string
 
 /**
  * Idempotent upgrade. Safe on a fresh DB and on a volume whose paid_calls
- * table predates intent/verdict (those rows stay NULL = unscoped).
+ * table predates intent/verdict (those rows stay NULL = unscoped) or the
+ * later http_status / user_agent / verify status columns (those stay NULL).
  * ALTER columns before any index that names them.
+ *
+ * `host` is the target domain. Facilitator is not a column: the x402 settle
+ * payload does not name one. Check and watch are not rows in this table.
  *
  * Never CREATE confirm_receipts here. Pre-26c702e bound receipts into this
  * file; rescue copies those rows into receipts.sqlite and drops the stray table.
@@ -154,6 +182,9 @@ export function migratePaidCallStore(db: DatabaseSync): void {
   db.exec(TABLE_SQL);
   ensureColumn(db, "paid_calls", "intent", "intent TEXT");
   ensureColumn(db, "paid_calls", "verdict", "verdict TEXT");
+  ensureColumn(db, "paid_calls", "http_status", "http_status INTEGER");
+  ensureColumn(db, "paid_calls", "user_agent", "user_agent TEXT");
+  ensureColumn(db, "paid_calls", "status", "status TEXT");
   db.exec(INDEXES_AFTER_MIGRATE);
 }
 
@@ -211,6 +242,14 @@ export function paidCallEventToRow(event: PaidCallEvent): PaidCallRow | undefine
     if (intent) row.intent = intent;
     if (verdict) row.verdict = verdict;
   }
+  if (event.route === "verify") {
+    const status = sanitizeVerifyStatus(event.status);
+    if (status) row.status = status;
+  }
+  const httpStatus = sanitizeHttpStatus(event.http_status);
+  const userAgent = sanitizeUserAgent(event.user_agent);
+  if (httpStatus !== undefined) row.http_status = httpStatus;
+  if (userAgent) row.user_agent = userAgent;
   return row;
 }
 
@@ -316,13 +355,17 @@ export function insertPaidCallRow(db: DatabaseSync, row: PaidCallRow): void {
     ts: row.ts,
     intent: row.intent,
     verdict: row.verdict,
+    status: row.status,
+    http_status: row.http_status,
+    user_agent: row.user_agent,
   });
   if (!mapped) {
     throw new Error("refusing to insert unsanitized paid_call row");
   }
   db.prepare(
-    `INSERT INTO paid_calls (ts, route, payer, tx, payment_intent, host, url_sha256, intent, verdict)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO paid_calls (
+       ts, route, payer, tx, payment_intent, host, url_sha256, intent, verdict, http_status, user_agent, status
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     mapped.ts,
     mapped.route,
@@ -333,6 +376,9 @@ export function insertPaidCallRow(db: DatabaseSync, row: PaidCallRow): void {
     mapped.url_sha256,
     mapped.intent ?? null,
     mapped.verdict ?? null,
+    mapped.http_status ?? null,
+    mapped.user_agent ?? null,
+    mapped.status ?? null,
   );
 }
 
@@ -352,11 +398,11 @@ export function retainPaidCall(event: PaidCallEvent): boolean {
 }
 
 export function listPaidCallRows(db: DatabaseSync, sinceIso?: string): PaidCallRow[] {
+  const columns =
+    "ts, route, payer, tx, payment_intent, host, url_sha256, intent, verdict, http_status, user_agent, status";
   const sql = sinceIso
-    ? `SELECT ts, route, payer, tx, payment_intent, host, url_sha256, intent, verdict
-       FROM paid_calls WHERE ts >= ? ORDER BY ts ASC`
-    : `SELECT ts, route, payer, tx, payment_intent, host, url_sha256, intent, verdict
-       FROM paid_calls ORDER BY ts ASC`;
+    ? `SELECT ${columns} FROM paid_calls WHERE ts >= ? ORDER BY ts ASC`
+    : `SELECT ${columns} FROM paid_calls ORDER BY ts ASC`;
   const stmt = db.prepare(sql);
   const raw = (sinceIso ? stmt.all(sinceIso) : stmt.all()) as Array<{
     ts: string;
@@ -368,6 +414,9 @@ export function listPaidCallRows(db: DatabaseSync, sinceIso?: string): PaidCallR
     url_sha256: string;
     intent: string | null;
     verdict: string | null;
+    http_status: number | bigint | null;
+    user_agent: string | null;
+    status: string | null;
   }>;
   const rows: PaidCallRow[] = [];
   for (const item of raw) {
@@ -384,7 +433,17 @@ export function listPaidCallRows(db: DatabaseSync, sinceIso?: string): PaidCallR
     const intent = sanitizeConfirmIntent(item.intent);
     const verdict = sanitizeConfirmVerdict(item.verdict);
     if (intent) row.intent = intent;
-    if (verdict) row.verdict = verdict;
+    if (item.route === "confirm" && verdict) row.verdict = verdict;
+    if (item.route === "verify") {
+      const status = sanitizeVerifyStatus(item.status);
+      if (status) row.status = status;
+    }
+    const httpStatus = sanitizeHttpStatus(
+      typeof item.http_status === "bigint" ? Number(item.http_status) : item.http_status,
+    );
+    const userAgent = sanitizeUserAgent(item.user_agent);
+    if (httpStatus !== undefined) row.http_status = httpStatus;
+    if (userAgent) row.user_agent = userAgent;
     rows.push(row);
   }
   return rows;
@@ -537,6 +596,8 @@ export function parsePaidCallLogLine(line: string): PaidCallEvent | undefined {
         intent: parsed.intent,
         status: parsed.status,
         verdict: parsed.verdict,
+        http_status: parsed.http_status,
+        user_agent: parsed.user_agent,
       };
     } catch {
       // try next candidate
