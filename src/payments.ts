@@ -255,6 +255,9 @@ function livePaymentMiddleware(): MiddlewareHandler {
   const stripe = createStripeClient(keys.stripeSecretKey);
   resourceServer.onAfterSettle(async ({ result, requirements, paymentPayload }) => {
     const paymentIntent = await recordSettledPayment(stripe, result, requirements);
+    // SettleResponse is success, payer, transaction, network, and optional
+    // amount/extensions. It does not name the facilitator. Do not store a
+    // guessed name; CDP is process config, not a per-call field.
     emitPaidCallAfterSettle({
       payer: extractPayer(result, paymentPayload),
       tx: result.transaction,

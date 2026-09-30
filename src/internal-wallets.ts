@@ -12,8 +12,9 @@ import { sanitizePayer } from "./paid-call.js";
 export const DEFAULT_INTERNAL_WALLETS = [
   "0xb78226fc84f02da1b69f5e10f595067e4f1987d1", // purl
   "0x0561f30a23cf47ba6b9acf7bc22fac1144e64fae", // base-payer
-  "0xe54ef7a1b90bc18d5a68e9092b64a4b6812e407d", // AgentCash seed
+  "0xe54ef7a1b90bc18d5a68e9092b64a4b6812e407d", // AgentCash W0 seed
   "0xe4a34fb0f642778f612793accdf1fad8ae358ee8", // bazaar connect
+  "0x5016cfc01db6ec359465bda316404947a5b5893a", // Patty box / AgentCash W1 seeding wallet
 ] as const;
 
 const FILTER_OFF = new Set(["off", "none", "false", "0"]);

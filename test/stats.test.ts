@@ -656,6 +656,9 @@ describe("internal wallet list and external payers", () => {
     assert.equal(list.length, DEFAULT_INTERNAL_WALLETS.length + 1);
     assert.equal(list.includes(extra), true);
     assert.equal(list.includes(DEFAULT_INTERNAL_WALLETS[3]), true);
+    assert.equal(DEFAULT_INTERNAL_WALLETS.length, 5);
+    assert.equal(internalWallets({}).includes("0x5016cfc01db6ec359465bda316404947a5b5893a"), true);
+    assert.equal(internalWallets({}).includes("0xec2abd3eda89bed90124736e317e847d5fb6d034"), false);
   });
 
   it("drops team wallets from external verify and confirm payers", () => {
@@ -708,6 +711,57 @@ describe("internal wallet list and external payers", () => {
     assert.equal(doc.traffic.external.payers.l7d.verify.unique_payers, 1);
     assert.equal(doc.traffic.external.payers.l7d.confirm.calls, 1);
     assert.equal(doc.traffic.external.payers.l7d.confirm.unique_payers, 0);
+    assert.equal(doc.traffic.external.payers.l30d.verify.unique_payers, 1);
+    assert.equal(doc.traffic.external.payers.l30d.confirm.unique_payers, 0);
     assert.equal(doc.intents.lead_submit.l7d.paid_calls, 1);
+  });
+
+  it("counts distinct external payers per route for L7d and L30d", () => {
+    initPaidCallStore(":memory:");
+    const now = new Date("2026-09-30T12:00:00Z");
+    const patty = "0x5016cfc01db6ec359465bda316404947a5b5893a";
+    const externalVerify = "0x1111111111111111111111111111111111111111";
+    const externalConfirm = "0x9999999999999999999999999999999999999999";
+    const olderExternal = "0x3333333333333333333333333333333333333333";
+    const retain = (route: "verify" | "confirm", payer: string | undefined, ts: string, intent?: "lead_submit") => {
+      assert.equal(
+        retainPaidCall(
+          buildPaidCallEvent(
+            {
+              route,
+              host: "example.com",
+              url_hash: hashUrl(`https://example.com/${route}/${payer ?? "none"}/${ts}`),
+              status: route === "verify" ? "live" : undefined,
+              intent,
+              verdict: route === "confirm" ? "unknown" : undefined,
+            },
+            payer ? { payer } : {},
+            new Date(ts),
+          ),
+        ),
+        true,
+      );
+    };
+    retain("verify", patty, "2026-09-28T12:00:00Z");
+    retain("verify", externalVerify, "2026-09-28T12:00:00Z");
+    retain("confirm", externalConfirm, "2026-09-28T12:00:00Z", "lead_submit");
+    retain("verify", olderExternal, "2026-09-15T12:00:00Z");
+    retain("confirm", patty, "2026-09-15T12:00:00Z", "lead_submit");
+    const doc = buildStatsDocument(now);
+    assert.equal(doc.traffic.internal_wallets_configured, 5);
+    assert.equal(doc.traffic.all.payers.l7d.verify.calls, 2);
+    assert.equal(doc.traffic.all.payers.l7d.verify.unique_payers, 2);
+    assert.equal(doc.traffic.all.payers.l7d.confirm.unique_payers, 1);
+    assert.equal(doc.traffic.external.payers.l7d.verify.calls, 1);
+    assert.equal(doc.traffic.external.payers.l7d.verify.unique_payers, 1);
+    assert.equal(doc.traffic.external.payers.l7d.confirm.calls, 1);
+    assert.equal(doc.traffic.external.payers.l7d.confirm.unique_payers, 1);
+    assert.equal(doc.traffic.external.payers.l30d.verify.calls, 2);
+    assert.equal(doc.traffic.external.payers.l30d.verify.unique_payers, 2);
+    assert.equal(doc.traffic.external.payers.l30d.confirm.calls, 1);
+    assert.equal(doc.traffic.external.payers.l30d.confirm.unique_payers, 1);
+    assert.equal(doc.traffic.all.payers.l30d.confirm.unique_payers, 2);
+    assert.match(doc.traffic.note, /Includes internal test traffic/);
+    assert.match(doc.notes.join(" "), /Includes internal test traffic/);
   });
 });

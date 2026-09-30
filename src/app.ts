@@ -194,7 +194,13 @@ async function handlePaidVerify(c: Context) {
   try {
     const target = parseTargetUrl(url);
     const verdict = await verifyUrl(target);
-    recordSuccessfulPaidCheck({ route: "verify", url: target, status: verdict.status });
+    recordSuccessfulPaidCheck({
+      route: "verify",
+      url: target,
+      status: verdict.status,
+      http_status: verdict.http_status,
+      user_agent: c.req.header("user-agent"),
+    });
     return c.json(withWatchHint(verdict));
   } catch (error) {
     if (error instanceof VerifyError) {
@@ -374,6 +380,8 @@ async function handlePaidConfirm(c: Context, parse: typeof parseConfirmRouteRequ
       url,
       intent,
       verdict: result.verdict,
+      http_status: result.http_status,
+      user_agent: c.req.header("user-agent"),
     });
     return c.json(withWatchHint(result));
   } catch (error) {
