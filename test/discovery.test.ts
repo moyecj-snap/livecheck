@@ -190,6 +190,14 @@ describe("discovery documents (mock gate)", () => {
     assert.ok(doc.info?.version);
     assert.equal(doc.info?.description, OPENAPI_INFO_DESCRIPTION);
     assert.equal(doc.info?.["x-guidance"], OPENAPI_INFO_GUIDANCE);
+    const infoGuidance = doc.info?.["x-guidance"] ?? "";
+    assert.equal(infoGuidance.startsWith("Is this job posting still open?"), true);
+    const jobIdx = infoGuidance.indexOf("/v1/verify/job");
+    const listingIdx = infoGuidance.indexOf("/v1/verify/listing");
+    const genericIdx = infoGuidance.search(/\/v1\/verify(?!\/)/);
+    assert.ok(jobIdx >= 0, "guidance must name /v1/verify/job");
+    assert.ok(listingIdx > jobIdx, "guidance must name /v1/verify/listing after /v1/verify/job");
+    assert.ok(genericIdx > listingIdx, "generic /v1/verify must follow job and listing");
     assert.deepEqual(doc.info?.["x-tags"], [...OPENAPI_INFO_TAGS]);
     assert.equal((doc.info as { iconUrl?: string } | undefined)?.iconUrl, undefined);
     assert.notEqual(doc.info?.description, VERIFY_DESCRIPTION);
