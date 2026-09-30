@@ -27,7 +27,7 @@ import {
   missingLiveKeyNames,
   readLiveKeys,
 } from "./config.js";
-import { isPaidPostPath, parseWatchChainTopupId, publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicOrigin, publicVerifyUrl, publicWatchChainTopupUrl, publicWatchRenewUrl, publicWatchUrl } from "./public-url.js";
+import { isPaidPostPath, parseWatchChainTopupId, publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicOrigin, publicVerifyJobUrl, publicVerifyListingUrl, publicVerifyUrl, publicWatchChainTopupUrl, publicWatchRenewUrl, publicWatchUrl } from "./public-url.js";
 import {
   advertisePaymentRequired,
   chainTopupPaymentRequiredBody,
@@ -51,26 +51,35 @@ export function settlementMode(): "live" | "mock" {
   return isLiveSettlement() ? "live" : "mock";
 }
 
+/** Same $0.01 accept, description, and bazaar as POST /v1/verify. Resource URL is the path hit. */
+function verifyPricedRoute(payTo: string, resource: string) {
+  return {
+    accepts: [
+      {
+        scheme: "exact" as const,
+        price: PRICE_LABEL,
+        network: NETWORK as `${string}:${string}`,
+        payTo,
+      },
+    ],
+    description: VERIFY_DESCRIPTION,
+    mimeType: "application/json",
+    resource,
+    extensions: verifyBazaarExtensions(),
+  };
+}
+
 /** Route config the live @x402/hono middleware actually reads for the 402. */
 export function verifyPaymentRoutes(payTo: string): RoutesConfig {
   return {
     "POST /v1/verify": {
-      accepts: [
-        {
-          scheme: "exact" as const,
-          price: PRICE_LABEL,
-          network: NETWORK as `${string}:${string}`,
-          payTo,
-        },
-      ],
-      description: VERIFY_DESCRIPTION,
-      mimeType: "application/json",
+      ...verifyPricedRoute(payTo, publicVerifyUrl()),
       // Pin at boot: LIVECHECK_PUBLIC_URL or FLY_APP_NAME → https://<app>.fly.dev.
       // Local mock/live without those stays localhost. withAdvertised402 still
       // upgrades a leftover http://*.fly.dev request URL after the library 402.
-      resource: publicVerifyUrl(),
-      extensions: verifyBazaarExtensions(),
     },
+    "POST /v1/verify/job": verifyPricedRoute(payTo, publicVerifyJobUrl()),
+    "POST /v1/verify/listing": verifyPricedRoute(payTo, publicVerifyListingUrl()),
     "POST /v1/confirm": {
       accepts: [
         {
@@ -256,6 +265,20 @@ function livePaymentMiddleware(): MiddlewareHandler {
   return livePaymentMiddlewareFromServer(resourceServer, keys.depositAddress);
 }
 
+function mockUnpaidBody(path: string, requestUrl: string, host?: string) {
+  const normalized = path.replace(/\/+$/, "") || "/";
+  if (normalized === "/v1/confirm/order") return orderConfirmPaymentRequiredBody(publicConfirmOrderUrl(requestUrl, host));
+  if (normalized === "/v1/confirm") return confirmPaymentRequiredBody(publicConfirmUrl(requestUrl, host));
+  if (normalized === "/v1/check") return checkPaymentRequiredBody(publicCheckUrl(requestUrl, host));
+  if (normalized === "/v1/watch/renew") return watchRenewPaymentRequiredBody(publicWatchRenewUrl(requestUrl, host));
+  if (normalized === "/v1/watch") return watchPaymentRequiredBody(publicWatchUrl(requestUrl, host));
+  const topupId = parseWatchChainTopupId(normalized);
+  if (topupId) return chainTopupPaymentRequiredBody(publicWatchChainTopupUrl(requestUrl, host, topupId));
+  if (normalized === "/v1/verify/job") return paymentRequiredBody(publicVerifyJobUrl(requestUrl, host));
+  if (normalized === "/v1/verify/listing") return paymentRequiredBody(publicVerifyListingUrl(requestUrl, host));
+  return paymentRequiredBody(publicVerifyUrl(requestUrl, host));
+}
+
 function mockPaymentMiddleware(): MiddlewareHandler {
   return async (c, next) => {
     if (c.req.method !== "POST" || !isPaidPostPath(c.req.path)) {
@@ -273,22 +296,7 @@ function mockPaymentMiddleware(): MiddlewareHandler {
       return next();
     }
 
-    const body =
-      c.req.path === "/v1/confirm/order"
-        ? orderConfirmPaymentRequiredBody(publicConfirmOrderUrl(c.req.url))
-        : c.req.path === "/v1/confirm"
-          ? confirmPaymentRequiredBody(publicConfirmUrl(c.req.url))
-          : c.req.path === "/v1/check"
-            ? checkPaymentRequiredBody(publicCheckUrl(c.req.url))
-            : c.req.path === "/v1/watch/renew"
-              ? watchRenewPaymentRequiredBody(publicWatchRenewUrl(c.req.url))
-              : c.req.path === "/v1/watch"
-              ? watchPaymentRequiredBody(publicWatchUrl(c.req.url))
-              : parseWatchChainTopupId(c.req.path)
-                ? chainTopupPaymentRequiredBody(
-                    publicWatchChainTopupUrl(c.req.url, c.req.header("host"), parseWatchChainTopupId(c.req.path)),
-                  )
-                : paymentRequiredBody(publicVerifyUrl(c.req.url));
+    const body = mockUnpaidBody(c.req.path, c.req.url, c.req.header("host"));
     const encoded = encodePaymentRequired(body);
     c.header("payment-required", encoded);
     c.header("cache-control", "no-store");

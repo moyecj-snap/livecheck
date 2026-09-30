@@ -19,14 +19,18 @@ import {
   WATCH_RENEW_PAYMENT_DESCRIPTION,
 } from "./config.js";
 import {
+  paidResourceKind,
   parseWatchChainTopupId,
   publicCheckUrl,
   publicConfirmOrderUrl,
   publicConfirmUrl,
+  publicVerifyJobUrl,
+  publicVerifyListingUrl,
   publicVerifyUrl,
   publicWatchChainTopupUrl,
   publicWatchRenewUrl,
   publicWatchUrl,
+  type PaidResourceKind,
 } from "./public-url.js";
 
 export type CatalogResourceInfo = {
@@ -47,7 +51,7 @@ export type PaymentEnvelope = {
 };
 
 export function advertisedResourceInfo(
-  kind: "verify" | "confirm" | "confirm_order" | "check" | "watch" | "watch_renew" | "chain_topup" = "verify",
+  kind: PaidResourceKind = "verify",
   inboundUrl?: string,
 ): CatalogResourceInfo {
   if (kind === "confirm_order") {
@@ -102,6 +106,20 @@ export function advertisedResourceInfo(
       mimeType: "application/json",
     };
   }
+  if (kind === "verify_job") {
+    return {
+      url: publicVerifyJobUrl(),
+      description: VERIFY_DESCRIPTION,
+      mimeType: "application/json",
+    };
+  }
+  if (kind === "verify_listing") {
+    return {
+      url: publicVerifyListingUrl(),
+      description: VERIFY_DESCRIPTION,
+      mimeType: "application/json",
+    };
+  }
   return {
     url: publicVerifyUrl(),
     description: VERIFY_DESCRIPTION,
@@ -109,14 +127,8 @@ export function advertisedResourceInfo(
   };
 }
 
-function resourceKindFromUrl(url: string | undefined): "verify" | "confirm" | "confirm_order" | "check" | "watch" | "watch_renew" | "chain_topup" {
-  if (url && /\/v1\/confirm\/order\/?(\?|$)/i.test(url)) return "confirm_order";
-  if (url && /\/v1\/confirm\/?(\?|$)/i.test(url)) return "confirm";
-  if (url && /\/v1\/watch\/[^/?#]+\/chain\/topup\/?(\?|$)/i.test(url)) return "chain_topup";
-  if (url && /\/v1\/watch\/renew\/?(\?|$)/i.test(url)) return "watch_renew";
-  if (url && /\/v1\/watch\/?(\?|$)/i.test(url)) return "watch";
-  if (url && /\/v1\/check\/?(\?|$)/i.test(url)) return "check";
-  return "verify";
+function resourceKindFromUrl(url: string | undefined): PaidResourceKind {
+  return paidResourceKind(url);
 }
 
 /** URL on a v2 PaymentPayload.resource (object or string). Never logs the signed payload. */

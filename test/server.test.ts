@@ -152,6 +152,63 @@ describe("HTTP surface", () => {
     assert.equal(decoded.extensions.bazaar.info.output.example.price_usd, PRICE_USD);
   });
 
+  it("unpaid job and listing 402 before an invalid body and share the verify handler when paid", async () => {
+    for (const path of ["/v1/verify/job", "/v1/verify/listing"] as const) {
+      const unpaid = await fetch(`${origin}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{",
+      });
+      assert.equal(unpaid.status, 402, `${path} invalid JSON must 402 before validation`);
+      const header = unpaid.headers.get("payment-required");
+      assert.ok(header, `${path} payment-required`);
+      const decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8")) as {
+        accepts?: Array<{ amount?: string; scheme?: string; network?: string }>;
+        resource?: { url?: string; description?: string };
+        extensions?: { bazaar?: unknown };
+      };
+      assert.equal(decoded.accepts?.length, 1);
+      assert.equal(decoded.accepts?.[0]?.scheme, "exact");
+      assert.equal(decoded.accepts?.[0]?.network, "eip155:8453");
+      assert.equal(decoded.accepts?.[0]?.amount, "10000");
+      assert.equal(decoded.resource?.url, `${origin}${path}`);
+      assert.equal(decoded.resource?.description, VERIFY_DESCRIPTION);
+      assert.ok(decoded.extensions?.bazaar);
+
+      const missingUrl = await fetch(`${origin}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      assert.equal(missingUrl.status, 402, `${path} missing url must still 402`);
+
+      const paid = await fetch(`${origin}${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-livecheck-mock": "1",
+        },
+        body: JSON.stringify({ url: `${origin}/fixtures/live-apply-now` }),
+      });
+      assert.equal(paid.status, 200, `${path} mock-paid`);
+      const body = (await paid.json()) as { status?: string; watch?: { suggest?: string } };
+      assert.equal(body.status, "live");
+      assert.equal(body.watch?.suggest, "/v1/watch");
+
+      const invalidPaid = await fetch(`${origin}${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-livecheck-mock": "1",
+        },
+        body: "{",
+      });
+      assert.equal(invalidPaid.status, 400, `${path} validates the body only after payment`);
+      const invalidBody = (await invalidPaid.json()) as { error?: string };
+      assert.equal(invalidBody.error, "Request body must be JSON.");
+    }
+  });
+
   it("mock-paid closed fixture returns status closed", async () => {
     const res = await fetch(`${origin}/v1/verify`, {
       method: "POST",
