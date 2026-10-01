@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { after, before, describe, it } from "node:test";
+import { after, before, beforeEach, describe, it } from "node:test";
+import { clearAtsResponseCache } from "../src/ats-cache.js";
 import { serve } from "@hono/node-server";
 import {
   ATS_API_LISTED,
@@ -20,6 +21,10 @@ import { createApp } from "../src/app.js";
 import { classify } from "../src/classify.js";
 import type { FetchedPage, VerifyVerdict } from "../src/types.js";
 import { VerifyError, verifyUrl } from "../src/verify.js";
+
+beforeEach(() => {
+  clearAtsResponseCache();
+});
 
 const ASHBY_LIVE = "https://jobs.ashbyhq.com/linear/d3bc1ced-3ce4-4086-a050-555055dbb1ff";
 const ASHBY_CLOSED = "https://jobs.ashbyhq.com/linear/deadbeef-dead-beef-dead-beefdeadbeef";
@@ -342,6 +347,7 @@ describe("verifyUrl ATS integration", () => {
     assert.equal(lever.status, "live");
     assert.equal(lever.title, "Deal Team - Business Affairs");
 
+    clearAtsResponseCache();
     const leverMissing = await verifyUrl(LEVER_LIVE, routed({
       [LEVER_LIVE]: htmlResponse(APPLY_PAGE),
       [refOf(LEVER_LIVE).apiUrl]: jsonResponse(fixture("lever-missing.json"), 404),
@@ -356,6 +362,7 @@ describe("verifyUrl ATS integration", () => {
     assert.equal(greenhouse.confidence, ATS_LISTED_WITH_POSTED_AT_CONFIDENCE);
     assert.ok(greenhouse.signals.some((signal) => signal.startsWith("ats_posted_at:")));
 
+    clearAtsResponseCache();
     const greenhouseMissing = await verifyUrl(GREENHOUSE_LIVE, routed({
       [GREENHOUSE_LIVE]: htmlResponse(APPLY_PAGE),
       [refOf(GREENHOUSE_LIVE).apiUrl]: jsonResponse(fixture("greenhouse-missing.json"), 404),
@@ -421,6 +428,7 @@ describe("verifyUrl ATS integration", () => {
     assert.ok(verdict.signals.includes(ATS_API_LISTED));
     assert.equal(verdict.signals.includes("challenge_page"), false);
 
+    clearAtsResponseCache();
     await assert.rejects(
       () =>
         verifyUrl(WORKDAY_LIVE, routed(async (url) => {

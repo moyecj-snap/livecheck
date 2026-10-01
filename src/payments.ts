@@ -12,7 +12,6 @@ import {
   CHAIN_TOPUP_PRICE_LABEL,
   CHECK_PAYMENT_DESCRIPTION,
   CHECK_PRICE_LABEL,
-  FACILITATOR_TIMEOUT_MS,
   CONFIRM_PAYMENT_DESCRIPTION,
   CONFIRM_PRICE_LABEL,
   MOCK_PAYMENT_HEADER,
@@ -44,6 +43,7 @@ import {
 } from "./x402-payload.js";
 import { rememberMockConfirmPayment, wrapFacilitatorForVerifiedAmount } from "./confirm-payment.js";
 import { withPaidWatchAttemptLog } from "./paid-watch-log.js";
+import { resolveFacilitatorTimeoutMs, withProcessorUnavailable503, wrapFacilitatorProcessorGuard } from "./processor-guard.js";
 import { wrapFacilitatorSkipSettleIfDisconnected } from "./settle-abort.js";
 import { wrapFacilitatorForWatchPayer } from "./watch-payer.js";
 import { wrapFacilitatorForCatalog } from "./facilitator-catalog.js";
@@ -232,9 +232,11 @@ export function livePaymentMiddlewareFromServer(
   payTo: string,
   syncFacilitatorOnStart = true,
 ): MiddlewareHandler {
-  return withPaidWatchAttemptLog(
-    withAdvertised402(
-      paymentMiddleware(verifyPaymentRoutes(payTo), resourceServer, undefined, undefined, syncFacilitatorOnStart),
+  return withProcessorUnavailable503(
+    withPaidWatchAttemptLog(
+      withAdvertised402(
+        paymentMiddleware(verifyPaymentRoutes(payTo), resourceServer, undefined, undefined, syncFacilitatorOnStart),
+      ),
     ),
   );
 }
@@ -244,8 +246,10 @@ export function resourceServerFromFacilitator(facilitatorClient: FacilitatorClie
   // handler, then settle only if the handler status is <400. The outer wrapper
   // refuses that settle when the caller already disconnected.
   return new x402ResourceServer(
-    wrapFacilitatorSkipSettleIfDisconnected(
-      wrapFacilitatorForVerifiedAmount(wrapFacilitatorForWatchPayer(facilitatorClient)),
+    wrapFacilitatorProcessorGuard(
+      wrapFacilitatorSkipSettleIfDisconnected(
+        wrapFacilitatorForVerifiedAmount(wrapFacilitatorForWatchPayer(facilitatorClient)),
+      ),
     ),
   )
     .register(NETWORK, new ExactEvmScheme())
@@ -255,13 +259,13 @@ export function resourceServerFromFacilitator(facilitatorClient: FacilitatorClie
 /**
  * CDP facilitator client with an explicit HTTP deadline.
  * The SDK default is 30s and already aborts verify/settle/supported.
- * A shorter cap keeps those calls from outliving the Fly proxy when the
- * handler also uses the 20s envelope. Settle expiry is indeterminate.
+ * 5s matches the processor guard: a hung verify or settle becomes 503 and
+ * is not collected. Settle expiry is indeterminate, so it is not retried.
  */
 export function liveFacilitatorClient(keys: LiveKeys): HTTPFacilitatorClient {
   return new HTTPFacilitatorClient({
     ...createFacilitatorConfig(keys.cdpApiKeyId, keys.cdpApiKeySecret),
-    timeoutMs: FACILITATOR_TIMEOUT_MS,
+    timeoutMs: resolveFacilitatorTimeoutMs(),
   });
 }
 

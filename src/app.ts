@@ -33,6 +33,7 @@ import { demoHtml } from "./demo-page.js";
 import { discoveryHeaders, openApiDocument, wellKnownX402 } from "./discovery.js";
 import { FIXTURES } from "./fixtures.js";
 import { LLMS_TXT, llmsTxtHeaders } from "./llms.js";
+import { isInternalTestMode, withBurstProtection } from "./check-capacity.js";
 import { recordSuccessfulPaidCheck, responseRouteFromPath, withPaidCallContext } from "./paid-call.js";
 import { applyPaymentGate, settlementMode } from "./payments.js";
 import { withSettleAbortContext } from "./settle-abort.js";
@@ -62,7 +63,8 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
   app.use(withWatchPayerContext());
   // Outside the payment gate so facilitator.settle still sees the request signal.
   app.use(withSettleAbortContext());
-  app.use(paymentGate);
+  // Verify routes: 503 before facilitator when full, and test mode skips x402.
+  app.use(withBurstProtection(paymentGate));
 
   app.get("/openapi.json", (c) => {
     return c.json(openApiDocument(c.req.url, c.req.header("host")), 200, discoveryHeaders());
@@ -201,13 +203,15 @@ async function handlePaidVerify(c: Context) {
     const verdict = await verifyUrl(target, fetch, new Date(), {
       atsApi: route === "verify" || route === "verify/job",
     });
-    recordSuccessfulPaidCheck({
-      route,
-      url: target,
-      status: verdict.status,
-      http_status: verdict.http_status,
-      user_agent: c.req.header("user-agent"),
-    });
+    if (!isInternalTestMode()) {
+      recordSuccessfulPaidCheck({
+        route,
+        url: target,
+        status: verdict.status,
+        http_status: verdict.http_status,
+        user_agent: c.req.header("user-agent"),
+      });
+    }
     return c.json(withWatchHint({ ...verdict, route }));
   } catch (error) {
     if (error instanceof VerifyError) {

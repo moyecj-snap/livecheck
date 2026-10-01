@@ -217,12 +217,34 @@ export const ATS_FETCH_TIMEOUT_MS = 5_000;
 export const VERIFY_DEADLINE_MS = 20_000;
 export const CHECK_TIMEOUT_SIGNAL = "check_timeout";
 /**
- * Each facilitator verify / settle / getSupported HTTP call.
- * @x402/core defaults to 30s. 15s keeps payment verify + the 20s envelope +
- * settle inside Fly's ~60s proxy. A settle timeout is indeterminate: the
- * facilitator may still have settled. Livecheck does not retry settle.
+ * Each facilitator verify / settle HTTP call.
+ * @x402/core defaults to 30s. 5s stops a stuck Coinbase/CDP verify or settle
+ * from holding the only Fly machine. On timeout or processor error Livecheck
+ * does not settle and returns 503. A settle timeout is indeterminate at the
+ * facilitator, so Livecheck does not retry settle and does not record a paid call.
  */
-export const FACILITATOR_TIMEOUT_MS = 15_000;
+export const FACILITATOR_TIMEOUT_MS = 5_000;
+/**
+ * In-flight paid verify work on POST /v1/verify, /v1/verify/job, and
+ * /v1/verify/listing. One shared CPU. 5 sits in the 4–6 band that keeps an
+ * ATS burst from stalling the event loop. Override with LIVECHECK_CHECK_CONCURRENCY
+ * (integer 1–64). When every slot is taken the response is 503 + Retry-After
+ * and the facilitator is not called.
+ */
+export const CHECK_CONCURRENCY = 5;
+export const CHECK_CAPACITY_RETRY_AFTER_SECONDS = 5;
+/** Shared Ashby board JSON, and single-posting responses for the other vendors. */
+export const ATS_BOARD_CACHE_TTL_MS = 5 * 60 * 1000;
+export const ATS_BOARD_CACHE_MAX_ENTRIES = 64;
+/** Cap cached board JSON so a few large Ashby boards cannot eat the 1gb machine. */
+export const ATS_BOARD_CACHE_MAX_BYTES = 8 * 1024 * 1024;
+/**
+ * Off by default. When LIVECHECK_TEST_MODE_SECRET is set, a matching
+ * x-livecheck-test-mode header skips x402 on the verify routes and still runs
+ * the check. Never commit a production secret.
+ */
+export const TEST_MODE_HEADER = "x-livecheck-test-mode";
+export const TEST_MODE_SECRET_ENV = "LIVECHECK_TEST_MODE_SECRET";
 export const MAX_BODY_BYTES = 1_500_000;
 export const DEFAULT_PORT = 43127;
 export const STRIPE_X402_API_VERSION = "2026-05-27.preview";
