@@ -1,4 +1,5 @@
-import { FETCH_TIMEOUT_MS, MAX_BODY_BYTES, PRICE_USD, USER_AGENT } from "./config.js";
+import { ATS_FETCH_TIMEOUT_MS, MAX_BODY_BYTES, PRICE_USD, USER_AGENT } from "./config.js";
+import { DeadlineError, linkedAbort, resolveDeadlineMs } from "./deadline.js";
 import type { VerifyVerdict } from "./types.js";
 
 /**
@@ -54,6 +55,8 @@ export type AtsLookup =
 type LookupOptions = {
   timeoutMs?: number;
   maxBytes?: number;
+  /** Outer verify/check abort. A parent abort is a deadline, not "API unavailable". */
+  signal?: AbortSignal;
 };
 
 function pathParts(url: URL): string[] {
@@ -386,15 +389,14 @@ export async function lookupAtsJob(
   fetcher: typeof fetch = fetch,
   options: LookupOptions = {},
 ): Promise<AtsLookup> {
-  const timeoutMs = options.timeoutMs ?? FETCH_TIMEOUT_MS;
+  const timeoutMs = options.timeoutMs ?? ATS_FETCH_TIMEOUT_MS;
   const maxBytes = options.maxBytes ?? MAX_BODY_BYTES;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const linked = linkedAbort(timeoutMs, options.signal);
   try {
     const response = await fetcher(ref.apiUrl, {
       method: "GET",
       redirect: "follow",
-      signal: controller.signal,
+      signal: linked.signal,
       headers: {
         accept: "application/json",
         "user-agent": USER_AGENT,
@@ -402,10 +404,13 @@ export async function lookupAtsJob(
     });
     const { text, truncated } = await readCappedText(response, maxBytes);
     return interpretAtsResponse(ref, response.status, text, truncated);
-  } catch {
+  } catch (error) {
+    if (error instanceof DeadlineError || options.signal?.aborted) {
+      throw error instanceof DeadlineError ? error : new DeadlineError(resolveDeadlineMs());
+    }
     return { outcome: "unavailable" };
   } finally {
-    clearTimeout(timer);
+    linked.cancel();
   }
 }
 

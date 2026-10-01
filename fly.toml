@@ -43,7 +43,8 @@ primary_region = "sjc"
   method = "GET"
   path = "/health"
 
+# One paid hang took down the 256mb box. Deploys must not shrink it again.
 [[vm]]
-  memory = "256mb"
+  memory = "1gb"
   cpu_kind = "shared"
   cpus = 1
