@@ -1,4 +1,5 @@
-import { PRICE_USD, USER_AGENT } from "./config.js";
+import { FETCH_TIMEOUT_MS, PRICE_USD, USER_AGENT } from "./config.js";
+import { DeadlineError, resolveDeadlineMs } from "./deadline.js";
 import type { SourceStatus, VerifyVerdict } from "./types.js";
 
 export const EBAY_OAUTH_URL = "https://api.ebay.com/identity/v1/oauth2/token";
@@ -205,22 +206,43 @@ function closedMissingVerdict(ref: EbayItemRef, now: Date): VerifyVerdict {
   };
 }
 
-async function fetchApplicationToken(creds: EbayCreds, fetcher: typeof fetch): Promise<string> {
+function ebaySignal(parent?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+  return parent ? AbortSignal.any([timeout, parent]) : timeout;
+}
+
+async function ebayFetch(
+  url: string,
+  init: RequestInit,
+  fetcher: typeof fetch,
+  parent?: AbortSignal,
+): Promise<Response> {
+  // Signal stays attached through response.json() so a deadline abort
+  // also cancels a slow Browse body, not only the headers.
+  return fetcher(url, { ...init, signal: ebaySignal(parent) });
+}
+
+async function fetchApplicationToken(creds: EbayCreds, fetcher: typeof fetch, parent?: AbortSignal): Promise<string> {
   const now = Date.now();
   if (tokenCache && tokenCache.expiresAtMs > now + 5_000) {
     return tokenCache.token;
   }
   const basic = Buffer.from(`${creds.clientId}:${creds.clientSecret}`, "utf8").toString("base64");
-  const response = await fetcher(EBAY_OAUTH_URL, {
-    method: "POST",
-    headers: {
-      authorization: `Basic ${basic}`,
-      "content-type": "application/x-www-form-urlencoded",
-      accept: "application/json",
-      "user-agent": USER_AGENT,
+  const response = await ebayFetch(
+    EBAY_OAUTH_URL,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Basic ${basic}`,
+        "content-type": "application/x-www-form-urlencoded",
+        accept: "application/json",
+        "user-agent": USER_AGENT,
+      },
+      body: `grant_type=client_credentials&scope=${encodeURIComponent(EBAY_OAUTH_SCOPE)}`,
     },
-    body: `grant_type=client_credentials&scope=${encodeURIComponent(EBAY_OAUTH_SCOPE)}`,
-  });
+    fetcher,
+    parent,
+  );
   if (!response.ok) {
     throw new Error(`ebay_oauth_${response.status}`);
   }
@@ -269,6 +291,7 @@ export async function verifyEbayItem(
   ref: EbayItemRef,
   fetcher: typeof fetch = fetch,
   now = new Date(),
+  signal?: AbortSignal,
 ): Promise<VerifyVerdict> {
   const creds = readEbayCreds();
   if (!creds) {
@@ -276,7 +299,7 @@ export async function verifyEbayItem(
     return unknownEbayVerdict(ref, "ebay_adapter_disabled", 200, now);
   }
   try {
-    const token = await fetchApplicationToken(creds, fetcher);
+    const token = await fetchApplicationToken(creds, fetcher, signal);
     const marketplace = creds.marketplaceId || ref.marketplaceId || "EBAY_US";
     const headers = {
       authorization: `Bearer ${token}`,
@@ -285,7 +308,7 @@ export async function verifyEbayItem(
       "x-ebay-c-marketplace-id": marketplace,
     };
     const legacyUrl = `${EBAY_BROWSE_BASE}/item/get_item_by_legacy_id?legacy_item_id=${encodeURIComponent(ref.itemId)}`;
-    const legacy = await fetcher(legacyUrl, { method: "GET", headers });
+    const legacy = await ebayFetch(legacyUrl, { method: "GET", headers }, fetcher, signal);
     if (legacy.ok) {
       const item = await readJson(legacy);
       if (!item) return unknownEbayVerdict(ref, "ebay_api_error", legacy.status, now);
@@ -298,7 +321,7 @@ export async function verifyEbayItem(
     let sawServerError = false;
     let lastStatus = legacy.status;
     for (const restfulId of restfulItemIds(ref.itemId, ref.href)) {
-      const direct = await fetcher(getItemUrl(restfulId), { method: "GET", headers });
+      const direct = await ebayFetch(getItemUrl(restfulId), { method: "GET", headers }, fetcher, signal);
       lastStatus = direct.status;
       if (direct.ok) {
         const item = await readJson(direct);
@@ -313,7 +336,10 @@ export async function verifyEbayItem(
       return unknownEbayVerdict(ref, "ebay_api_error", lastStatus, now);
     }
     return closedMissingVerdict(ref, now);
-  } catch {
+  } catch (error) {
+    if (error instanceof DeadlineError || signal?.aborted) {
+      throw error instanceof DeadlineError ? error : new DeadlineError(resolveDeadlineMs());
+    }
     return unknownEbayVerdict(ref, "ebay_api_error", 200, now);
   }
 }

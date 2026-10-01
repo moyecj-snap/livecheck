@@ -236,7 +236,12 @@ async function handlePaidCheck(c: Context) {
     return c.json(result);
   } catch (error) {
     if (error instanceof CheckError) {
-      return c.json({ error: error.code, message: error.message }, error.status as 400 | 422);
+      const payload: { error: string; message: string; signal?: string } = {
+        error: error.code,
+        message: error.message,
+      };
+      if (error.signal) payload.signal = error.signal;
+      return c.json(payload, error.status as 400 | 422);
     }
     if (error instanceof VerifyError) {
       return c.json({ error: "invalid_target", message: error.message }, error.status as 400 | 502 | 504);

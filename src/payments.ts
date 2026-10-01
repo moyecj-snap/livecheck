@@ -12,6 +12,7 @@ import {
   CHAIN_TOPUP_PRICE_LABEL,
   CHECK_PAYMENT_DESCRIPTION,
   CHECK_PRICE_LABEL,
+  FACILITATOR_TIMEOUT_MS,
   CONFIRM_PAYMENT_DESCRIPTION,
   CONFIRM_PRICE_LABEL,
   MOCK_PAYMENT_HEADER,
@@ -26,6 +27,7 @@ import {
   isLiveSettlement,
   missingLiveKeyNames,
   readLiveKeys,
+  type LiveKeys,
 } from "./config.js";
 import { isPaidPostPath, parseWatchChainTopupId, publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicOrigin, publicVerifyJobUrl, publicVerifyListingUrl, publicVerifyUrl, publicWatchChainTopupUrl, publicWatchRenewUrl, publicWatchUrl } from "./public-url.js";
 import {
@@ -250,15 +252,26 @@ export function resourceServerFromFacilitator(facilitatorClient: FacilitatorClie
     .registerExtension(bazaarResourceServerExtension);
 }
 
+/**
+ * CDP facilitator client with an explicit HTTP deadline.
+ * The SDK default is 30s and already aborts verify/settle/supported.
+ * A shorter cap keeps those calls from outliving the Fly proxy when the
+ * handler also uses the 20s envelope. Settle expiry is indeterminate.
+ */
+export function liveFacilitatorClient(keys: LiveKeys): HTTPFacilitatorClient {
+  return new HTTPFacilitatorClient({
+    ...createFacilitatorConfig(keys.cdpApiKeyId, keys.cdpApiKeySecret),
+    timeoutMs: FACILITATOR_TIMEOUT_MS,
+  });
+}
+
 function livePaymentMiddleware(): MiddlewareHandler {
   const keys = readLiveKeys();
   if (!keys) {
     throw new Error(`Live settlement requested but missing: ${missingLiveKeyNames().join(", ")}`);
   }
 
-  const facilitatorClient = wrapFacilitatorForCatalog(
-    new HTTPFacilitatorClient(createFacilitatorConfig(keys.cdpApiKeyId, keys.cdpApiKeySecret)),
-  );
+  const facilitatorClient = wrapFacilitatorForCatalog(liveFacilitatorClient(keys));
   const resourceServer = resourceServerFromFacilitator(facilitatorClient);
   const stripe = createStripeClient(keys.stripeSecretKey);
   resourceServer.onAfterSettle(async ({ result, requirements, paymentPayload }) => {

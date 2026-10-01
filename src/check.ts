@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { CHECK_PRICE_USD } from "./config.js";
+import { CHECK_PRICE_USD, CHECK_TIMEOUT_SIGNAL } from "./config.js";
+import { DeadlineError, resolveDeadlineMs, withDeadline } from "./deadline.js";
 import { classify } from "./classify.js";
 import {
   compareNumeric,
@@ -32,13 +33,25 @@ export type CheckErrorCode = "invalid_target" | "invalid_condition" | "baseline_
 export class CheckError extends Error {
   readonly code: CheckErrorCode;
   readonly status: number;
+  /** Set when the whole-check envelope elapsed (`check_timeout`). */
+  readonly signal?: string;
 
-  constructor(code: CheckErrorCode, message: string, status: 400 | 422) {
+  constructor(code: CheckErrorCode, message: string, status: 400 | 422, signal?: string) {
     super(message);
     this.name = "CheckError";
     this.code = code;
     this.status = status;
+    this.signal = signal;
   }
+}
+
+function deadlineCheckError(ms: number): CheckError {
+  return new CheckError(
+    "baseline_unreachable",
+    `${CHECK_TIMEOUT_SIGNAL}: exceeded ${ms}ms`,
+    422,
+    CHECK_TIMEOUT_SIGNAL,
+  );
 }
 
 export type ParsedCheckRequest = {
@@ -435,6 +448,31 @@ export async function runCheck(
   parsed: ParsedCheckRequest,
   fetcher: typeof fetch = fetch,
   now = new Date(),
+  deadlineMs?: number,
+): Promise<{
+  target: CheckTarget;
+  condition: CheckCondition;
+  observation: CheckObservation;
+  fired: boolean | null;
+  confidence: number;
+  price_usd: number;
+  content?: string;
+}> {
+  const ms = resolveDeadlineMs(deadlineMs);
+  try {
+    return await withDeadline(ms, (signal) => runCheckWithin(parsed, fetcher, now, signal, ms));
+  } catch (error) {
+    if (error instanceof DeadlineError) throw deadlineCheckError(error.timeoutMs);
+    throw error;
+  }
+}
+
+async function runCheckWithin(
+  parsed: ParsedCheckRequest,
+  fetcher: typeof fetch,
+  now: Date,
+  signal: AbortSignal,
+  deadlineMs: number,
 ): Promise<{
   target: CheckTarget;
   condition: CheckCondition;
@@ -447,7 +485,8 @@ export async function runCheck(
   const { target, condition, baseline_hash } = parsed;
   try {
     if (condition.detector === "status_change") {
-      const verdict = await verifyUrl(target.url, fetcher, now);
+      const verdict = await verifyUrl(target.url, fetcher, now, { signal, deadlineMs });
+      if (verdict.signals.includes(CHECK_TIMEOUT_SIGNAL)) throw deadlineCheckError(deadlineMs);
       // 404/410 stay closed via classify. 5xx (including 530) is unreachable, not closed.
       if (isHttpServerFailure(verdict.http_status)) {
         throw new CheckError(
@@ -475,7 +514,7 @@ export async function runCheck(
       };
     }
 
-    const page = await fetchPage(target.url, fetcher);
+    const page = await fetchPage(target.url, fetcher, { signal });
     const verdict = classify(page, now);
     const blocked = nonContentFetchReason(page.httpStatus, verdict.signals);
     if (blocked) {
@@ -581,7 +620,7 @@ export async function runCheck(
       price_usd: CHECK_PRICE_USD,
     };
   } catch (error) {
-    if (error instanceof CheckError) throw error;
+    if (error instanceof CheckError || error instanceof DeadlineError) throw error;
     if (error instanceof VerifyError && (error.status === 502 || error.status === 504)) {
       throw new CheckError("baseline_unreachable", error.message, 422);
     }

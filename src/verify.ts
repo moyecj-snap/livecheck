@@ -1,6 +1,7 @@
 import { lookupAtsJob, combinePageAndAts, parseAtsJobUrl, verdictFromAtsWithoutPage } from "./ats-api.js";
-import { FETCH_TIMEOUT_MS, MAX_BODY_BYTES, USER_AGENT } from "./config.js";
+import { CHECK_TIMEOUT_SIGNAL, FETCH_TIMEOUT_MS, MAX_BODY_BYTES, PRICE_USD, USER_AGENT } from "./config.js";
 import { classify } from "./classify.js";
+import { DeadlineError, isAbortLike, linkedAbort, resolveDeadlineMs, withDeadline } from "./deadline.js";
 import { isEbayAdapterEnabled, logEbayAdapterDisabled, parseEbayItemUrl, verifyEbayItem } from "./ebay.js";
 import type { FetchedPage, VerifyVerdict } from "./types.js";
 
@@ -11,6 +12,15 @@ export type VerifyUrlOptions = {
    * watch-chain verify leave it off.
    */
   atsApi?: boolean;
+  /** Whole-check budget. Defaults to VERIFY_DEADLINE_MS. */
+  deadlineMs?: number;
+  /** Outer abort. When it fires, verify returns unknown + check_timeout. */
+  signal?: AbortSignal;
+};
+
+export type FetchPageOptions = {
+  timeoutMs?: number;
+  signal?: AbortSignal;
 };
 
 export class VerifyError extends Error {
@@ -66,15 +76,32 @@ function stripTags(html: string): string {
     .trim();
 }
 
-export async function fetchPage(url: string, fetcher: typeof fetch = fetch): Promise<FetchedPage> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+export function timeoutUnknownVerdict(url: string, now = new Date()): VerifyVerdict {
+  return {
+    url,
+    canonical_url: url,
+    status: "unknown",
+    http_status: 0,
+    checked_at: now.toISOString().replace(/\.\d{3}Z$/, "Z"),
+    signals: [CHECK_TIMEOUT_SIGNAL],
+    confidence: 0,
+    price_usd: PRICE_USD,
+  };
+}
+
+export async function fetchPage(
+  url: string,
+  fetcher: typeof fetch = fetch,
+  options: FetchPageOptions = {},
+): Promise<FetchedPage> {
+  const timeoutMs = options.timeoutMs ?? FETCH_TIMEOUT_MS;
+  const linked = linkedAbort(timeoutMs, options.signal);
   const redirectChain: string[] = [];
   try {
     const response = await fetcher(url, {
       method: "GET",
       redirect: "follow",
-      signal: controller.signal,
+      signal: linked.signal,
       headers: {
         accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
         "user-agent": USER_AGENT,
@@ -99,13 +126,16 @@ export async function fetchPage(url: string, fetcher: typeof fetch = fetch): Pro
       redirectChain,
     };
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new VerifyError(`Timed out fetching ${url} after ${FETCH_TIMEOUT_MS}ms.`, 504);
+    if (error instanceof DeadlineError || options.signal?.aborted) {
+      throw error instanceof DeadlineError ? error : new DeadlineError(resolveDeadlineMs());
+    }
+    if (isAbortLike(error) || linked.signal.aborted) {
+      throw new VerifyError(`Timed out fetching ${url} after ${timeoutMs}ms.`, 504);
     }
     const message = error instanceof Error ? error.message : "fetch failed";
     throw new VerifyError(`Could not fetch URL: ${message}`, 502);
   } finally {
-    clearTimeout(timer);
+    linked.cancel();
   }
 }
 
@@ -115,24 +145,46 @@ export async function verifyUrl(
   now = new Date(),
   options: VerifyUrlOptions = {},
 ): Promise<VerifyVerdict> {
+  const deadlineMs = resolveDeadlineMs(options.deadlineMs);
+  try {
+    return await withDeadline(deadlineMs, (deadlineSignal) => {
+      const signal = options.signal ? AbortSignal.any([deadlineSignal, options.signal]) : deadlineSignal;
+      return verifyUrlWithin(url, fetcher, now, options, signal);
+    });
+  } catch (error) {
+    if (error instanceof DeadlineError) return timeoutUnknownVerdict(url, now);
+    throw error;
+  }
+}
+
+async function verifyUrlWithin(
+  url: string,
+  fetcher: typeof fetch,
+  now: Date,
+  options: VerifyUrlOptions,
+  signal: AbortSignal,
+): Promise<VerifyVerdict> {
   const ebay = parseEbayItemUrl(url);
   if (ebay) {
     if (isEbayAdapterEnabled()) {
-      return verifyEbayItem(ebay, fetcher, now);
+      return verifyEbayItem(ebay, fetcher, now, signal);
     }
     logEbayAdapterDisabled();
   }
   const ats = options.atsApi ? parseAtsJobUrl(url) : null;
   if (!ats) {
-    const page = await fetchPage(url, fetcher);
+    const page = await fetchPage(url, fetcher, { signal });
     return classify(page, now);
   }
 
-  const pagePromise = fetchPage(url, fetcher).then(
+  const pagePromise = fetchPage(url, fetcher, { signal }).then(
     (page) => ({ ok: true as const, page }),
-    (error: unknown) => ({ ok: false as const, error }),
+    (error: unknown) => {
+      if (error instanceof DeadlineError) throw error;
+      return { ok: false as const, error };
+    },
   );
-  const [pageResult, atsLookup] = await Promise.all([pagePromise, lookupAtsJob(ats, fetcher)]);
+  const [pageResult, atsLookup] = await Promise.all([pagePromise, lookupAtsJob(ats, fetcher, { signal })]);
   if (pageResult.ok) return combinePageAndAts(classify(pageResult.page, now), atsLookup);
   if (atsLookup.outcome === "unavailable") throw pageResult.error;
   return verdictFromAtsWithoutPage(url, atsLookup, now);

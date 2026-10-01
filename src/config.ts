@@ -207,6 +207,22 @@ export const VERIFY_DESCRIPTION =
 export const USER_AGENT =
   "Livecheck/0.1 (+https://livecheck.local; primary-source verification)";
 export const FETCH_TIMEOUT_MS = 8_000;
+/** Public ATS board JSON (Ashby, Workday, Lever, Greenhouse). Separate from the HTML page fetch. */
+export const ATS_FETCH_TIMEOUT_MS = 5_000;
+/**
+ * Whole verifyUrl / runCheck budget. On expiry, verify returns status
+ * `unknown` with signal `check_timeout`. Check stays 422 baseline_unreachable
+ * with the same signal so Sentinel does not store a fake observation.
+ */
+export const VERIFY_DEADLINE_MS = 20_000;
+export const CHECK_TIMEOUT_SIGNAL = "check_timeout";
+/**
+ * Each facilitator verify / settle / getSupported HTTP call.
+ * @x402/core defaults to 30s. 15s keeps payment verify + the 20s envelope +
+ * settle inside Fly's ~60s proxy. A settle timeout is indeterminate: the
+ * facilitator may still have settled. Livecheck does not retry settle.
+ */
+export const FACILITATOR_TIMEOUT_MS = 15_000;
 export const MAX_BODY_BYTES = 1_500_000;
 export const DEFAULT_PORT = 43127;
 export const STRIPE_X402_API_VERSION = "2026-05-27.preview";
