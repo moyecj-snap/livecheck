@@ -42,6 +42,7 @@ import {
 } from "./x402-payload.js";
 import { rememberMockConfirmPayment, wrapFacilitatorForVerifiedAmount } from "./confirm-payment.js";
 import { withPaidWatchAttemptLog } from "./paid-watch-log.js";
+import { wrapFacilitatorSkipSettleIfDisconnected } from "./settle-abort.js";
 import { wrapFacilitatorForWatchPayer } from "./watch-payer.js";
 import { wrapFacilitatorForCatalog } from "./facilitator-catalog.js";
 import { emitPaidCallAfterSettle, extractPayer } from "./paid-call.js";
@@ -237,7 +238,14 @@ export function livePaymentMiddlewareFromServer(
 }
 
 export function resourceServerFromFacilitator(facilitatorClient: FacilitatorClient): x402ResourceServer {
-  return new x402ResourceServer(wrapFacilitatorForVerifiedAmount(wrapFacilitatorForWatchPayer(facilitatorClient)))
+  // ExactEvmScheme defaults to paymentFlow "authorization": verify, then the
+  // handler, then settle only if the handler status is <400. The outer wrapper
+  // refuses that settle when the caller already disconnected.
+  return new x402ResourceServer(
+    wrapFacilitatorSkipSettleIfDisconnected(
+      wrapFacilitatorForVerifiedAmount(wrapFacilitatorForWatchPayer(facilitatorClient)),
+    ),
+  )
     .register(NETWORK, new ExactEvmScheme())
     .registerExtension(bazaarResourceServerExtension);
 }
