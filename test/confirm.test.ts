@@ -223,6 +223,7 @@ describe("confirmUrl + HTTP", () => {
       watch?: { suggest?: string; detector?: string; price_usd?: number };
     };
     assert.equal(body.verdict, "confirmed");
+    assert.equal((body as { route?: string }).route, "confirm");
     assert.equal(body.evidence_strength, 2);
     assert.equal(body.evidence_level, 2);
     assert.ok((body.confidence ?? 0) >= 0.9);

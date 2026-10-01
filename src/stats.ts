@@ -6,13 +6,17 @@ import {
   WATCH_PRICE_USD,
 } from "./config.js";
 import { internalWallets } from "./internal-wallets.js";
+import { PAID_CALL_ROUTES } from "./paid-call.js";
 import {
+  emptyRouteCounts,
   emptyWindowCounts,
   isoCutoff,
   paidCallStoreStatus,
   queryConfirmIntentWindowsFromStore,
   queryRetentionWindowsFromStore,
   type ConfirmIntentCounts,
+  type PaidRouteCounts,
+  type RouteCounts,
   type WindowCounts,
 } from "./paid-call-store.js";
 import { countReceiptsSince, emptyReceiptVerdictCounts, receiptStoreStatus } from "./receipt-store.js";
@@ -117,6 +121,11 @@ export type TrafficHonesty = {
    * (older build). external is then not a full-fleet figure.
    */
   external_complete: boolean;
+  /**
+   * False when an included volume did not publish per-route payer counts.
+   * Family verify and confirm totals still include those calls.
+   */
+  routes_complete: boolean;
   all: TrafficSlice;
   external: TrafficSlice;
 };
@@ -201,6 +210,7 @@ export function trafficHonestyNote(input: {
   externalComplete: boolean;
   fleet: boolean;
   walletCountsDisagree?: boolean;
+  routesComplete?: boolean;
 }): string {
   const parts = [
     INTERNAL_TEST_TRAFFIC_LABEL,
@@ -210,10 +220,16 @@ export function trafficHonestyNote(input: {
       : `traffic.external omits ${input.walletCount} configured team wallets (built-in list plus LIVECHECK_INTERNAL_WALLETS).`,
     "One-shot check receipts have no payer and stay in both checks_run totals. paid_calls with a null payer stay in external.",
     "traffic.payers counts verify and confirm paid_calls only.",
+    "traffic.payers windows include routes for verify, verify/job, verify/listing, confirm, and confirm/order (calls and distinct payers). verify and confirm remain family totals: calls are the sum, unique payers are distinct across that family on one SQLite file. Rows written before the route split stay verify or confirm.",
     input.fleet
       ? "unique_payers is withheld on this fleet document. Adding per-volume distinct payers is not a fleet-wide distinct."
       : "unique_payers is COUNT(DISTINCT payer) on this machine's SQLite.",
   ];
+  if (input.routesComplete === false) {
+    parts.push(
+      "Per-route payer counts are incomplete: at least one included machine did not publish routes. Do not read verify/job or verify/listing as the full fleet. Family totals still include those calls.",
+    );
+  }
   if (input.walletCountsDisagree) {
     parts.push("Included machines disagree on how many internal wallets are configured. This count is the answering machine.");
   }
@@ -256,14 +272,8 @@ export function cloneTrafficSlice(slice: TrafficSlice): TrafficSlice {
     },
     payers: {
       available: slice.payers.available,
-      l7d: {
-        verify: { ...slice.payers.l7d.verify },
-        confirm: { ...slice.payers.l7d.confirm },
-      },
-      l30d: {
-        verify: { ...slice.payers.l30d.verify },
-        confirm: { ...slice.payers.l30d.confirm },
-      },
+      l7d: copyWindowCounts(slice.payers.l7d),
+      l30d: copyWindowCounts(slice.payers.l30d),
     },
   };
 }
@@ -318,11 +328,27 @@ function trafficSentinelFromWatch(watch: SentinelWatchStats, oneShotChecks: numb
   };
 }
 
+function copyRouteCounts(routes: PaidRouteCounts | undefined): PaidRouteCounts {
+  const out = emptyRouteCounts();
+  if (!routes) return out;
+  for (const route of PAID_CALL_ROUTES) {
+    const counts = routes[route];
+    if (!counts) continue;
+    out[route] = { calls: counts.calls, unique_payers: counts.unique_payers };
+  }
+  return out;
+}
+
 function copyWindowCounts(window: WindowCounts): WindowCounts {
   return {
     verify: { ...window.verify },
     confirm: { ...window.confirm },
+    routes: copyRouteCounts(window.routes),
   };
+}
+
+function payersHaveRoutes(payers: TrafficPayers | undefined): boolean {
+  return Boolean(payers?.l7d?.routes && payers?.l30d?.routes);
 }
 
 function trafficPayersFromStore(windows: ReturnType<typeof queryRetentionWindowsFromStore>): TrafficPayers {
@@ -341,12 +367,31 @@ function addRouteCounts(
   };
 }
 
+function addRouteCountMap(left: PaidRouteCounts | undefined, right: PaidRouteCounts | undefined): PaidRouteCounts {
+  const out = emptyRouteCounts();
+  for (const route of PAID_CALL_ROUTES) {
+    out[route] = addRouteCounts(left?.[route] ?? out[route], right?.[route] ?? out[route]);
+  }
+  return out;
+}
+
 /** Drop distinct-payer fields on any multi-volume document, including partial sums. */
 export function withholdUniquePayers(payers: TrafficPayers): TrafficPayers {
-  const window = (counts: WindowCounts): WindowCounts => ({
-    verify: { calls: counts.verify.calls, unique_payers: null },
-    confirm: { calls: counts.confirm.calls, unique_payers: null },
+  const blank = (counts: { calls: number }): RouteCounts => ({
+    calls: counts.calls,
+    unique_payers: null,
   });
+  const window = (counts: WindowCounts): WindowCounts => {
+    const routes = emptyRouteCounts();
+    for (const route of PAID_CALL_ROUTES) {
+      routes[route] = blank(counts.routes?.[route] ?? { calls: 0 });
+    }
+    return {
+      verify: blank(counts.verify),
+      confirm: blank(counts.confirm),
+      routes,
+    };
+  };
   return { available: payers.available, l7d: window(payers.l7d), l30d: window(payers.l30d) };
 }
 
@@ -354,6 +399,7 @@ function addWindowCounts(left: WindowCounts, right: WindowCounts): WindowCounts 
   return {
     verify: addRouteCounts(left.verify, right.verify),
     confirm: addRouteCounts(left.confirm, right.confirm),
+    routes: addRouteCountMap(left.routes, right.routes),
   };
 }
 
@@ -427,6 +473,9 @@ export function mergeTrafficHonesty(
     ? cloneTrafficSlice(localTraffic.external)
     : { sentinel: emptyTrafficSentinelCounts(), payers: emptyTrafficPayers() };
   let externalComplete = Boolean(localTraffic?.external_complete);
+  let routesComplete = Boolean(
+    localTraffic && payersHaveRoutes(localTraffic.all.payers) && payersHaveRoutes(localTraffic.external.payers),
+  );
   const walletCounts = new Set<number>();
   if (localTraffic) walletCounts.add(localTraffic.internal_wallets_configured);
 
@@ -435,6 +484,7 @@ export function mergeTrafficHonesty(
     const traffic = publishedTraffic(peer.doc);
     if (!traffic) {
       externalComplete = false;
+      routesComplete = false;
       all = {
         sentinel: addTrafficSentinel(all.sentinel, legacyTrafficSentinel(peer.doc), false),
         payers: { ...all.payers, available: false },
@@ -443,6 +493,7 @@ export function mergeTrafficHonesty(
       continue;
     }
     if (!traffic.external_complete) externalComplete = false;
+    if (!payersHaveRoutes(traffic.all.payers) || !payersHaveRoutes(traffic.external.payers)) routesComplete = false;
     walletCounts.add(traffic.internal_wallets_configured);
     all = {
       sentinel: addTrafficSentinel(all.sentinel, traffic.all.sentinel, true),
@@ -463,9 +514,11 @@ export function mergeTrafficHonesty(
       externalComplete,
       fleet: true,
       walletCountsDisagree: walletCounts.size > 1,
+      routesComplete,
     }),
     internal_wallets_configured: walletCount,
     external_complete: externalComplete,
+    routes_complete: routesComplete,
     all: { ...all, payers: withholdUniquePayers(all.payers) },
     external: { ...external, payers: withholdUniquePayers(external.payers) },
   };
@@ -502,9 +555,10 @@ export function buildTrafficHonesty(
   return {
     includes_internal_test_traffic: true,
     label: INTERNAL_TEST_TRAFFIC_LABEL,
-    note: trafficHonestyNote({ walletCount, externalComplete: true, fleet: false }),
+    note: trafficHonestyNote({ walletCount, externalComplete: true, fleet: false, routesComplete: true }),
     internal_wallets_configured: walletCount,
     external_complete: true,
+    routes_complete: true,
     all: {
       sentinel: trafficSentinelFromWatch(watchAll, oneShotChecks),
       payers: trafficPayersFromStore(payersAll),
@@ -603,8 +657,16 @@ function payerTable(doc: StatsDocument): string {
   const payerCell = (value: number | null) => (value === null ? "withheld" : String(value));
   const row = (audience: string, windowLabel: string, counts: WindowCounts) =>
     `<tr><td>${audience}</td><td>${windowLabel}</td><td>${counts.verify.calls}</td><td>${payerCell(counts.verify.unique_payers)}</td><td>${counts.confirm.calls}</td><td>${payerCell(counts.confirm.unique_payers)}</td></tr>`;
+  const routeRow = (audience: string, windowLabel: string, counts: WindowCounts) =>
+    PAID_CALL_ROUTES.map((route) => {
+      const item = counts.routes?.[route] ?? { calls: 0, unique_payers: null };
+      return `<tr><td>${audience}</td><td>${windowLabel}</td><td><code>${route}</code></td><td>${item.calls}</td><td>${payerCell(item.unique_payers)}</td></tr>`;
+    }).join("");
+  const routesNote = doc.traffic.routes_complete
+    ? ""
+    : `<p class="muted">Per-route payer counts are incomplete: at least one included machine did not publish routes. Family totals above still include those calls.</p>`;
   return `<h3>Payers</h3>
-  <p class="muted">Verify and confirm paid_calls only. All includes internal test traffic. External omits configured team wallets. Null payers stay in external calls and are not a unique payer. On this machine, unique payers are COUNT(DISTINCT payer). A fleet document shows withheld instead of adding per-volume distincts.</p>
+  <p class="muted">${escHtml(doc.traffic.label)} Verify and confirm paid_calls only. The first table is family totals (verify includes verify/job and verify/listing; confirm includes confirm/order). Unique payers in a family are distinct across that family, not the sum of the route rows. All includes internal test traffic. External omits configured team wallets. Null payers stay in external calls and are not a unique payer. On this machine, unique payers are COUNT(DISTINCT payer). A fleet document shows withheld instead of adding per-volume distincts.</p>
   <table>
     <thead>
       <tr><th>Audience</th><th>Window</th><th>Verify calls</th><th>Verify unique payers</th><th>Confirm calls</th><th>Confirm unique payers</th></tr>
@@ -614,6 +676,20 @@ function payerTable(doc: StatsDocument): string {
       ${row("External", "L7d", external.l7d)}
       ${row("All (includes internal test traffic)", "L30d", all.l30d)}
       ${row("External", "L30d", external.l30d)}
+    </tbody>
+  </table>
+  <h3>Payers by route</h3>
+  <p class="muted">${escHtml(doc.traffic.label)} Stored route after /v1/ (verify, verify/job, verify/listing, confirm, confirm/order). External rows omit configured team wallets.</p>
+  ${routesNote}
+  <table>
+    <thead>
+      <tr><th>Audience</th><th>Window</th><th>Route</th><th>Calls</th><th>Unique payers</th></tr>
+    </thead>
+    <tbody>
+      ${routeRow("All (includes internal test traffic)", "L7d", all.l7d)}
+      ${routeRow("External", "L7d", external.l7d)}
+      ${routeRow("All (includes internal test traffic)", "L30d", all.l30d)}
+      ${routeRow("External", "L30d", external.l30d)}
     </tbody>
   </table>`;
 }

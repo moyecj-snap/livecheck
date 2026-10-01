@@ -173,6 +173,7 @@ describe("order_placed HTTP + regressions", () => {
       watch?: { suggest?: string; detector?: string; price_usd?: number };
     };
     assert.equal(body.verdict, "confirmed");
+    assert.equal((body as { route?: string }).route, "confirm/order");
     assert.equal(body.effect.type, "order_placed");
     assert.equal(body.effect.id, "ORD-18421");
     assert.equal(body.evidence_level, 2);

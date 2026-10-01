@@ -198,6 +198,36 @@ describe("sqlite insert and L7d/L30d queries", () => {
 
     const fromMemory = aggregatePaidCallRows(listPaidCallRows(opened.db), now);
     assert.deepEqual(fromMemory, windows);
+    assert.equal(windows.l7d.routes.verify.calls, 3);
+    assert.equal(windows.l7d.routes["verify/job"].calls, 0);
+    assert.equal(windows.l7d.routes.confirm.calls, 1);
+  });
+
+  it("counts a payer once in the verify family and once on each specific route", () => {
+    const opened = initPaidCallStore(":memory:");
+    assert.equal(opened.ok, true);
+    if (!opened.ok) return;
+    const now = new Date("2026-09-07T15:00:00.000Z");
+    const when = new Date("2026-09-06T12:00:00.000Z");
+    for (const route of ["verify", "verify/job"] as const) {
+      const row = paidCallEventToRow(
+        buildPaidCallEvent(
+          { route, host: "example.com", url_hash: hashUrl(`https://example.com/${route}`), status: "live" },
+          { payer: PAYER_A },
+          when,
+        ),
+      );
+      assert.ok(row);
+      insertPaidCallRow(opened.db, row);
+    }
+    const windows = queryRetentionWindows(opened.db, now);
+    assert.equal(windows.l7d.routes.verify.calls, 1);
+    assert.equal(windows.l7d.routes.verify.unique_payers, 1);
+    assert.equal(windows.l7d.routes["verify/job"].calls, 1);
+    assert.equal(windows.l7d.routes["verify/job"].unique_payers, 1);
+    assert.equal(windows.l7d.verify.calls, 2);
+    assert.equal(windows.l7d.verify.unique_payers, 1);
+    assert.deepEqual(aggregatePaidCallRows(listPaidCallRows(opened.db), now), windows);
   });
 
   it("retainPaidCall is a no-op until the store is opened, then inserts", () => {
@@ -486,6 +516,78 @@ describe("paid_calls intent migrate and backfill", () => {
     const intents = queryConfirmIntentWindows(db, new Date("2026-09-11T19:00:00.000Z"));
     assert.equal(intents.l7d.unscoped, 1);
     assert.equal(intents.l7d.lead_submit, 0);
+    const createSql = db
+      .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'paid_calls'`)
+      .get() as { sql: string };
+    assert.match(createSql.sql, /verify\/job/);
+    assert.match(createSql.sql, /confirm\/order/);
+    insertPaidCallRow(db, {
+      ts: "2026-09-10T18:30:00Z",
+      route: "verify/job",
+      host: "boards.greenhouse.io",
+      url_sha256: hashUrl("https://boards.greenhouse.io/acme/jobs/1"),
+      status: "live",
+    });
+    insertPaidCallRow(db, {
+      ts: "2026-09-10T18:40:00Z",
+      route: "confirm/order",
+      host: "shop.example.com",
+      url_sha256: hashUrl("https://shop.example.com/thanks"),
+      intent: "order_placed",
+      verdict: "unknown",
+    });
+    const after = listPaidCallRows(db);
+    assert.equal(after.length, 3);
+    assert.equal(after.some((row) => row.route === "verify/job"), true);
+    assert.equal(after.some((row) => row.route === "confirm" && row.intent === undefined), true);
+    const orderIntents = queryConfirmIntentWindows(db, new Date("2026-09-11T19:00:00.000Z"));
+    assert.equal(orderIntents.l7d.order_placed, 1);
+    assert.equal(orderIntents.l7d.unscoped, 1);
+    db.close();
+  });
+
+  it("rebuilds a verify|confirm CHECK so specific routes can be inserted", () => {
+    const dir = mkdtempSync(join(tmpdir(), "paid-call-check-"));
+    const path = join(dir, "paid-calls.sqlite");
+    const db = new DatabaseSync(path);
+    db.exec(`
+      CREATE TABLE paid_calls (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL,
+        route TEXT NOT NULL CHECK (route IN ('verify', 'confirm')),
+        payer TEXT,
+        tx TEXT,
+        payment_intent TEXT,
+        host TEXT NOT NULL,
+        url_sha256 TEXT NOT NULL,
+        intent TEXT,
+        verdict TEXT,
+        http_status INTEGER,
+        user_agent TEXT,
+        status TEXT
+      );
+    `);
+    db.prepare(
+      `INSERT INTO paid_calls (ts, route, host, url_sha256, status) VALUES (?, ?, ?, ?, ?)`,
+    ).run("2026-09-10T18:00:00Z", "verify", "example.com", hashUrl("https://example.com/old"), "live");
+    migratePaidCallStore(db);
+    migratePaidCallStore(db);
+    insertPaidCallRow(db, {
+      ts: "2026-09-10T18:05:00Z",
+      route: "verify/listing",
+      host: "example.com",
+      url_sha256: hashUrl("https://example.com/products/widget"),
+      status: "live",
+    });
+    const listed = listPaidCallRows(db);
+    assert.deepEqual(
+      listed.map((row) => row.route),
+      ["verify", "verify/listing"],
+    );
+    const windows = queryRetentionWindows(db, new Date("2026-09-11T19:00:00.000Z"));
+    assert.equal(windows.l7d.routes.verify.calls, 1);
+    assert.equal(windows.l7d.routes["verify/listing"].calls, 1);
+    assert.equal(windows.l7d.verify.calls, 2);
     db.close();
   });
 

@@ -41,7 +41,7 @@ import {
   type PaidCallRow,
   type RetentionWindows,
 } from "../src/paid-call-store.js";
-import type { PaidCallRoute } from "../src/paid-call.js";
+import { PAID_CALL_ROUTES } from "../src/paid-call.js";
 import { dualMachineCosHelp } from "../src/receipt-rescue.js";
 
 const DUAL_VOLUME_NOTE =
@@ -73,11 +73,17 @@ function asOfIso(now = new Date()): string {
 }
 
 function formatWindow(label: string, window: RetentionWindows["l7d"]): string {
-  const routes: PaidCallRoute[] = ["verify", "confirm"];
-  const body = routes
-    .map((route) => `  ${route.padEnd(8)} calls=${window[route].calls}  unique_payers=${window[route].unique_payers}`)
-    .join("\n");
-  return `${label}\n${body}`;
+  const lines = PAID_CALL_ROUTES.map((route) => {
+    const counts = window.routes[route];
+    return `  ${route.padEnd(16)} calls=${counts.calls}  unique_payers=${counts.unique_payers}`;
+  });
+  lines.push(
+    `  ${"verify family".padEnd(16)} calls=${window.verify.calls}  unique_payers=${window.verify.unique_payers}`,
+  );
+  lines.push(
+    `  ${"confirm family".padEnd(16)} calls=${window.confirm.calls}  unique_payers=${window.confirm.unique_payers}`,
+  );
+  return `${label}\n${lines.join("\n")}`;
 }
 
 function formatConfirmIntents(label: string, window: ConfirmIntentWindows["l7d"]): string {

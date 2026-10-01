@@ -71,6 +71,7 @@ describe("verifyUrl against local fixtures", () => {
     assert.equal(unpaid.status, 402);
     const unpaidBody = (await unpaid.json()) as Record<string, unknown>;
     assert.equal("watch" in unpaidBody, false);
+    assert.equal("route" in unpaidBody, false);
 
     const paid = await fetch(`${origin}/v1/verify`, {
       method: "POST",
@@ -83,11 +84,26 @@ describe("verifyUrl against local fixtures", () => {
       watch?: { suggest?: string; detector?: string; price_usd?: number };
     };
     assert.equal(paidBody.status, "live");
+    assert.equal((paidBody as { route?: string }).route, "verify");
     assert.deepEqual(paidBody.watch, {
       suggest: "/v1/watch",
       detector: "status_change",
       price_usd: 2.5,
     });
+  });
+
+  it("echoes the specific verify route on job and listing aliases", async () => {
+    for (const path of ["/v1/verify/job", "/v1/verify/listing"] as const) {
+      const res = await fetch(`${origin}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
+        body: JSON.stringify({ url: `${origin}/fixtures/live-apply-now` }),
+      });
+      assert.equal(res.status, 200, path);
+      const body = (await res.json()) as { route?: string; status?: string };
+      assert.equal(body.route, path.slice("/v1/".length));
+      assert.equal(body.status, "live");
+    }
   });
 
   it("classifies Shopify in-stock as live and sold-out as closed", async () => {

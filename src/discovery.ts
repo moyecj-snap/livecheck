@@ -79,6 +79,7 @@ function verifyPostOperation(input: {
   summary: string;
   description: string;
   tags: readonly string[];
+  route: "verify" | "verify/job" | "verify/listing";
 }): Record<string, unknown> {
   return {
     operationId: input.operationId,
@@ -118,7 +119,7 @@ function verifyPostOperation(input: {
         content: {
           "application/json": {
             schema: VERIFY_OUTPUT_SCHEMA,
-            example: VERIFY_PAID_EXAMPLE,
+            example: { ...VERIFY_PAID_EXAMPLE, route: input.route },
           },
         },
       },
@@ -156,6 +157,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
           summary: OPENAPI_VERIFY_SUMMARY,
           description: OPENAPI_VERIFY_DESCRIPTION,
           tags: OPENAPI_VERIFY_TAGS,
+          route: "verify",
         }),
       },
       "/v1/verify/job": {
@@ -164,6 +166,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
           summary: OPENAPI_VERIFY_JOB_SUMMARY,
           description: OPENAPI_VERIFY_JOB_DESCRIPTION,
           tags: OPENAPI_VERIFY_JOB_TAGS,
+          route: "verify/job",
         }),
       },
       "/v1/verify/listing": {
@@ -172,6 +175,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
           summary: OPENAPI_VERIFY_LISTING_SUMMARY,
           description: OPENAPI_VERIFY_LISTING_DESCRIPTION,
           tags: OPENAPI_VERIFY_LISTING_TAGS,
+          route: "verify/listing",
         }),
       },
       "/v1/check": {

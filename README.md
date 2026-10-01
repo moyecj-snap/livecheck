@@ -93,8 +93,9 @@ After payment verifies and settles:
   "checked_at": "2026-08-30T21:00:00Z",
   "title": "Staff Backend Engineer — Northwind Labs",
   "signals": ["apply form present", "no closure banner"],
-  "confidence": 0.82,
+  "confidence": 0.92,
   "price_usd": 0.01,
+  "route": "verify",
   "watch": {
     "suggest": "/v1/watch",
     "detector": "status_change",
@@ -865,7 +866,7 @@ After this ships: `fly deploy` from Origin. Listing the catalog is free; CDP cat
 
 ### Paid-call analytics (`livecheck.paid_call`)
 
-Each successful paid `POST /v1/verify`, `POST /v1/confirm`, and `POST /v1/confirm/order` writes **one** structured JSON line to stdout **and** a row in a small SQLite table (when the Fly volume is mounted). Confirm/order still records `route: "confirm"` plus `intent: "order_placed"`. Stripe PaymentIntent recording is unchanged. Keep the `event` name and the original fields; `fly logs | grep livecheck.paid_call` must keep working. Optional `http_status` (fetched target) and `user_agent` (caller, redacted) may be present. The x402 settle payload does not name a facilitator, so that field is not recorded. Check and watch are not `paid_calls` rows.
+Each successful paid `POST /v1/verify`, `POST /v1/verify/job`, `POST /v1/verify/listing`, `POST /v1/confirm`, and `POST /v1/confirm/order` writes **one** structured JSON line to stdout **and** a row in a small SQLite table (when the Fly volume is mounted). `route` is the path after `/v1/` (`verify`, `verify/job`, `verify/listing`, `confirm`, `confirm/order`). The same string is on the JSON body. Confirm/order stores `route: "confirm/order"` plus `intent: "order_placed"`. Stripe PaymentIntent recording is unchanged. Keep the `event` name and the original fields; `fly logs | grep livecheck.paid_call` must keep working. Optional `http_status` (fetched target) and `user_agent` (caller, redacted) may be present. The x402 settle payload does not name a facilitator, so that field is not recorded. Check and watch are not `paid_calls` rows.
 
 ```json
 {"event":"livecheck.paid_call","route":"verify","status":"live","host":"boards.greenhouse.io","url_hash":"…","payer":"0x…","tx":"0x…","payment_intent":"pi_…","ts":"2026-09-06T20:34:00Z"}
@@ -873,7 +874,7 @@ Each successful paid `POST /v1/verify`, `POST /v1/confirm`, and `POST /v1/confir
 
 Confirm lines add `intent` (`lead_submit`, `listing_published`, or `order_placed`) and `verdict` instead of `status`. Privacy rule: **never** log or store raw query strings, emails, or full URLs — hostname + SHA-256 of the full URL only. `payer` / `tx` / `payment_intent` are omitted when missing (mock/dev).
 
-Retained columns (SQLite `paid_calls` at `PAID_CALL_DB_PATH`, default `/data/paid-calls.sqlite` on Fly): `ts`, `route` (`verify` | `confirm`), `payer`, `tx`, `payment_intent`, `host` (target domain, hostname only), `url_sha256` (same digest as log `url_hash`), `intent`, `verdict` (confirm), `status` (verify: `live` | `closed` | `unknown`), `http_status` (fetched target, nullable), `user_agent` (caller, nullable). Older rows stay valid with the new columns NULL.
+Retained columns (SQLite `paid_calls` at `PAID_CALL_DB_PATH`, default `/data/paid-calls.sqlite` on Fly): `ts`, `route` (`verify` | `verify/job` | `verify/listing` | `confirm` | `confirm/order`), `payer`, `tx`, `payment_intent`, `host` (target domain, hostname only), `url_sha256` (same digest as log `url_hash`), `intent`, `verdict` (confirm family), `status` (verify family: `live` | `closed` | `unknown`), `http_status` (fetched target, nullable), `user_agent` (caller, nullable). Older rows stay valid with the new columns NULL. SQLite cannot `ALTER` a `CHECK`, so opening the store rebuilds `paid_calls` when the check still allows only `verify|confirm` (copy into `paid_calls_route_v2`, drop, rename). Historical rows stay `verify` or `confirm` because the alias was not stored. `GET /stats` `traffic.payers.*.routes` breaks calls and distinct payers out per stored route (L7d and L30d, all wallets and external). `verify` and `confirm` on the same window stay family totals. Public `/stats` is one machine, so those distincts are `COUNT(DISTINCT payer)` on that SQLite file. `LIVECHECK_STATS_FLEET=1` withholds `unique_payers` instead of adding per-volume distincts. The honesty label stays **Includes internal test traffic.**
 
 CoS pull — L7d / L30d **row counts only** (calls = rows; unique_payers = distinct non-null wallet). No other KPIs. Confirm rows now also print **intent-scoped** counts (`lead_submit` / `listing_published` / `order_placed` / `unscoped`).
 

@@ -7,11 +7,49 @@ import { retainPaidCall } from "./paid-call-store.js";
 export const PAID_CALL_EVENT = "livecheck.paid_call" as const;
 
 /**
- * Routes written to `paid_calls`. Check and watch stay on receipts and the
- * watch store (sentinel counts). Widening this union needs a table rebuild:
- * the SQL CHECK is `route IN ('verify', 'confirm')`.
+ * Specific route stored on `paid_calls` and echoed on the JSON body.
+ * Check and watch stay on receipts and the watch store.
+ *
+ * SQLite cannot ALTER a CHECK. `migratePaidCallStore` rebuilds `paid_calls`
+ * when the check is still `verify|confirm` only. Rows written before that
+ * rebuild stay `verify` or `confirm` — the alias was not recorded.
  */
-export type PaidCallRoute = "verify" | "confirm";
+export const PAID_CALL_ROUTES = [
+  "verify",
+  "verify/job",
+  "verify/listing",
+  "confirm",
+  "confirm/order",
+] as const;
+
+export type PaidCallRoute = (typeof PAID_CALL_ROUTES)[number];
+
+const PAID_CALL_ROUTE_SET: ReadonlySet<string> = new Set(PAID_CALL_ROUTES);
+
+export function isPaidCallRoute(value: string): value is PaidCallRoute {
+  return PAID_CALL_ROUTE_SET.has(value);
+}
+
+export function isVerifyPaidRoute(route: PaidCallRoute): boolean {
+  return route === "verify" || route === "verify/job" || route === "verify/listing";
+}
+
+export function isConfirmPaidRoute(route: PaidCallRoute): boolean {
+  return route === "confirm" || route === "confirm/order";
+}
+
+/**
+ * Path after `/v1/` with no leading slash (`verify/job`, `confirm/order`).
+ * Undefined when the path is not a paid verify or confirm route.
+ */
+export function responseRouteFromPath(pathname: string): PaidCallRoute | undefined {
+  const pathOnly = pathname.split("?")[0] ?? pathname;
+  const marker = "/v1/";
+  const at = pathOnly.lastIndexOf(marker);
+  if (at < 0) return undefined;
+  const rest = pathOnly.slice(at + marker.length).replace(/\/+$/, "");
+  return isPaidCallRoute(rest) ? rest : undefined;
+}
 
 export type VerifyPaidStatus = "live" | "closed" | "unknown";
 
@@ -200,14 +238,14 @@ export function buildPaidCallEvent(
     url_hash: remembered.url_hash,
     ts: isoTs(now),
   };
-  if (remembered.route === "confirm" && remembered.intent) {
+  if (isConfirmPaidRoute(remembered.route) && remembered.intent) {
     event.intent = remembered.intent;
   }
-  if (remembered.route === "verify") {
+  if (isVerifyPaidRoute(remembered.route)) {
     const status = sanitizeVerifyStatus(remembered.status);
     if (status) event.status = status;
   }
-  if (remembered.route === "confirm" && remembered.verdict) {
+  if (isConfirmPaidRoute(remembered.route) && remembered.verdict) {
     event.verdict = remembered.verdict;
   }
   const httpStatus = sanitizeHttpStatus(remembered.http_status);
@@ -274,9 +312,9 @@ export function rememberPaidCall(input: {
     host: hostnameOnly(input.url),
     url_hash: hashUrl(input.url),
   };
-  if (input.route === "confirm" && input.intent) remembered.intent = input.intent;
-  if (input.route === "verify" && input.status) remembered.status = input.status;
-  if (input.route === "confirm" && input.verdict) remembered.verdict = input.verdict;
+  if (isConfirmPaidRoute(input.route) && input.intent) remembered.intent = input.intent;
+  if (isVerifyPaidRoute(input.route) && input.status) remembered.status = input.status;
+  if (isConfirmPaidRoute(input.route) && input.verdict) remembered.verdict = input.verdict;
   if (input.http_status !== undefined) remembered.http_status = input.http_status;
   if (input.user_agent) remembered.user_agent = input.user_agent;
   const store = paidCallAls.getStore();

@@ -33,7 +33,7 @@ import { demoHtml } from "./demo-page.js";
 import { discoveryHeaders, openApiDocument, wellKnownX402 } from "./discovery.js";
 import { FIXTURES } from "./fixtures.js";
 import { LLMS_TXT, llmsTxtHeaders } from "./llms.js";
-import { recordSuccessfulPaidCheck, withPaidCallContext } from "./paid-call.js";
+import { recordSuccessfulPaidCheck, responseRouteFromPath, withPaidCallContext } from "./paid-call.js";
 import { applyPaymentGate, settlementMode } from "./payments.js";
 import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl, publicWatchChainTopupUrl, publicWatchRenewUrl, publicWatchUrl } from "./public-url.js";
 import { isReceiptId } from "./confirm-id.js";
@@ -194,14 +194,16 @@ async function handlePaidVerify(c: Context) {
   try {
     const target = parseTargetUrl(url);
     const verdict = await verifyUrl(target);
+    const route = responseRouteFromPath(c.req.path);
+    if (!route) return c.json({ error: "not_found" }, 404);
     recordSuccessfulPaidCheck({
-      route: "verify",
+      route,
       url: target,
       status: verdict.status,
       http_status: verdict.http_status,
       user_agent: c.req.header("user-agent"),
     });
-    return c.json(withWatchHint(verdict));
+    return c.json(withWatchHint({ ...verdict, route }));
   } catch (error) {
     if (error instanceof VerifyError) {
       return c.json({ error: error.message }, error.status as 400 | 502 | 504);
@@ -375,15 +377,17 @@ async function handlePaidConfirm(c: Context, parse: typeof parseConfirmRouteRequ
         503,
       );
     }
+    const route = responseRouteFromPath(c.req.path);
+    if (!route) return c.json({ error: "not_found" }, 404);
     recordSuccessfulPaidCheck({
-      route: "confirm",
+      route,
       url,
       intent,
       verdict: result.verdict,
       http_status: result.http_status,
       user_agent: c.req.header("user-agent"),
     });
-    return c.json(withWatchHint(result));
+    return c.json(withWatchHint({ ...result, route }));
   } catch (error) {
     if (error instanceof UnsupportedIntentError) {
       const payload: Record<string, unknown> = {
