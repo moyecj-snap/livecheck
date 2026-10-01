@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { describe, it } from "node:test";
+import { beforeEach, describe, it } from "node:test";
+import { clearAtsResponseCache } from "../src/ats-cache.js";
 import { createApp } from "../src/app.js";
 import { lookupAtsJob, parseAtsJobUrl } from "../src/ats-api.js";
 import { CheckError, runCheck } from "../src/check.js";
@@ -14,6 +15,10 @@ import {
 import { setDeadlineForTests } from "../src/deadline.js";
 import { liveFacilitatorClient } from "../src/payments.js";
 import { VerifyError, fetchPage, verifyUrl } from "../src/verify.js";
+
+beforeEach(() => {
+  clearAtsResponseCache();
+});
 
 const ASHBY = "https://jobs.ashbyhq.com/linear/d3bc1ced-3ce4-4086-a050-555055dbb1ff";
 const JS_SHELL = `<!doctype html><html><head><title>Jobs</title></head><body><div id="root"></div><p>You need to enable JavaScript to run this app.</p></body></html>`;
@@ -37,7 +42,7 @@ describe("timeout budgets", () => {
     assert.equal(FETCH_TIMEOUT_MS, 8_000);
     assert.equal(ATS_FETCH_TIMEOUT_MS, 5_000);
     assert.equal(VERIFY_DEADLINE_MS, 20_000);
-    assert.equal(FACILITATOR_TIMEOUT_MS, 15_000);
+    assert.equal(FACILITATOR_TIMEOUT_MS, 5_000);
     assert.equal(CHECK_TIMEOUT_SIGNAL, "check_timeout");
     assert.ok(ATS_FETCH_TIMEOUT_MS < FETCH_TIMEOUT_MS);
     assert.ok(FETCH_TIMEOUT_MS < VERIFY_DEADLINE_MS);

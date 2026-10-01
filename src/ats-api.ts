@@ -1,3 +1,4 @@
+import { atsResponseCacheKey, joinAtsFetch, readAtsResponseCache, writeAtsResponseCache } from "./ats-cache.js";
 import { ATS_FETCH_TIMEOUT_MS, MAX_BODY_BYTES, PRICE_USD, USER_AGENT } from "./config.js";
 import { DeadlineError, linkedAbort, resolveDeadlineMs } from "./deadline.js";
 import type { VerifyVerdict } from "./types.js";
@@ -12,6 +13,10 @@ import type { VerifyVerdict } from "./types.js";
  * 4. Greenhouse Job Board API (posted date + higher confidence; HTML already worked)
  *
  * No API keys. These are the vendors' public board endpoints.
+ * Greenhouse, Lever, and Workday are fetched as one posting by id.
+ * Ashby's public API is the whole board; that JSON is cached per company for
+ * 5 minutes so jobs at the same company share one fetch. Single-posting
+ * responses are cached on the posting URL for the same TTL.
  * Network errors, timeouts, and HTTP 5xx are "unavailable", never "missing".
  * A bot-challenge page is not promoted to live. No Cloudflare or reCAPTCHA bypass.
  */
@@ -384,14 +389,15 @@ async function readCappedText(response: Response, maxBytes: number): Promise<{ t
   return { text: new TextDecoder("utf-8", { fatal: false }).decode(merged), truncated };
 }
 
-export async function lookupAtsJob(
+async function loadAtsResponse(
   ref: AtsJobRef,
-  fetcher: typeof fetch = fetch,
-  options: LookupOptions = {},
-): Promise<AtsLookup> {
-  const timeoutMs = options.timeoutMs ?? ATS_FETCH_TIMEOUT_MS;
-  const maxBytes = options.maxBytes ?? MAX_BODY_BYTES;
-  const linked = linkedAbort(timeoutMs, options.signal);
+  fetcher: typeof fetch,
+  timeoutMs: number,
+  maxBytes: number,
+): Promise<{ status: number; text: string; truncated: boolean } | null> {
+  // Own timer, not the caller signal. One job's deadline must not abort the
+  // shared board fetch that other in-flight checks are waiting on.
+  const linked = linkedAbort(timeoutMs);
   try {
     const response = await fetcher(ref.apiUrl, {
       method: "GET",
@@ -403,14 +409,37 @@ export async function lookupAtsJob(
       },
     });
     const { text, truncated } = await readCappedText(response, maxBytes);
-    return interpretAtsResponse(ref, response.status, text, truncated);
+    const body = { status: response.status, text, truncated };
+    writeAtsResponseCache(atsResponseCacheKey(ref), body);
+    return body;
+  } catch {
+    return null;
+  } finally {
+    linked.cancel();
+  }
+}
+
+export async function lookupAtsJob(
+  ref: AtsJobRef,
+  fetcher: typeof fetch = fetch,
+  options: LookupOptions = {},
+): Promise<AtsLookup> {
+  const timeoutMs = options.timeoutMs ?? ATS_FETCH_TIMEOUT_MS;
+  const maxBytes = options.maxBytes ?? MAX_BODY_BYTES;
+  try {
+    if (options.signal?.aborted) throw new DeadlineError(resolveDeadlineMs());
+    const key = atsResponseCacheKey(ref);
+    const cached = readAtsResponseCache(key);
+    if (cached) return interpretAtsResponse(ref, cached.status, cached.text, cached.truncated);
+    const loaded = await joinAtsFetch(key, () => loadAtsResponse(ref, fetcher, timeoutMs, maxBytes));
+    if (options.signal?.aborted) throw new DeadlineError(resolveDeadlineMs());
+    if (!loaded) return { outcome: "unavailable" };
+    return interpretAtsResponse(ref, loaded.status, loaded.text, loaded.truncated);
   } catch (error) {
     if (error instanceof DeadlineError || options.signal?.aborted) {
       throw error instanceof DeadlineError ? error : new DeadlineError(resolveDeadlineMs());
     }
     return { outcome: "unavailable" };
-  } finally {
-    linked.cancel();
   }
 }
 
