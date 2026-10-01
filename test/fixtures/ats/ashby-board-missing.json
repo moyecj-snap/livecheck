@@ -1,0 +1,11 @@
+{
+  "apiVersion": "1",
+  "jobs": [
+    {
+      "id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "title": "Direct Link Role",
+      "isListed": false,
+      "jobUrl": "https://jobs.ashbyhq.com/linear/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    }
+  ]
+}

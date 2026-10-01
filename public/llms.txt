@@ -28,6 +28,7 @@ Livecheck is not a search engine. Bring one specific item URL.
 
 ## Limits
 - Reads HTML and HTTP status; does not run JavaScript
+- POST /v1/verify and POST /v1/verify/job may also consult public job-board APIs for Ashby, Workday, Lever, and Greenhouse (no API key). A posting the API reports missing is closed. A posting the API lists is live when the page is live or a JavaScript-only shell (signal ats_api_listed). If the page looks closed and the API still lists it, the verdict is unknown. Timeouts and HTTP 5xx are not treated as closed. Bot-challenge pages stay unknown (challenge_page); Livecheck does not bypass Cloudflare or reCAPTCHA.
 - Status means availability only, not legitimacy or fraud risk
 - Never logs in, submits forms, or changes anything on the target site
 

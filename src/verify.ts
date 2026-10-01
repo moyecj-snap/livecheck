@@ -1,7 +1,17 @@
+import { lookupAtsJob, combinePageAndAts, parseAtsJobUrl, verdictFromAtsWithoutPage } from "./ats-api.js";
 import { FETCH_TIMEOUT_MS, MAX_BODY_BYTES, USER_AGENT } from "./config.js";
 import { classify } from "./classify.js";
 import { isEbayAdapterEnabled, logEbayAdapterDisabled, parseEbayItemUrl, verifyEbayItem } from "./ebay.js";
 import type { FetchedPage, VerifyVerdict } from "./types.js";
+
+export type VerifyUrlOptions = {
+  /**
+   * Consult public Ashby, Workday, Lever, and Greenhouse board APIs.
+   * POST /v1/verify and POST /v1/verify/job set this. Sentinel check and
+   * watch-chain verify leave it off.
+   */
+  atsApi?: boolean;
+};
 
 export class VerifyError extends Error {
   status: number;
@@ -103,6 +113,7 @@ export async function verifyUrl(
   url: string,
   fetcher: typeof fetch = fetch,
   now = new Date(),
+  options: VerifyUrlOptions = {},
 ): Promise<VerifyVerdict> {
   const ebay = parseEbayItemUrl(url);
   if (ebay) {
@@ -111,6 +122,18 @@ export async function verifyUrl(
     }
     logEbayAdapterDisabled();
   }
-  const page = await fetchPage(url, fetcher);
-  return classify(page, now);
+  const ats = options.atsApi ? parseAtsJobUrl(url) : null;
+  if (!ats) {
+    const page = await fetchPage(url, fetcher);
+    return classify(page, now);
+  }
+
+  const pagePromise = fetchPage(url, fetcher).then(
+    (page) => ({ ok: true as const, page }),
+    (error: unknown) => ({ ok: false as const, error }),
+  );
+  const [pageResult, atsLookup] = await Promise.all([pagePromise, lookupAtsJob(ats, fetcher)]);
+  if (pageResult.ok) return combinePageAndAts(classify(pageResult.page, now), atsLookup);
+  if (atsLookup.outcome === "unavailable") throw pageResult.error;
+  return verdictFromAtsWithoutPage(url, atsLookup, now);
 }
