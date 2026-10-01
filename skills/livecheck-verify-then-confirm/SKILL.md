@@ -120,6 +120,10 @@ Bodies are `{ "error": "<message>" }`. There is no `code` field and no `invalid_
 - 400: `Request body must be JSON.`
 - 504: `Timed out fetching <url> after 8000ms.`
 - 502: `Could not fetch URL: <message>`
+- 503: `over_capacity` or `processor_unavailable`, with `message`. Wait for the `Retry-After` header and retry. You were not charged. Do not treat 503 as `closed` or `unknown`.
+
+## Capacity
+On HTTP 503, wait for `Retry-After` and retry. For a list of URLs, send up to 8 checks at a time.
 
 ## Honest limits (do not overclaim)
 - Jobs: Ashby JS / Lever Cloudflare often `unknown`.

@@ -173,7 +173,7 @@ export const OPENAPI_INFO_TITLE = "Livecheck: Live Listing Status";
 export const OPENAPI_INFO_DESCRIPTION =
   "Live status of a specific product page, marketplace listing, or job posting, read from the page at call time. Returns live, closed, or unknown plus title and evidence signals. Also one-shot page condition checks, 30-day URL watchers, watcher renew, and signed confirmation of form submissions and orders.";
 export const OPENAPI_INFO_GUIDANCE =
-  'Is this job posting still open? POST /v1/verify/job with {"url": "<one job posting URL>"} for $0.01. Is this product listing still available or sold out? POST /v1/verify/listing with {"url": "<one eBay, Shopify, or product page URL>"} for $0.01. Both return {status: live|closed|unknown, title, signals[], confidence}, read from the page at call time. Use before applying, recommending, buying, or scraping. Not a search engine: bring the URL. /v1/verify ($0.01) accepts any of these URLs. POST /v1/check ($0.02) for one-shot keyword / price-threshold / text-change checks. POST /v1/watch ($2.50) for 30-day watchers; HTTPS callback optional (pull GET /v1/watch/{id}/events). POST /v1/watch/renew ($2.50) extends a watcher. POST /v1/confirm ($0.10) and /v1/confirm/order ($0.25) after a form submission or checkout.';
+  'Is this job posting still open? POST /v1/verify/job with {"url": "<one job posting URL>"} for $0.01. Is this product listing still available or sold out? POST /v1/verify/listing with {"url": "<one eBay, Shopify, or product page URL>"} for $0.01. Both return {status: live|closed|unknown, title, signals[], confidence}, read from the page at call time. Use before applying, recommending, buying, or scraping. Not a search engine: bring the URL. /v1/verify ($0.01) accepts any of these URLs. POST /v1/check ($0.02) for one-shot keyword / price-threshold / text-change checks. POST /v1/watch ($2.50) for 30-day watchers; HTTPS callback optional (pull GET /v1/watch/{id}/events). POST /v1/watch/renew ($2.50) extends a watcher. POST /v1/confirm ($0.10) and /v1/confirm/order ($0.25) after a form submission or checkout. On 503, wait for Retry-After and retry. For a list of URLs, send up to 8 checks at a time.';
 export const OPENAPI_INFO_TAGS = [
   "listing-status",
   "product-availability",
@@ -184,19 +184,19 @@ export const OPENAPI_INFO_TAGS = [
 /** OpenAPI POST /v1/verify only. 402 resource.description stays VERIFY_DESCRIPTION (CDP rejects descriptions over 500 characters). */
 export const OPENAPI_VERIFY_SUMMARY = "Is this listing, product, or job posting still live? ($0.01)";
 export const OPENAPI_VERIFY_DESCRIPTION =
-  'POST {"url"} for one specific product page, marketplace listing (eBay, Shopify, Etsy, Poshmark, Mercari), or job posting (Greenhouse, Lever, Workday, Ashby, company careers pages). Livecheck fetches the page at call time and returns status live, closed, or unknown, with title, evidence signals (e.g. in stock, sold out, ended, apply form present, 404), HTTP status, canonical URL, and confidence. Use it before recommending, buying, applying, or scraping, and to clean stale URLs out of search results or datasets. Search engines and job boards are snapshots; this reads the page now. Not a search engine: bring the URL. Reads HTML (no JavaScript). Ashby, Workday, Lever, and Greenhouse job URLs may also use that vendor\'s public job-board API (no API key): a missing posting is closed, a listed posting can confirm live, and API errors fall back to HTML. Bot challenges stay unknown. Availability only, not legitimacy or fraud risk. Fixed $0.01 USDC on Base.';
+  'POST {"url"} for one specific product page, marketplace listing (eBay, Shopify, Etsy, Poshmark, Mercari), or job posting (Greenhouse, Lever, Workday, Ashby, company careers pages). Livecheck fetches the page at call time and returns status live, closed, or unknown, with title, evidence signals (e.g. in stock, sold out, ended, apply form present, 404), HTTP status, canonical URL, and confidence. Use it before recommending, buying, applying, or scraping, and to clean stale URLs out of search results or datasets. Search engines and job boards are snapshots; this reads the page now. Not a search engine: bring the URL. Reads HTML (no JavaScript). Ashby, Workday, Lever, and Greenhouse job URLs may also use that vendor\'s public job-board API (no API key): a missing posting is closed, a listed posting can confirm live, and API errors fall back to HTML. Bot challenges stay unknown. Availability only, not legitimacy or fraud risk. Fixed $0.01 USDC on Base. On 503, wait for Retry-After and retry. For a list of URLs, send up to 8 checks at a time.';
 export const OPENAPI_VERIFY_TAGS = ["listing-status", "product-availability", "job-postings"] as const;
 /** OpenAPI POST /v1/verify/job. Same $0.01 handler as /v1/verify, plus public ATS board APIs. */
 export const OPENAPI_VERIFY_JOB_SUMMARY =
   "Is this job posting still open? Check one specific job URL before applying ($0.01)";
 export const OPENAPI_VERIFY_JOB_DESCRIPTION =
-  'POST {"url"} for one specific job posting page. Livecheck fetches the posting at call time and returns open or closed status as live, closed, or unknown, with the job title and evidence signals. Works on company careers pages and applicant tracking systems such as Greenhouse, Lever, Workday, Ashby, SmartRecruiters, and iCIMS. Detects closed postings from 404 and 410 responses, redirects back to the job board, empty ATS listings, and closure language such as "position filled", "no longer accepting applications", and "this job has expired". For Ashby, Workday, Lever, and Greenhouse posting URLs, may also consult that vendor\'s public job-board API (no API key). If the API reports the posting missing, the verdict is closed (ats_api_missing). If the API lists it and the page is live or a JavaScript-only shell, the verdict is live (ats_api_listed). If the page looks closed but the API still lists it, the verdict is unknown. A bot challenge stays unknown (challenge_page) even when the API is tried; Livecheck does not bypass Cloudflare or reCAPTCHA. API timeouts and HTTP 5xx fall back to the HTML read and are never treated as closed. Not a job search: bring the posting URL. Fixed $0.01 USDC on Base.';
+  'POST {"url"} for one specific job posting page. Livecheck fetches the posting at call time and returns open or closed status as live, closed, or unknown, with the job title and evidence signals. Works on company careers pages and applicant tracking systems such as Greenhouse, Lever, Workday, Ashby, SmartRecruiters, and iCIMS. Detects closed postings from 404 and 410 responses, redirects back to the job board, empty ATS listings, and closure language such as "position filled", "no longer accepting applications", and "this job has expired". For Ashby, Workday, Lever, and Greenhouse posting URLs, may also consult that vendor\'s public job-board API (no API key). If the API reports the posting missing, the verdict is closed (ats_api_missing). If the API lists it and the page is live or a JavaScript-only shell, the verdict is live (ats_api_listed). If the page looks closed but the API still lists it, the verdict is unknown. A bot challenge stays unknown (challenge_page) even when the API is tried; Livecheck does not bypass Cloudflare or reCAPTCHA. API timeouts and HTTP 5xx fall back to the HTML read and are never treated as closed. Not a job search: bring the posting URL. Fixed $0.01 USDC on Base. On 503, wait for Retry-After and retry. For a list of URLs, send up to 8 checks at a time.';
 export const OPENAPI_VERIFY_JOB_TAGS = ["job-postings", "job-status", "listing-status"] as const;
 /** OpenAPI POST /v1/verify/listing. Same $0.01 handler as /v1/verify. Craig Sept 30 brief, word for word. */
 export const OPENAPI_VERIFY_LISTING_SUMMARY =
   "Is this product listing still available or sold out? Check one eBay, Shopify, or product page URL ($0.01)";
 export const OPENAPI_VERIFY_LISTING_DESCRIPTION =
-  'POST {"url"} for one specific product page or marketplace listing. Livecheck fetches the page at call time and returns live, closed, or unknown with the title and evidence signals such as in-stock, sold-out, and eBay listing ended. Works on eBay item pages, Shopify product pages, and standard HTML product pages. Use it before recommending a product, before adding to cart or buying, and to remove sold-out or deleted items from shopping search results, price comparisons, and scraped product lists. Search engines and shopping indexes are snapshots; this reads the page now. Not a product search: bring the item URL. Reads HTML only; unknown means the page could not be read reliably. Availability only, not legitimacy or fraud risk. Fixed $0.01 USDC on Base.';
+  'POST {"url"} for one specific product page or marketplace listing. Livecheck fetches the page at call time and returns live, closed, or unknown with the title and evidence signals such as in-stock, sold-out, and eBay listing ended. Works on eBay item pages, Shopify product pages, and standard HTML product pages. Use it before recommending a product, before adding to cart or buying, and to remove sold-out or deleted items from shopping search results, price comparisons, and scraped product lists. Search engines and shopping indexes are snapshots; this reads the page now. Not a product search: bring the item URL. Reads HTML only; unknown means the page could not be read reliably. Availability only, not legitimacy or fraud risk. Fixed $0.01 USDC on Base. On 503, wait for Retry-After and retry. For a list of URLs, send up to 8 checks at a time.';
 export const OPENAPI_VERIFY_LISTING_TAGS = ["product-availability", "listing-status", "ecommerce"] as const;
 /**
  * ASCII-only 402 / health description for POST /v1/verify.
@@ -225,13 +225,21 @@ export const CHECK_TIMEOUT_SIGNAL = "check_timeout";
  */
 export const FACILITATOR_TIMEOUT_MS = 5_000;
 /**
- * In-flight paid verify work on POST /v1/verify, /v1/verify/job, and
- * /v1/verify/listing. One shared CPU. 5 sits in the 4–6 band that keeps an
- * ATS burst from stalling the event loop. Override with LIVECHECK_CHECK_CONCURRENCY
- * (integer 1–64). When every slot is taken the response is 503 + Retry-After
- * and the facilitator is not called.
+ * In-flight verify work on POST /v1/verify, /v1/verify/job, and
+ * /v1/verify/listing. One shared CPU. 8 matches observed headroom (about 37%
+ * memory, checks stayed fast under load). Override with
+ * LIVECHECK_CHECK_CONCURRENCY (integer 1–64).
+ *
+ * When every slot is taken, up to CHECK_QUEUE_MAX requests wait up to
+ * CHECK_QUEUE_WAIT_MS for a free slot. The response is 503 + Retry-After
+ * only when that queue is full or the wait expires, and only before
+ * facilitator verify/settle, so the caller is not charged.
+ * LIVECHECK_CHECK_QUEUE_MAX: integer 0–256, default 30 (0 rejects immediately).
+ * LIVECHECK_CHECK_QUEUE_WAIT_MS: integer 1–120000, default 10000.
  */
-export const CHECK_CONCURRENCY = 5;
+export const CHECK_CONCURRENCY = 8;
+export const CHECK_QUEUE_MAX = 30;
+export const CHECK_QUEUE_WAIT_MS = 10_000;
 export const CHECK_CAPACITY_RETRY_AFTER_SECONDS = 5;
 /** Shared Ashby board JSON, and single-posting responses for the other vendors. */
 export const ATS_BOARD_CACHE_TTL_MS = 5 * 60 * 1000;

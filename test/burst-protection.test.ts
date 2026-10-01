@@ -4,13 +4,20 @@ import { afterEach, describe, it } from "node:test";
 import type { FacilitatorClient } from "@x402/core/server";
 import { createApp } from "../src/app.js";
 import {
+  checkQueueDepthForTests,
   resetCheckSlotsForTests,
   resolveCheckConcurrency,
+  resolveCheckQueueMax,
+  resolveCheckQueueWaitMs,
   setCheckConcurrencyForTests,
+  setCheckQueueMaxForTests,
+  setCheckQueueWaitMsForTests,
 } from "../src/check-capacity.js";
 import {
   CHECK_CAPACITY_RETRY_AFTER_SECONDS,
   CHECK_CONCURRENCY,
+  CHECK_QUEUE_MAX,
+  CHECK_QUEUE_WAIT_MS,
   NETWORK,
   TEST_MODE_HEADER,
   TEST_MODE_SECRET_ENV,
@@ -53,26 +60,49 @@ function readJson(res: Response): Promise<Record<string, unknown>> {
 
 afterEach(() => {
   setCheckConcurrencyForTests(null);
+  setCheckQueueMaxForTests(null);
+  setCheckQueueWaitMsForTests(null);
   resetCheckSlotsForTests();
   setFacilitatorTimeoutForTests(null);
   delete process.env[TEST_MODE_SECRET_ENV];
   delete process.env.LIVECHECK_CHECK_CONCURRENCY;
+  delete process.env.LIVECHECK_CHECK_QUEUE_MAX;
+  delete process.env.LIVECHECK_CHECK_QUEUE_WAIT_MS;
 });
 
 describe("check concurrency", () => {
-  it("defaults to 5 and honors LIVECHECK_CHECK_CONCURRENCY", () => {
-    assert.equal(CHECK_CONCURRENCY, 5);
-    assert.ok(CHECK_CONCURRENCY >= 4 && CHECK_CONCURRENCY <= 6);
-    assert.equal(resolveCheckConcurrency(), 5);
+  it("defaults to 8 and honors LIVECHECK_CHECK_CONCURRENCY", () => {
+    assert.equal(CHECK_CONCURRENCY, 8);
+    assert.equal(CHECK_QUEUE_MAX, 30);
+    assert.equal(CHECK_QUEUE_WAIT_MS, 10_000);
+    assert.equal(resolveCheckConcurrency(), 8);
     process.env.LIVECHECK_CHECK_CONCURRENCY = "4";
     assert.equal(resolveCheckConcurrency(), 4);
     process.env.LIVECHECK_CHECK_CONCURRENCY = "nope";
-    assert.equal(resolveCheckConcurrency(), 5);
+    assert.equal(resolveCheckConcurrency(), 8);
     setCheckConcurrencyForTests(2);
     assert.equal(resolveCheckConcurrency(), 2);
+
+    assert.equal(resolveCheckQueueMax(), 30);
+    process.env.LIVECHECK_CHECK_QUEUE_MAX = "10";
+    assert.equal(resolveCheckQueueMax(), 10);
+    process.env.LIVECHECK_CHECK_QUEUE_MAX = "0";
+    assert.equal(resolveCheckQueueMax(), 0);
+    process.env.LIVECHECK_CHECK_QUEUE_MAX = "nope";
+    assert.equal(resolveCheckQueueMax(), 30);
+    setCheckQueueMaxForTests(1);
+    assert.equal(resolveCheckQueueMax(), 1);
+
+    assert.equal(resolveCheckQueueWaitMs(), 10_000);
+    process.env.LIVECHECK_CHECK_QUEUE_WAIT_MS = "2500";
+    assert.equal(resolveCheckQueueWaitMs(), 2500);
+    process.env.LIVECHECK_CHECK_QUEUE_WAIT_MS = "0";
+    assert.equal(resolveCheckQueueWaitMs(), 10_000);
+    setCheckQueueWaitMsForTests(80);
+    assert.equal(resolveCheckQueueWaitMs(), 80);
   });
 
-  it("returns 503 + Retry-After before facilitator verify when the slots are full", async () => {
+  function countingApp() {
     let verifyCalls = 0;
     let settleCalls = 0;
     const facilitator: FacilitatorClient = {
@@ -93,59 +123,55 @@ describe("check concurrency", () => {
         };
       },
     };
-    const app = createApp(
-      livePaymentMiddlewareFromServer(resourceServerFromFacilitator(facilitator), PAY_TO),
-    );
-    setCheckConcurrencyForTests(1);
+    const app = createApp(livePaymentMiddlewareFromServer(resourceServerFromFacilitator(facilitator), PAY_TO));
+    return { app, counts: () => ({ verifyCalls, settleCalls }) };
+  }
 
+  async function acceptedFor(app: ReturnType<typeof countingApp>["app"]): Promise<unknown> {
     const unpaid = await app.request("/v1/verify", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ url: "https://example.com/jobs/open" }),
     });
     assert.equal(unpaid.status, 402, "under capacity, an unpaid probe is still 402");
-    assert.equal(verifyCalls, 0);
-    assert.equal(settleCalls, 0);
     const header = unpaid.headers.get("payment-required");
     assert.ok(header);
-    const accepted = (decodePaymentRequired(header).accepts as unknown[])[0];
+    return (decodePaymentRequired(header).accepts as unknown[])[0];
+  }
+
+  async function paid(app: ReturnType<typeof countingApp>["app"], accepted: unknown, url: string): Promise<Response> {
+    return app.request("/v1/verify/job", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "payment-signature": paymentSignature(accepted),
+      },
+      body: JSON.stringify({ url }),
+    });
+  }
+
+  it("queues a paid verify until a slot frees and does not call the facilitator before admit", async () => {
+    const { app, counts } = countingApp();
+    setCheckConcurrencyForTests(1);
+    const accepted = await acceptedFor(app);
+    assert.equal(counts().verifyCalls, 0);
+    assert.equal(counts().settleCalls, 0);
 
     const releasers: Array<() => void> = [];
     const original = globalThis.fetch;
-    globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
-      void input;
-      void init;
-      return new Promise((resolve) => {
+    globalThis.fetch = () =>
+      new Promise((resolve) => {
         releasers.push(() => resolve(htmlResponse(LIVE_HTML)));
       });
-    };
 
     try {
-      const first = app.request("/v1/verify", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "payment-signature": paymentSignature(accepted),
-        },
-        body: JSON.stringify({ url: "https://example.com/jobs/1" }),
-      });
-      await waitFor(() => releasers.length === 1 && verifyCalls === 1);
+      const first = paid(app, accepted, "https://example.com/jobs/1");
+      await waitFor(() => releasers.length === 1 && counts().verifyCalls === 1);
 
-      const overflow = await app.request("/v1/verify/job", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "payment-signature": paymentSignature(accepted),
-        },
-        body: JSON.stringify({ url: "https://example.com/jobs/2" }),
-      });
-      assert.equal(overflow.status, 503);
-      assert.equal(overflow.headers.get("retry-after"), String(CHECK_CAPACITY_RETRY_AFTER_SECONDS));
-      assert.equal(overflow.headers.get("cache-control"), "no-store");
-      const overflowBody = await readJson(overflow);
-      assert.equal(overflowBody.error, "over_capacity");
-      assert.equal(verifyCalls, 1, "overflow must not call facilitator verify");
-      assert.equal(settleCalls, 0, "overflow must not settle");
+      const second = paid(app, accepted, "https://example.com/jobs/2");
+      await waitFor(() => checkQueueDepthForTests() === 1);
+      assert.equal(counts().verifyCalls, 1, "queued request must not call facilitator verify");
+      assert.equal(counts().settleCalls, 0, "queued request must not settle");
 
       const probe = await app.request("/v1/verify/listing", {
         method: "POST",
@@ -154,7 +180,7 @@ describe("check concurrency", () => {
       });
       assert.equal(probe.status, 503);
       assert.equal(probe.headers.get("retry-after"), String(CHECK_CAPACITY_RETRY_AFTER_SECONDS));
-      assert.equal(verifyCalls, 1);
+      assert.equal(counts().verifyCalls, 1);
 
       const confirm = await app.request("/v1/confirm", {
         method: "POST",
@@ -172,13 +198,21 @@ describe("check concurrency", () => {
         }),
       });
       assert.equal(check.status, 402, "Sentinel check stays outside the verify slot cap");
-      assert.equal(verifyCalls, 1);
-      assert.equal(settleCalls, 0);
+      assert.equal(counts().verifyCalls, 1);
+      assert.equal(counts().settleCalls, 0);
+      assert.equal(checkQueueDepthForTests(), 1);
 
       releasers.shift()?.();
       const done = await first;
       assert.equal(done.status, 200);
-      assert.equal(settleCalls, 1);
+      assert.equal(counts().settleCalls, 1);
+
+      await waitFor(() => releasers.length === 1 && counts().verifyCalls === 2);
+      assert.equal(checkQueueDepthForTests(), 0, "waiter was admitted");
+      releasers.shift()?.();
+      const admitted = await second;
+      assert.equal(admitted.status, 200);
+      assert.equal(counts().settleCalls, 2);
 
       const after = await app.request("/v1/verify", {
         method: "POST",
@@ -186,7 +220,93 @@ describe("check concurrency", () => {
         body: JSON.stringify({ url: "https://example.com/jobs/4" }),
       });
       assert.equal(after.status, 402);
-      assert.equal(verifyCalls, 1);
+      assert.equal(counts().verifyCalls, 2);
+    } finally {
+      for (const release of releasers) release();
+      globalThis.fetch = original;
+    }
+  });
+
+  it("returns 503 + Retry-After before facilitator verify when the queue is full", async () => {
+    const { app, counts } = countingApp();
+    setCheckConcurrencyForTests(1);
+    setCheckQueueMaxForTests(1);
+    const accepted = await acceptedFor(app);
+
+    const releasers: Array<() => void> = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = () =>
+      new Promise((resolve) => {
+        releasers.push(() => resolve(htmlResponse(LIVE_HTML)));
+      });
+
+    const pending: Array<Promise<Response>> = [];
+    try {
+      pending.push(paid(app, accepted, "https://example.com/jobs/1"));
+      await waitFor(() => releasers.length === 1 && counts().verifyCalls === 1);
+      pending.push(paid(app, accepted, "https://example.com/jobs/2"));
+      await waitFor(() => checkQueueDepthForTests() === 1);
+      assert.equal(counts().verifyCalls, 1);
+
+      const started = Date.now();
+      const overflow = await paid(app, accepted, "https://example.com/jobs/3");
+      assert.ok(Date.now() - started < 500, "a full queue rejects without waiting");
+      assert.equal(overflow.status, 503);
+      assert.equal(overflow.headers.get("retry-after"), String(CHECK_CAPACITY_RETRY_AFTER_SECONDS));
+      assert.equal(overflow.headers.get("cache-control"), "no-store");
+      const overflowBody = await readJson(overflow);
+      assert.equal(overflowBody.error, "over_capacity");
+      assert.equal(counts().verifyCalls, 1, "overflow must not call facilitator verify");
+      assert.equal(counts().settleCalls, 0, "overflow must not settle");
+      assert.equal(checkQueueDepthForTests(), 1);
+
+      releasers.shift()?.();
+      await waitFor(() => releasers.length === 1 && counts().verifyCalls === 2);
+      releasers.shift()?.();
+      const finished = await Promise.all(pending);
+      assert.equal(finished.length, 2);
+      assert.equal(counts().settleCalls, 2);
+    } finally {
+      for (const release of releasers) release();
+      globalThis.fetch = original;
+    }
+  });
+
+  it("returns 503 + Retry-After before facilitator verify when the queue wait expires", async () => {
+    const { app, counts } = countingApp();
+    setCheckConcurrencyForTests(1);
+    setCheckQueueWaitMsForTests(80);
+    const accepted = await acceptedFor(app);
+
+    const releasers: Array<() => void> = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = () =>
+      new Promise((resolve) => {
+        releasers.push(() => resolve(htmlResponse(LIVE_HTML)));
+      });
+
+    try {
+      const first = paid(app, accepted, "https://example.com/jobs/1");
+      await waitFor(() => releasers.length === 1 && counts().verifyCalls === 1);
+
+      const started = Date.now();
+      const expired = await paid(app, accepted, "https://example.com/jobs/2");
+      const elapsed = Date.now() - started;
+      assert.equal(expired.status, 503);
+      assert.ok(elapsed >= 60, "the waiter stays queued until the wait expires");
+      assert.ok(elapsed < 1_000);
+      assert.equal(expired.headers.get("retry-after"), String(CHECK_CAPACITY_RETRY_AFTER_SECONDS));
+      assert.equal(expired.headers.get("cache-control"), "no-store");
+      const body = await readJson(expired);
+      assert.equal(body.error, "over_capacity");
+      assert.equal(counts().verifyCalls, 1, "expired waiter must not call facilitator verify");
+      assert.equal(counts().settleCalls, 0, "expired waiter must not settle");
+      assert.equal(checkQueueDepthForTests(), 0);
+
+      releasers.shift()?.();
+      const done = await first;
+      assert.equal(done.status, 200);
+      assert.equal(counts().settleCalls, 1);
     } finally {
       for (const release of releasers) release();
       globalThis.fetch = original;
@@ -475,9 +595,10 @@ describe("internal test mode", () => {
     }
   });
 
-  it("still 503s in test mode when the check slots are full, without charging", async () => {
+  it("still 503s in test mode when the check queue is full, without charging", async () => {
     process.env[TEST_MODE_SECRET_ENV] = SECRET;
     setCheckConcurrencyForTests(1);
+    setCheckQueueMaxForTests(0);
     const { app, counts } = liveApp();
     const releasers: Array<() => void> = [];
     const original = globalThis.fetch;
@@ -510,6 +631,53 @@ describe("internal test mode", () => {
       releasers.shift()?.();
       const done = await first;
       assert.equal(done.status, 200);
+    } finally {
+      for (const release of releasers) release();
+      globalThis.fetch = original;
+    }
+  });
+
+  it("admits a test-mode waiter when a slot frees, without charging", async () => {
+    process.env[TEST_MODE_SECRET_ENV] = SECRET;
+    setCheckConcurrencyForTests(1);
+    const { app, counts } = liveApp();
+    const releasers: Array<() => void> = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = () =>
+      new Promise((resolve) => {
+        releasers.push(() => resolve(htmlResponse(LIVE_HTML)));
+      });
+    try {
+      const first = app.request("/v1/verify", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [TEST_MODE_HEADER]: SECRET,
+        },
+        body: JSON.stringify({ url: "https://example.com/jobs/1" }),
+      });
+      await waitFor(() => releasers.length === 1);
+      const second = app.request("/v1/verify/job", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [TEST_MODE_HEADER]: SECRET,
+        },
+        body: JSON.stringify({ url: "https://example.com/jobs/2" }),
+      });
+      await waitFor(() => checkQueueDepthForTests() === 1);
+      assert.equal(counts().verifyCalls, 0);
+      assert.equal(counts().settleCalls, 0);
+      releasers.shift()?.();
+      const done = await first;
+      assert.equal(done.status, 200);
+      await waitFor(() => releasers.length === 1);
+      assert.equal(checkQueueDepthForTests(), 0);
+      assert.equal(counts().verifyCalls, 0, "admitted test mode still skips the facilitator");
+      releasers.shift()?.();
+      const admitted = await second;
+      assert.equal(admitted.status, 200);
+      assert.equal(counts().settleCalls, 0);
     } finally {
       for (const release of releasers) release();
       globalThis.fetch = original;
