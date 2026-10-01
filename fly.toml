@@ -16,18 +16,23 @@ primary_region = "sjc"
 
 # Privacy-safe paid_call + receipt SQLite. Patty must create this volume
 # before the first deploy that includes this mount (see README).
-# Each machine still has its own livecheck_data volume. Writes stay on the
-# machine that handled the request. Public GET /stats sums started machines
-# over the Fly private network. Do not copy one volume onto the other.
+# One machine, one livecheck_data volume (Craig: consolidate on snowy-wood).
+# Public GET /stats reads that SQLite file. Do not copy volumes together.
 [[mounts]]
   source = "livecheck_data"
   destination = "/data"
 
+# Sentinel's scheduler is an in-process poll inside the app process
+# (processes = ["app"], Docker CMD npm start). It only runs while this
+# machine is up. Do not stop, suspend, or wake-on-request:
+#   auto_stop_machines = "off"   — neither stop nor suspend (no sleep)
+#   auto_start_machines = false  — no start-on-request sleep cycle
+#   min_machines_running = 1     — keep the app process running
 [http_service]
   internal_port = 43127
   force_https = true
   auto_stop_machines = "off"
-  auto_start_machines = true
+  auto_start_machines = false
   min_machines_running = 1
   processes = ["app"]
 

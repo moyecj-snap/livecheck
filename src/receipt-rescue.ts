@@ -30,7 +30,7 @@ export const SEP8_ORPHAN_NOTE =
 
 export function dualMachineCosHelp(): string {
   return [
-    "Each Fly machine has its own livecheck_data volume. One /stats or one ssh is one volume.",
+    "Public /stats is the machine that answered (one SQLite file). unique_payers there is COUNT(DISTINCT payer), not a sum across volumes. One ssh is one volume.",
     "",
     `  839744b76061e8  summer-voice       ${FLY_MACHINES[0].holds}`,
     `  860792be4622e8  sparkling-violet   ${FLY_MACHINES[1].holds}`,

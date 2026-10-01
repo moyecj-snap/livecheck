@@ -7,8 +7,8 @@
  *   npm run paid-call:cos
  *   fly ssh console -a livecheck -C "npm run paid-call:cos"
  *
- * Dual-volume: Fly currently has two machines, each with its own
- * livecheck_data. One ssh is one volume. Pull both:
+ * One machine, one livecheck_data. unique_payers is COUNT(DISTINCT payer)
+ * in this file. Do not add unique_payers across leftover volumes.
  *   npm run paid-call:cos -- --machines-help
  *   fly machines list -a livecheck
  *   fly ssh console -a livecheck --machine <id> -C "npm run paid-call:cos -- --json"
@@ -45,7 +45,7 @@ import type { PaidCallRoute } from "../src/paid-call.js";
 import { dualMachineCosHelp } from "../src/receipt-rescue.js";
 
 const DUAL_VOLUME_NOTE =
-  "This report is one volume / one process. Fly app livecheck has two machines each with livecheck_data — sum nothing across pulls; run --machines-help and ssh each id.";
+  "This report is one volume / one process. unique_payers is COUNT(DISTINCT payer) in this SQLite file. Do not add unique_payers across machines. Public GET /stats is this volume unless LIVECHECK_STATS_FLEET=1, which withholds unique_payers.";
 
 type CosReport = {
   source: { kind: "sqlite" | "logs"; path?: string };
