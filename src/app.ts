@@ -193,9 +193,11 @@ async function handlePaidVerify(c: Context) {
   const url = typeof body === "object" && body !== null ? (body as { url?: unknown }).url : undefined;
   try {
     const target = parseTargetUrl(url);
-    const verdict = await verifyUrl(target);
     const route = responseRouteFromPath(c.req.path);
     if (!route) return c.json({ error: "not_found" }, 404);
+    const verdict = await verifyUrl(target, fetch, new Date(), {
+      atsApi: route === "verify" || route === "verify/job",
+    });
     recordSuccessfulPaidCheck({
       route,
       url: target,
