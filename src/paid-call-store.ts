@@ -55,7 +55,12 @@ export type PaidCallRow = {
 
 export type RouteCounts = {
   calls: number;
-  unique_payers: number;
+  /**
+   * COUNT(DISTINCT payer) on one SQLite file. Null payers are not counted.
+   * Null here means the count was withheld (emergency fleet sum). Never a
+   * sum of per-volume distincts.
+   */
+  unique_payers: number | null;
 };
 
 export type WindowCounts = {

@@ -177,13 +177,13 @@ export function statsMachineId(): string | null {
 }
 
 export const LOCAL_VOLUME_NOTE =
-  "Counts are this Fly machine's livecheck_data volume only. On Fly, public GET /stats sums started machines (store.scope=fleet_volumes); this document is one volume. CoS: fly machines list -a livecheck, then fly ssh console -a livecheck --machine <id> -C \"npm run paid-call:cos\".";
+  "Counts are this Fly machine's livecheck_data volume only. unique_payers is COUNT(DISTINCT payer) in this SQLite file (null payers are not a payer). Public GET /stats is this volume, on Fly and off. Emergency multi-machine summing is LIVECHECK_STATS_FLEET=1 and withholds unique_payers instead of adding per-volume distincts. CoS: fly ssh console -a livecheck -C \"npm run paid-call:cos\".";
 
 export const FLEET_VOLUME_NOTE =
-  "Counts sum each started Fly machine's livecheck_data volume (store.scope=fleet_volumes). Writes are partitioned across volumes, not replicated, so the sum is the fleet total and is not a second copy of one machine. CI benches are not summed. Stopped machines are omitted. Per-machine CoS: fly machines list -a livecheck, then fly ssh console -a livecheck --machine <id> -C \"npm run paid-call:cos\". scope=local reads only the machine that answered.";
+  "Emergency multi-machine sum (LIVECHECK_STATS_FLEET=1, store.scope=fleet_volumes). Row counts add each included machine's livecheck_data volume. unique_payers is null: a sum of per-volume distincts is not a fleet-wide distinct. Writes are partitioned, not replicated. CI benches are not summed. Stopped machines are omitted. The default public document is one machine. Per-machine CoS: fly machines list -a livecheck, then fly ssh console -a livecheck --machine <id> -C \"npm run paid-call:cos\". scope=local reads only the machine that answered.";
 
 export const PARTIAL_FLEET_VOLUME_NOTE =
-  "Fleet sum is incomplete: at least one started machine did not answer. Included machines are store.machines. Missing machines are omitted, not treated as zero. Do not read active_watchers, checks_run, change_events, or paid_calls as the full fleet until scope is fleet_volumes.";
+  "Fleet sum is incomplete: at least one started machine did not answer. Included machines are store.machines. Missing machines are omitted, not treated as zero. unique_payers is null on this document so a partial sum of distincts is not published. Do not read active_watchers, checks_run, change_events, or paid_calls as the full fleet until scope is fleet_volumes.";
 
 const BAZAAR_NOTE =
   "Unpaid POST /v1/check, POST /v1/watch, and POST /v1/watch/renew include extensions.bazaar (input schema, output schema, and an example). Bazaar copy on POST /v1/confirm stays lead_submit-primary. order_placed is a separate fixed-price resource. This is 402 discovery metadata, not a claim that a CDP catalog index is complete.";
@@ -210,12 +210,10 @@ export function trafficHonestyNote(input: {
       : `traffic.external omits ${input.walletCount} configured team wallets (built-in list plus LIVECHECK_INTERNAL_WALLETS).`,
     "One-shot check receipts have no payer and stay in both checks_run totals. paid_calls with a null payer stay in external.",
     "traffic.payers counts verify and confirm paid_calls only.",
+    input.fleet
+      ? "unique_payers is withheld on this fleet document. Adding per-volume distinct payers is not a fleet-wide distinct."
+      : "unique_payers is COUNT(DISTINCT payer) on this machine's SQLite.",
   ];
-  if (input.fleet) {
-    parts.push(
-      "On a fleet sum, unique_payers adds per-volume distinct payers and is not a fleet-wide distinct.",
-    );
-  }
   if (input.walletCountsDisagree) {
     parts.push("Included machines disagree on how many internal wallets are configured. This count is the answering machine.");
   }
@@ -338,8 +336,18 @@ function addRouteCounts(
 ): WindowCounts["verify"] {
   return {
     calls: left.calls + right.calls,
-    unique_payers: left.unique_payers + right.unique_payers,
+    // A sum of per-volume COUNT(DISTINCT) values is not a distinct.
+    unique_payers: null,
   };
+}
+
+/** Drop distinct-payer fields on any multi-volume document, including partial sums. */
+export function withholdUniquePayers(payers: TrafficPayers): TrafficPayers {
+  const window = (counts: WindowCounts): WindowCounts => ({
+    verify: { calls: counts.verify.calls, unique_payers: null },
+    confirm: { calls: counts.confirm.calls, unique_payers: null },
+  });
+  return { available: payers.available, l7d: window(payers.l7d), l30d: window(payers.l30d) };
 }
 
 function addWindowCounts(left: WindowCounts, right: WindowCounts): WindowCounts {
@@ -405,7 +413,7 @@ export function publishedTraffic(doc: StatsDocument): TrafficHonesty | undefined
 /**
  * Sum per-volume wallet splits. A peer without `traffic` still adds its
  * sentinel headlines to `all` (that is what the old document counted) and
- * marks external incomplete. unique_payers stays a per-volume sum.
+ * marks external incomplete. unique_payers is withheld, never added.
  */
 export function mergeTrafficHonesty(
   local: StatsDocument,
@@ -458,8 +466,8 @@ export function mergeTrafficHonesty(
     }),
     internal_wallets_configured: walletCount,
     external_complete: externalComplete,
-    all,
-    external,
+    all: { ...all, payers: withholdUniquePayers(all.payers) },
+    external: { ...external, payers: withholdUniquePayers(external.payers) },
   };
 }
 
@@ -592,10 +600,11 @@ function payerTable(doc: StatsDocument): string {
     return `<h3>Payers</h3>
   <p class="muted">Verify and confirm payer windows are not published for this response. A closed paid-call store is missing, not zero. Check and watch payers are not in this table.</p>`;
   }
+  const payerCell = (value: number | null) => (value === null ? "withheld" : String(value));
   const row = (audience: string, windowLabel: string, counts: WindowCounts) =>
-    `<tr><td>${audience}</td><td>${windowLabel}</td><td>${counts.verify.calls}</td><td>${counts.verify.unique_payers}</td><td>${counts.confirm.calls}</td><td>${counts.confirm.unique_payers}</td></tr>`;
+    `<tr><td>${audience}</td><td>${windowLabel}</td><td>${counts.verify.calls}</td><td>${payerCell(counts.verify.unique_payers)}</td><td>${counts.confirm.calls}</td><td>${payerCell(counts.confirm.unique_payers)}</td></tr>`;
   return `<h3>Payers</h3>
-  <p class="muted">Verify and confirm paid_calls only. All includes internal test traffic. External omits configured team wallets. Null payers stay in external calls and are not a unique payer. On a fleet sum, unique payers add per volume.</p>
+  <p class="muted">Verify and confirm paid_calls only. All includes internal test traffic. External omits configured team wallets. Null payers stay in external calls and are not a unique payer. On this machine, unique payers are COUNT(DISTINCT payer). A fleet document shows withheld instead of adding per-volume distincts.</p>
   <table>
     <thead>
       <tr><th>Audience</th><th>Window</th><th>Verify calls</th><th>Verify unique payers</th><th>Confirm calls</th><th>Confirm unique payers</th></tr>

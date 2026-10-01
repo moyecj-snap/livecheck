@@ -287,14 +287,23 @@ export type PublicStatsOptions = {
   useCache?: boolean;
 };
 
+/** Emergency only. Default public /stats is the answering machine's SQLite. */
+export function statsFleetEnabled(env: NodeJS.ProcessEnv): boolean {
+  const raw = env.LIVECHECK_STATS_FLEET?.trim().toLowerCase() ?? "";
+  return raw === "1" || raw === "true" || raw === "on" || raw === "yes";
+}
+
 /**
- * Public honesty document. Off Fly (no FLY_APP_NAME) this is the local volume.
- * On Fly it sums started peers over the private network. Peer failure is a
- * partial scope, not a silent zero.
+ * Public honesty document. Default is this machine's SQLite, including on Fly,
+ * so unique_payers stays COUNT(DISTINCT payer). LIVECHECK_STATS_FLEET=1 sums
+ * started peers over the private network and withholds unique_payers. Peer
+ * failure is a partial scope, not a silent zero. One started machine stays
+ * this_machine_volume.
  */
 export async function buildPublicStatsDocument(options: PublicStatsOptions = {}): Promise<StatsDocument> {
   const env = options.env ?? process.env;
   const local = buildStatsDocument(options.now);
+  if (!statsFleetEnabled(env)) return local;
   const app = env.FLY_APP_NAME?.trim().toLowerCase() ?? "";
   if (!/^[a-z0-9-]+$/.test(app)) return local;
 
@@ -316,6 +325,8 @@ export async function buildPublicStatsDocument(options: PublicStatsOptions = {})
       { machineId: null, included: false, error: discoveryError },
     ]);
   }
+
+  if (peerIds.length === 0) return local;
 
   const port = listenPort(env);
   const peers = await Promise.all(
