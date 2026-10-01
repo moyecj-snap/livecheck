@@ -35,6 +35,7 @@ import { FIXTURES } from "./fixtures.js";
 import { LLMS_TXT, llmsTxtHeaders } from "./llms.js";
 import { recordSuccessfulPaidCheck, responseRouteFromPath, withPaidCallContext } from "./paid-call.js";
 import { applyPaymentGate, settlementMode } from "./payments.js";
+import { withSettleAbortContext } from "./settle-abort.js";
 import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl, publicWatchChainTopupUrl, publicWatchRenewUrl, publicWatchUrl } from "./public-url.js";
 import { isReceiptId } from "./confirm-id.js";
 import {
@@ -59,6 +60,8 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
   app.use(withPaidCallContext());
   app.use(withConfirmPaymentContext());
   app.use(withWatchPayerContext());
+  // Outside the payment gate so facilitator.settle still sees the request signal.
+  app.use(withSettleAbortContext());
   app.use(paymentGate);
 
   app.get("/openapi.json", (c) => {
