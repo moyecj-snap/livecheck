@@ -5,7 +5,7 @@
   "tools": [
     {
       "name": "livecheck_verify",
-      "description": "Check whether a specific job, Shopify/HTML product, or eBay item URL is still live. Returns live|closed|unknown. $0.01 USDC on Base via x402. Unpaid → HTTP 402.",
+      "description": "Check whether a specific job, Shopify/HTML product, or eBay item URL is still live. Returns live|closed|unknown. $0.01 USDC on Base via x402. Unpaid → HTTP 402. On 503, wait for Retry-After and retry. For a list of URLs, send up to 8 checks at a time.",
       "method": "POST",
       "url": "https://livecheck.fly.dev/v1/verify",
       "price_usd": 0.01,

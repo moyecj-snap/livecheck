@@ -91,7 +91,7 @@ export function createLivecheckMcp(): McpServer {
     version: MCP_SERVER_VERSION,
   });
 
-  const verifyDescription = `Ask Livecheck whether a specific URL is still a live primary source. POSTs {url} to ${livecheckVerifyUrl()} ($0.01 USDC). ${NO_WALLET_NOTE} HTTP 200 returns the verify JSON as-is.`;
+  const verifyDescription = `Ask Livecheck whether a specific URL is still a live primary source. POSTs {url} to ${livecheckVerifyUrl()} ($0.01 USDC). ${NO_WALLET_NOTE} HTTP 200 returns the verify JSON as-is. On 503, wait for Retry-After and retry. For a list of URLs, send up to 8 checks at a time.`;
 
   server.registerTool(
     "verify_listing",
