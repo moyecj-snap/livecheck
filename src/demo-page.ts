@@ -17,8 +17,9 @@ const EXAMPLE_VERDICT = {
   checked_at: "2026-08-30T21:00:00Z",
   title: "Staff Backend Engineer — Northwind Labs",
   signals: ["apply form present", "no closure banner"],
-  confidence: 0.82,
+  confidence: 0.92,
   price_usd: PRICE_USD,
+  route: "verify",
 };
 
 export function demoHtml(origin: string): string {

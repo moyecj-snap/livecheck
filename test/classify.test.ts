@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { classify } from "../src/classify.js";
+import { CLEAR_LIVE_JOB_CONFIDENCE, classify } from "../src/classify.js";
 import { FIXTURES } from "../src/fixtures.js";
 import { PRICE_USD } from "../src/config.js";
 import type { FetchedPage } from "../src/types.js";
@@ -35,6 +35,8 @@ describe("classify fixtures", () => {
     assert.equal(verdict.status, "live");
     assert.ok(verdict.signals.includes("apply form present"));
     assert.ok(verdict.signals.includes("no closure banner"));
+    assert.equal(verdict.confidence, CLEAR_LIVE_JOB_CONFIDENCE);
+    assert.ok(verdict.confidence > 0.82);
     assert.equal(verdict.price_usd, PRICE_USD);
   });
 
@@ -88,6 +90,7 @@ describe("classify fixtures", () => {
     assert.equal(verdict.status, "closed");
     assert.ok(verdict.signals.includes("http_404"));
     assert.equal(verdict.http_status, 404);
+    assert.equal(verdict.confidence, 0.95);
   });
 
   it("flags a careers homepage as not a specific posting", () => {
@@ -139,6 +142,7 @@ describe("classify fixtures", () => {
     assert.equal(verdict.status, "unknown");
     assert.ok(verdict.signals.includes("challenge_page"));
     assert.equal(verdict.signals.includes("apply form present"), false);
+    assert.ok(verdict.confidence <= 0.6);
   });
 
   it("marks a just-a-moment interstitial on a product URL as challenge_page, not in-stock", () => {
@@ -178,6 +182,7 @@ describe("classify fixtures", () => {
     assert.equal(verdict.status, "live");
     assert.ok(verdict.signals.includes("in-stock"));
     assert.equal(verdict.signals.includes("challenge_page"), false);
+    assert.equal(verdict.confidence, 0.8);
   });
 
   it("marks a Shopify sold-out product as closed + sold-out", () => {
@@ -284,6 +289,56 @@ describe("classify fixtures", () => {
     assert.equal(verdict.status, "unknown");
     assert.equal(verdict.signals.includes("apply form present"), false);
     assert.notEqual(verdict.status, "live");
+  });
+
+  it("keeps a non-specific apply page below the clear-live score", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://example.com/opening",
+        httpStatus: 200,
+        html: `<!doctype html><html><head><title>Opening</title></head><body>
+          <h1>Opening</h1><p>One role, not a board.</p>
+          <form action="/apply" method="post"><button>Apply Now</button></form>
+        </body></html>`,
+      }),
+    );
+    assert.equal(verdict.status, "live");
+    assert.equal(verdict.confidence, 0.78);
+    assert.ok(verdict.confidence < CLEAR_LIVE_JOB_CONFIDENCE);
+  });
+
+  it("does not treat a Workday JavaScript shell with Apply as a clear live posting", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://acme.myworkdayjobs.com/en-US/careers/job/12345",
+        httpStatus: 200,
+        html: `<!doctype html><html><head><title>Job</title></head>
+          <body><div id="root"></div><a href="#">Apply</a>
+          <p>Enable JavaScript to view this application.</p></body></html>`,
+      }),
+    );
+    assert.equal(verdict.status, "unknown");
+    assert.ok(verdict.signals.includes("js_shell"));
+    assert.ok(verdict.confidence <= 0.5);
+    assert.ok(verdict.confidence < CLEAR_LIVE_JOB_CONFIDENCE);
+    assert.equal(verdict.signals.includes("challenge_page"), false);
+  });
+
+  it("scores a rendered Workday posting with an apply form as clear live", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://acme.myworkdayjobs.com/en-US/careers/job/Commercial-Policy-Lead_JR12345",
+        httpStatus: 200,
+        html: `<!doctype html><html><head><title>Commercial Policy Lead</title></head><body>
+          <h1>Commercial Policy Lead</h1>
+          <article><p>Own commercial policy for the Discord marketplace. This posting includes the full description, location, and team in the HTML response, so it is not an empty JavaScript shell.</p></article>
+          <form action="/apply" method="post"><button type="submit">Apply Now</button></form>
+        </body></html>`,
+      }),
+    );
+    assert.equal(verdict.status, "live");
+    assert.equal(verdict.confidence, CLEAR_LIVE_JOB_CONFIDENCE);
+    assert.equal(verdict.signals.includes("js_shell"), false);
   });
 
   it("marks a 404 product URL as closed", () => {

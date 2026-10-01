@@ -266,6 +266,37 @@ describe("HTTP paid-call logs", () => {
     assert.equal(lines[0].includes(target), false);
   });
 
+  it("stores the specific verify and confirm route on the paid_call line", async () => {
+    const jobLines = await capturePaidCallLogs(async () => {
+      const res = await fetch(`${origin}/v1/verify/job`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
+        body: JSON.stringify({ url: `${origin}/fixtures/live-apply-now` }),
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as { route?: string };
+      assert.equal(body.route, "verify/job");
+    });
+    assert.equal(jobLines.length, 1);
+    assert.equal((JSON.parse(jobLines[0]) as { route: string }).route, "verify/job");
+
+    const orderLines = await capturePaidCallLogs(async () => {
+      const res = await fetch(`${origin}/v1/confirm/order`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
+        body: JSON.stringify({
+          url: `${origin}/fixtures/confirm/order-thank-you-id`,
+          intent: "order_placed",
+        }),
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as { route?: string };
+      assert.equal(body.route, "confirm/order");
+    });
+    assert.equal(orderLines.length, 1);
+    assert.equal((JSON.parse(orderLines[0]) as { route: string }).route, "confirm/order");
+  });
+
   it("unpaid verify does not emit livecheck.paid_call", async () => {
     const lines = await capturePaidCallLogs(async () => {
       const res = await fetch(`${origin}/v1/verify`, {

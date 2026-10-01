@@ -33,8 +33,9 @@ export const VERIFY_EXAMPLE = {
   checked_at: "2026-08-30T21:00:00Z",
   title: "Staff Backend Engineer — Northwind Labs",
   signals: ["apply form present", "no closure banner"],
-  confidence: 0.82,
+  confidence: 0.92,
   price_usd: PRICE_USD,
+  route: "verify",
 } as const;
 
 /** Paid 200 shape for OpenAPI. Bazaar 402 example stays VERIFY_EXAMPLE (no watch). */
@@ -59,6 +60,12 @@ export const VERIFY_OUTPUT_SCHEMA = {
     signals: { type: "array", items: { type: "string" } },
     confidence: { type: "number" },
     price_usd: { type: "number" },
+    route: {
+      type: "string",
+      description:
+        "API path that produced this response, after /v1/ and without a leading slash.",
+      enum: ["verify", "verify/job", "verify/listing"],
+    },
     watch: WATCH_HINT_SCHEMA,
   },
   required: [
@@ -70,6 +77,7 @@ export const VERIFY_OUTPUT_SCHEMA = {
     "signals",
     "confidence",
     "price_usd",
+    "route",
   ],
 } as const;
 
@@ -180,6 +188,7 @@ export const CONFIRM_EXAMPLE = {
   http_status: 200,
   fetched_at: "2026-09-06T17:00:00Z",
   price_usd: CONFIRM_PRICE_USD,
+  route: "confirm",
   receipt: {
     hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     verify_url: "https://livecheck.fly.dev/v1/receipt/cfm_01J8Z0K3N4P5Q6R7S8T9V0WXYZ",
@@ -211,6 +220,12 @@ export const CONFIRM_OUTPUT_SCHEMA = {
     url: { type: "string" },
     canonical_url: { type: "string" },
     price_usd: { type: "number" },
+    route: {
+      type: "string",
+      description:
+        "API path that produced this response, after /v1/ and without a leading slash.",
+      enum: ["confirm", "confirm/order"],
+    },
     receipt: {
       type: "object",
       properties: {
@@ -248,6 +263,7 @@ export const CONFIRM_OUTPUT_SCHEMA = {
     "url",
     "canonical_url",
     "price_usd",
+    "route",
     "receipt",
   ],
 } as const;
@@ -290,6 +306,7 @@ export const ORDER_CONFIRM_EXAMPLE = {
   http_status: 200,
   fetched_at: "2026-09-06T17:00:00Z",
   price_usd: ORDER_PLACED_PRICE_USD,
+  route: "confirm/order",
   receipt: {
     hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     verify_url: "https://livecheck.fly.dev/v1/receipt/cfm_01J8Z0K3N4P5Q6R7S8T9V0WORD",

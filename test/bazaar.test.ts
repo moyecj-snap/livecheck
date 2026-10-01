@@ -59,10 +59,13 @@ describe("bazaar discovery metadata", () => {
       "signals",
       "confidence",
       "price_usd",
+      "route",
     ]) {
       assert.ok(key in (example.output?.example ?? {}), `expected output example.${key}`);
     }
     assert.equal(example.output?.example?.price_usd, 0.01);
+    assert.equal(example.output?.example?.route, "verify");
+    assert.equal(example.output?.example?.confidence, 0.92);
   });
 
   it("info.input validates against schema.properties.input (CDP settle check)", () => {

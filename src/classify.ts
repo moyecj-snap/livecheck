@@ -219,6 +219,30 @@ function countProductCards(html: string): number {
   return cards?.length ?? 0;
 }
 
+/** Specific posting, HTTP 2xx, apply form, and no closure banner. Previously a flat 0.82. */
+export const CLEAR_LIVE_JOB_CONFIDENCE = 0.92;
+/** Apply form on a page that is not a specific posting URL. */
+const SOFT_LIVE_JOB_CONFIDENCE = 0.78;
+
+const JS_SHELL_PHRASES = ["enable javascript", "javascript is required", "javascript to view this"];
+
+/**
+ * Empty SPA shells. A stray Apply control on an empty mount is not a clear
+ * live posting. A rendered Workday description without that shell is eligible
+ * for the clear-live score.
+ */
+function looksLikeJsShell(html: string, text: string, url: string): boolean {
+  const host = extractHostPath(url).host;
+  const workday = host.endsWith("myworkdayjobs.com") || host.endsWith(".workday.com");
+  const visible = text.replace(/\s+/g, " ").trim();
+  const thin = visible.length < 280;
+  const enableJs = JS_SHELL_PHRASES.some((phrase) => visible.includes(phrase));
+  const emptyRoot = /id=["'](?:root|app)["'][^>]*>\s*<\/div>/i.test(html);
+  if (emptyRoot && (workday || enableJs)) return true;
+  if (workday && enableJs && thin) return true;
+  return false;
+}
+
 function isChallengeInterstitial(html: string, text: string, realProductPage: boolean): boolean {
   if (includesPhrase(text, CHALLENGE_INTERSTITIAL_PHRASES) || includesPhrase(html, CHALLENGE_INTERSTITIAL_PHRASES)) {
     return true;
@@ -284,6 +308,8 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
   const soldOutPhrase = hasVisibleSoldOut(html, text);
   const manyProductCards = countProductCards(html) >= 3;
   const productPage = specificProduct || (buy && !collectionOrCategory && !manyProductCards && !specificPosting);
+  const jsShell =
+    looksLikeJsShell(html, text, page.canonicalUrl) || looksLikeJsShell(html, text, page.requestedUrl);
   const challenge = isChallengeInterstitial(html, text, specificProduct || buy);
   if (challenge) {
     signals.push("challenge_page");
@@ -327,6 +353,7 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
     status !== "closed" &&
     !challenge &&
     !loginwall &&
+    !jsShell &&
     !collectionOrCategory &&
     page.httpStatus >= 200 &&
     page.httpStatus < 300 &&
@@ -338,7 +365,7 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
     signals.push("apply form present");
     signals.push("no closure banner");
     status = "live";
-    confidence = specificPosting ? 0.82 : 0.78;
+    confidence = specificPosting ? CLEAR_LIVE_JOB_CONFIDENCE : SOFT_LIVE_JOB_CONFIDENCE;
   } else if (
     status !== "closed" &&
     apply &&
@@ -346,6 +373,7 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
     !boardOrSearch &&
     !challenge &&
     !loginwall &&
+    !jsShell &&
     !collectionOrCategory
   ) {
     signals.push("apply form present");
@@ -376,6 +404,12 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
     signals.push("in-stock");
     status = "live";
     confidence = specificProduct ? 0.8 : 0.74;
+  }
+
+  if (jsShell && status !== "closed" && !challenge && !loginwall) {
+    signals.push("js_shell");
+    status = "unknown";
+    confidence = 0.4;
   }
 
   if (status === "unknown" && page.httpStatus >= 200 && page.httpStatus < 300 && signals.length === 0) {

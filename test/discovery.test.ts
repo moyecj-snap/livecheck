@@ -228,6 +228,24 @@ describe("discovery documents (mock gate)", () => {
     assert.equal(listing["x-guidance"], OPENAPI_VERIFY_LISTING_DESCRIPTION);
     assert.deepEqual(listing.tags, [...OPENAPI_VERIFY_LISTING_TAGS]);
     assert.equal(listing["x-payment-info"]?.price?.amount, "0.01");
+    const routeOf = (operation: typeof op) =>
+      (
+        operation?.responses as {
+          "200"?: {
+            content?: {
+              "application/json"?: {
+                example?: { route?: string };
+                schema?: { properties?: { route?: { enum?: string[] } }; required?: string[] };
+              };
+            };
+          };
+        }
+      )?.["200"]?.content?.["application/json"];
+    assert.equal(routeOf(op)?.example?.route, "verify");
+    assert.equal(routeOf(job)?.example?.route, "verify/job");
+    assert.equal(routeOf(listing)?.example?.route, "verify/listing");
+    assert.ok(routeOf(op)?.schema?.required?.includes("route"));
+    assert.deepEqual(routeOf(job)?.schema?.properties?.route?.enum, ["verify", "verify/job", "verify/listing"]);
     assert.equal(op["x-payment-info"]?.price?.mode, "fixed");
     assert.equal(op["x-payment-info"]?.price?.currency, "USD");
     assert.equal(op["x-payment-info"]?.price?.amount, "0.01");

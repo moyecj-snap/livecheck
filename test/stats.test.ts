@@ -37,7 +37,7 @@ import {
   rememberConfirmReceipt,
   type ConfirmReceiptRow,
 } from "../src/receipt-store.js";
-import { buildStatsDocument } from "../src/stats.js";
+import { buildStatsDocument, statsHtml } from "../src/stats.js";
 import {
   closeWatchStore,
   initWatchStore,
@@ -475,7 +475,7 @@ describe("OpenAPI Confirm v1.0 spine", () => {
       doc.paths?.["/v1/confirm"]?.post?.requestBody?.content?.["application/json"]?.schema?.properties?.claim,
     );
     const schema = doc.paths?.["/v1/confirm"]?.post?.responses?.["200"]?.content?.["application/json"]?.schema;
-    for (const key of ["id", "evidence_level", "confidence", "receipt"]) {
+    for (const key of ["id", "evidence_level", "confidence", "receipt", "route"]) {
       assert.ok(schema?.properties?.[key], `expected 200 schema property ${key}`);
       assert.ok(schema?.required?.includes(key), `expected required ${key}`);
     }
@@ -714,6 +714,53 @@ describe("internal wallet list and external payers", () => {
     assert.equal(doc.traffic.external.payers.l30d.verify.unique_payers, 1);
     assert.equal(doc.traffic.external.payers.l30d.confirm.unique_payers, 0);
     assert.equal(doc.intents.lead_submit.l7d.paid_calls, 1);
+    assert.equal(doc.traffic.routes_complete, true);
+    assert.equal(doc.traffic.label, "Includes internal test traffic.");
+    assert.equal(doc.traffic.all.payers.l7d.routes.verify.calls, 2);
+    assert.equal(doc.traffic.external.payers.l7d.routes.verify.calls, 1);
+    assert.equal(doc.traffic.all.payers.l7d.routes["verify/job"].calls, 0);
+  });
+
+  it("breaks external payers out by specific verify route", () => {
+    initPaidCallStore(":memory:");
+    const now = new Date("2026-09-12T12:00:00Z");
+    const external = "0x9999999999999999999999999999999999999999";
+    const other = "0x8888888888888888888888888888888888888888";
+    const when = new Date("2026-09-10T12:00:00Z");
+    const retain = (route: "verify" | "verify/job" | "verify/listing", payer: string) => {
+      assert.equal(
+        retainPaidCall(
+          buildPaidCallEvent(
+            { route, host: "example.com", url_hash: hashUrl(`https://example.com/${route}/${payer}`), status: "live" },
+            { payer },
+            when,
+          ),
+        ),
+        true,
+      );
+    };
+    retain("verify/job", DEFAULT_INTERNAL_WALLETS[0]);
+    retain("verify/job", external);
+    retain("verify", external);
+    retain("verify/listing", other);
+    const doc = buildStatsDocument(now);
+    assert.equal(doc.traffic.label, "Includes internal test traffic.");
+    assert.equal(doc.traffic.routes_complete, true);
+    assert.equal(doc.traffic.all.payers.l7d.verify.calls, 4);
+    assert.equal(doc.traffic.all.payers.l7d.verify.unique_payers, 3);
+    assert.equal(doc.traffic.all.payers.l7d.routes["verify/job"].calls, 2);
+    assert.equal(doc.traffic.all.payers.l7d.routes["verify/job"].unique_payers, 2);
+    assert.equal(doc.traffic.external.payers.l7d.routes.verify.calls, 1);
+    assert.equal(doc.traffic.external.payers.l7d.routes.verify.unique_payers, 1);
+    assert.equal(doc.traffic.external.payers.l7d.routes["verify/job"].calls, 1);
+    assert.equal(doc.traffic.external.payers.l7d.routes["verify/job"].unique_payers, 1);
+    assert.equal(doc.traffic.external.payers.l7d.routes["verify/listing"].calls, 1);
+    assert.equal(doc.traffic.external.payers.l7d.verify.calls, 3);
+    assert.equal(doc.traffic.external.payers.l7d.verify.unique_payers, 2);
+    const html = statsHtml(doc);
+    assert.match(html, /Includes internal test traffic/);
+    assert.match(html, /verify\/job/);
+    assert.match(html, /Payers by route/);
   });
 
   it("counts distinct external payers per route for L7d and L30d", () => {

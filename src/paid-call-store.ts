@@ -3,6 +3,10 @@ import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   PAID_CALL_EVENT,
+  PAID_CALL_ROUTES,
+  isConfirmPaidRoute,
+  isPaidCallRoute,
+  isVerifyPaidRoute,
   looksLikeEmail,
   sanitizeHttpStatus,
   sanitizePayer,
@@ -63,9 +67,16 @@ export type RouteCounts = {
   unique_payers: number | null;
 };
 
+/** Per stored route. Keys match `paid_calls.route`, not the family rollup. */
+export type PaidRouteCounts = Record<PaidCallRoute, RouteCounts>;
+
 export type WindowCounts = {
+  /** Family rollup: `verify` + `verify/job` + `verify/listing`. */
   verify: RouteCounts;
+  /** Family rollup: `confirm` + `confirm/order`. */
   confirm: RouteCounts;
+  /** Calls and distinct payers for each stored route. */
+  routes: PaidRouteCounts;
 };
 
 export type RetentionWindows = {
@@ -73,7 +84,7 @@ export type RetentionWindows = {
   l30d: WindowCounts;
 };
 
-/** Per-intent confirm-route counts. `unscoped` = route=confirm with no stored intent. */
+/** Per-intent confirm-family counts. `unscoped` = `confirm` or `confirm/order` with no stored intent. */
 export type ConfirmIntentCounts = {
   lead_submit: number;
   listing_published: number;
@@ -90,11 +101,13 @@ export type PaidCallStoreStatus =
   | { kind: "sqlite"; path: string }
   | { kind: "stdout"; reason: string };
 
-const TABLE_SQL = `
-CREATE TABLE IF NOT EXISTS paid_calls (
+/** CHECK list. SQLite will not change this on an existing table; see rebuildPaidCallsRouteCheck. */
+export const PAID_CALL_ROUTE_CHECK = `route IN ('verify', 'verify/job', 'verify/listing', 'confirm', 'confirm/order')`;
+
+const PAID_CALLS_COLUMNS = `
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts TEXT NOT NULL,
-  route TEXT NOT NULL CHECK (route IN ('verify', 'confirm')),
+  route TEXT NOT NULL CHECK (${PAID_CALL_ROUTE_CHECK}),
   payer TEXT,
   tx TEXT,
   payment_intent TEXT,
@@ -105,8 +118,15 @@ CREATE TABLE IF NOT EXISTS paid_calls (
   http_status INTEGER,
   user_agent TEXT,
   status TEXT
+`;
+
+const TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS paid_calls (
+${PAID_CALLS_COLUMNS}
 );
 `;
+
+const ROUTE_REBUILD_TABLE = "paid_calls_route_v2";
 
 const INDEXES_AFTER_MIGRATE = `
 CREATE INDEX IF NOT EXISTS idx_paid_calls_ts ON paid_calls(ts);
@@ -136,10 +156,21 @@ export function isoCutoff(now: Date, days: number): string {
   return new Date(now.getTime() - days * 86_400_000).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
+export function emptyRouteCounts(): PaidRouteCounts {
+  return {
+    verify: { calls: 0, unique_payers: 0 },
+    "verify/job": { calls: 0, unique_payers: 0 },
+    "verify/listing": { calls: 0, unique_payers: 0 },
+    confirm: { calls: 0, unique_payers: 0 },
+    "confirm/order": { calls: 0, unique_payers: 0 },
+  };
+}
+
 export function emptyWindowCounts(): WindowCounts {
   return {
     verify: { calls: 0, unique_payers: 0 },
     confirm: { calls: 0, unique_payers: 0 },
+    routes: emptyRouteCounts(),
   };
 }
 
@@ -171,11 +202,88 @@ function ensureColumn(db: DatabaseSync, table: string, name: string, ddl: string
   }
 }
 
+function paidCallsCreateSql(db: DatabaseSync): string | undefined {
+  const row = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'paid_calls'`)
+    .get() as { sql?: string } | undefined;
+  return row?.sql;
+}
+
+/**
+ * True when `paid_calls.route` already allows the specific aliases.
+ * A missing table is not current — the caller creates it.
+ */
+export function paidCallsRouteCheckIsSpecific(sql: string | undefined): boolean {
+  if (!sql) return false;
+  return sql.includes("'verify/job'") && sql.includes("'verify/listing'") && sql.includes("'confirm/order'");
+}
+
+/**
+ * SQLite cannot ALTER a CHECK. Copy rows into a new table whose CHECK lists
+ * `verify`, `verify/job`, `verify/listing`, `confirm`, and `confirm/order`,
+ * then rename it over `paid_calls`. Existing `verify` and `confirm` values
+ * stay as stored (the alias was not known). Idempotent: a current CHECK is
+ * left alone. A crashed rebuild drops the leftover `paid_calls_route_v2`.
+ */
+function rebuildPaidCallsRouteCheck(db: DatabaseSync): void {
+  const sql = paidCallsCreateSql(db);
+  if (!sql) {
+    db.exec(TABLE_SQL);
+    return;
+  }
+  if (paidCallsRouteCheckIsSpecific(sql)) return;
+
+  const copyColumns = [
+    "id",
+    "ts",
+    "route",
+    "payer",
+    "tx",
+    "payment_intent",
+    "host",
+    "url_sha256",
+    "intent",
+    "verdict",
+    "http_status",
+    "user_agent",
+    "status",
+  ].filter((name) => paidCallStoreTableColumns(db, "paid_calls").has(name));
+  const columnList = copyColumns.join(", ");
+  try {
+    db.exec(`
+      BEGIN IMMEDIATE;
+      DROP TABLE IF EXISTS ${ROUTE_REBUILD_TABLE};
+      CREATE TABLE ${ROUTE_REBUILD_TABLE} (
+      ${PAID_CALLS_COLUMNS}
+      );
+      INSERT INTO ${ROUTE_REBUILD_TABLE} (${columnList})
+      SELECT ${columnList} FROM paid_calls;
+      DROP TABLE paid_calls;
+      ALTER TABLE ${ROUTE_REBUILD_TABLE} RENAME TO paid_calls;
+      COMMIT;
+    `);
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // The failed script may already have rolled back.
+    }
+    throw error;
+  }
+  const sequence = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'`)
+    .get() as { name?: string } | undefined;
+  if (sequence) {
+    db.prepare(`UPDATE sqlite_sequence SET name = 'paid_calls' WHERE name = ?`).run(ROUTE_REBUILD_TABLE);
+  }
+}
+
 /**
  * Idempotent upgrade. Safe on a fresh DB and on a volume whose paid_calls
  * table predates intent/verdict (those rows stay NULL = unscoped) or the
  * later http_status / user_agent / verify status columns (those stay NULL).
- * ALTER columns before any index that names them.
+ * ALTER columns before any index that names them, then rebuild the route
+ * CHECK if it still allows only verify|confirm.
  *
  * `host` is the target domain. Facilitator is not a column: the x402 settle
  * payload does not name one. Check and watch are not rows in this table.
@@ -190,6 +298,7 @@ export function migratePaidCallStore(db: DatabaseSync): void {
   ensureColumn(db, "paid_calls", "http_status", "http_status INTEGER");
   ensureColumn(db, "paid_calls", "user_agent", "user_agent TEXT");
   ensureColumn(db, "paid_calls", "status", "status TEXT");
+  rebuildPaidCallsRouteCheck(db);
   db.exec(INDEXES_AFTER_MIGRATE);
 }
 
@@ -226,7 +335,7 @@ export function isSha256Hex(value: string): boolean {
  * Re-sanitizes payer/tx/payment_intent. Never copies a raw URL.
  */
 export function paidCallEventToRow(event: PaidCallEvent): PaidCallRow | undefined {
-  if (event.route !== "verify" && event.route !== "confirm") return undefined;
+  if (!isPaidCallRoute(event.route)) return undefined;
   const url_sha256 = event.url_hash?.trim() ?? "";
   if (!isSha256Hex(url_sha256)) return undefined;
   const row: PaidCallRow = {
@@ -241,13 +350,13 @@ export function paidCallEventToRow(event: PaidCallEvent): PaidCallRow | undefine
   if (payer) row.payer = payer;
   if (tx) row.tx = tx;
   if (paymentIntent) row.payment_intent = paymentIntent;
-  if (event.route === "confirm") {
+  if (isConfirmPaidRoute(event.route)) {
     const intent = sanitizeConfirmIntent(event.intent);
     const verdict = sanitizeConfirmVerdict(event.verdict);
     if (intent) row.intent = intent;
     if (verdict) row.verdict = verdict;
   }
-  if (event.route === "verify") {
+  if (isVerifyPaidRoute(event.route)) {
     const status = sanitizeVerifyStatus(event.status);
     if (status) row.status = status;
   }
@@ -285,19 +394,38 @@ export function aggregatePaidCallRows(rows: readonly PaidCallRow[], now = new Da
 
 function aggregateSince(rows: readonly PaidCallRow[], sinceIso: string): WindowCounts {
   const out = emptyWindowCounts();
-  const payers: Record<PaidCallRoute, Set<string>> = {
-    verify: new Set(),
-    confirm: new Set(),
-  };
+  const payers = emptyPayerSets();
+  const verifyFamily = new Set<string>();
+  const confirmFamily = new Set<string>();
   for (const row of rows) {
     if (row.ts < sinceIso) continue;
-    if (row.route !== "verify" && row.route !== "confirm") continue;
-    out[row.route].calls += 1;
+    if (!isPaidCallRoute(row.route)) continue;
+    out.routes[row.route].calls += 1;
     if (row.payer) payers[row.route].add(row.payer);
+    if (isVerifyPaidRoute(row.route)) {
+      out.verify.calls += 1;
+      if (row.payer) verifyFamily.add(row.payer);
+    } else if (isConfirmPaidRoute(row.route)) {
+      out.confirm.calls += 1;
+      if (row.payer) confirmFamily.add(row.payer);
+    }
   }
-  out.verify.unique_payers = payers.verify.size;
-  out.confirm.unique_payers = payers.confirm.size;
+  for (const route of PAID_CALL_ROUTES) {
+    out.routes[route].unique_payers = payers[route].size;
+  }
+  out.verify.unique_payers = verifyFamily.size;
+  out.confirm.unique_payers = confirmFamily.size;
   return out;
+}
+
+function emptyPayerSets(): Record<PaidCallRoute, Set<string>> {
+  return {
+    verify: new Set(),
+    "verify/job": new Set(),
+    "verify/listing": new Set(),
+    confirm: new Set(),
+    "confirm/order": new Set(),
+  };
 }
 
 function prepareDatabase(path: string): DatabaseSync {
@@ -425,7 +553,7 @@ export function listPaidCallRows(db: DatabaseSync, sinceIso?: string): PaidCallR
   }>;
   const rows: PaidCallRow[] = [];
   for (const item of raw) {
-    if (item.route !== "verify" && item.route !== "confirm") continue;
+    if (!isPaidCallRoute(item.route)) continue;
     const row: PaidCallRow = {
       ts: item.ts,
       route: item.route,
@@ -438,8 +566,8 @@ export function listPaidCallRows(db: DatabaseSync, sinceIso?: string): PaidCallR
     const intent = sanitizeConfirmIntent(item.intent);
     const verdict = sanitizeConfirmVerdict(item.verdict);
     if (intent) row.intent = intent;
-    if (item.route === "confirm" && verdict) row.verdict = verdict;
-    if (item.route === "verify") {
+    if (isConfirmPaidRoute(item.route) && verdict) row.verdict = verdict;
+    if (isVerifyPaidRoute(item.route)) {
       const status = sanitizeVerifyStatus(item.status);
       if (status) row.status = status;
     }
@@ -465,30 +593,53 @@ export function queryRetentionWindows(
   };
 }
 
+const VERIFY_FAMILY_SQL = `('verify', 'verify/job', 'verify/listing')`;
+const CONFIRM_FAMILY_SQL = `('confirm', 'confirm/order')`;
+
+function payerExcludeClause(exclude: readonly string[]): string {
+  if (exclude.length === 0) return "";
+  return ` AND (payer IS NULL OR lower(payer) NOT IN (${exclude.map(() => "?").join(", ")}))`;
+}
+
+function queryFamilyCounts(
+  db: DatabaseSync,
+  sinceIso: string,
+  familySql: string,
+  exclude: readonly string[],
+): RouteCounts {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS calls,
+              COUNT(DISTINCT payer) AS unique_payers
+       FROM paid_calls
+       WHERE ts >= ? AND route IN ${familySql}${payerExcludeClause(exclude)}`,
+    )
+    .get(sinceIso, ...exclude) as { calls: number | bigint; unique_payers: number | bigint };
+  return { calls: Number(row.calls), unique_payers: Number(row.unique_payers) };
+}
+
 function queryWindow(db: DatabaseSync, sinceIso: string, excludePayers: readonly string[] = []): WindowCounts {
   const out = emptyWindowCounts();
   const exclude = [...new Set(excludePayers.map((payer) => payer.toLowerCase()))];
-  const payerClause =
-    exclude.length > 0
-      ? ` AND (payer IS NULL OR lower(payer) NOT IN (${exclude.map(() => "?").join(", ")}))`
-      : "";
   const rows = db
     .prepare(
       `SELECT route,
               COUNT(*) AS calls,
               COUNT(DISTINCT payer) AS unique_payers
        FROM paid_calls
-       WHERE ts >= ?${payerClause}
+       WHERE ts >= ?${payerExcludeClause(exclude)}
        GROUP BY route`,
     )
     .all(sinceIso, ...exclude) as Array<{ route: string; calls: number | bigint; unique_payers: number | bigint }>;
   for (const row of rows) {
-    if (row.route !== "verify" && row.route !== "confirm") continue;
-    out[row.route] = {
+    if (!isPaidCallRoute(row.route)) continue;
+    out.routes[row.route] = {
       calls: Number(row.calls),
       unique_payers: Number(row.unique_payers),
     };
   }
+  out.verify = queryFamilyCounts(db, sinceIso, VERIFY_FAMILY_SQL, exclude);
+  out.confirm = queryFamilyCounts(db, sinceIso, CONFIRM_FAMILY_SQL, exclude);
   return out;
 }
 
@@ -506,7 +657,7 @@ export function queryConfirmIntentCounts(db: DatabaseSync, sinceIso: string): Co
     .prepare(
       `SELECT intent, COUNT(*) AS n
        FROM paid_calls
-       WHERE route = 'confirm' AND ts >= ?
+       WHERE route IN ('confirm', 'confirm/order') AND ts >= ?
        GROUP BY intent`,
     )
     .all(sinceIso) as Array<{ intent: string | null; n: number | bigint }>;
@@ -541,7 +692,7 @@ export function aggregateConfirmIntentRows(rows: readonly PaidCallRow[], now = n
 function aggregateConfirmSince(rows: readonly PaidCallRow[], sinceIso: string): ConfirmIntentCounts {
   const out = emptyConfirmIntentCounts();
   for (const row of rows) {
-    if (row.route !== "confirm" || row.ts < sinceIso) continue;
+    if (!isConfirmPaidRoute(row.route) || row.ts < sinceIso) continue;
     if (row.intent) out[row.intent] += 1;
     else out.unscoped += 1;
   }
@@ -554,7 +705,7 @@ function aggregateConfirmSince(rows: readonly PaidCallRow[], sinceIso: string): 
  * Returns how many rows were updated.
  */
 export function backfillPaidCallIntentFromEvent(db: DatabaseSync, event: PaidCallEvent): number {
-  if (event.route !== "confirm") return 0;
+  if (!isConfirmPaidRoute(event.route)) return 0;
   const intent = sanitizeConfirmIntent(event.intent);
   const verdict = sanitizeConfirmVerdict(event.verdict);
   if (!intent) return 0;
@@ -564,9 +715,9 @@ export function backfillPaidCallIntentFromEvent(db: DatabaseSync, event: PaidCal
     .prepare(
       `UPDATE paid_calls
        SET intent = ?, verdict = COALESCE(?, verdict)
-       WHERE route = 'confirm' AND ts = ? AND url_sha256 = ? AND (intent IS NULL OR intent = '')`,
+       WHERE route = ? AND ts = ? AND url_sha256 = ? AND (intent IS NULL OR intent = '')`,
     )
-    .run(intent, verdict ?? null, event.ts, url_sha256);
+    .run(intent, verdict ?? null, event.route, event.ts, url_sha256);
   return Number(result.changes);
 }
 
@@ -587,7 +738,7 @@ export function parsePaidCallLogLine(line: string): PaidCallEvent | undefined {
     try {
       const parsed = JSON.parse(text) as Partial<PaidCallEvent>;
       if (parsed?.event !== PAID_CALL_EVENT) continue;
-      if (parsed.route !== "verify" && parsed.route !== "confirm") continue;
+      if (typeof parsed.route !== "string" || !isPaidCallRoute(parsed.route)) continue;
       if (typeof parsed.ts !== "string" || typeof parsed.url_hash !== "string") continue;
       return {
         event: PAID_CALL_EVENT,
