@@ -1,6 +1,10 @@
 # Livecheck
 
-Before you scrape a listing, check if it is still there. POST a specific job posting, Shopify or HTML product URL, or eBay item URL. Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404). Product pages are HTML-only (Shopify-class add-to-cart / sold-out); eBay item URLs use Browse availability, not sold comps. Not a search engine. $0.01 USDC per check on Base via x402.
+A **dead listing burns a run.** If an agent scrapes or acts on a URL that is already gone, that work is wasted.
+
+Before you scrape or act, POST the specific URL you already have to [`https://livecheck.fly.dev`](https://livecheck.fly.dev). Livecheck returns `live`, `closed`, or `unknown`. Status is not legitimacy. v1 is HTML and HTTP only.
+
+**Start here:** [Verify-first: first paid call](#verify-first-first-paid-call).
 
 This is a per-check agent API, not a platform. Agents pay **$0.01 USDC** per `POST /v1/verify`, **$0.02 USDC** per `POST /v1/check` (Sentinel one-shot condition), **$2.50 USDC** per `POST /v1/watch` (30-day standard watcher), **$2.50 USDC** per `POST /v1/watch/renew` (extend an active watcher; owner token + payment; `{id}` in the body), **$0.50 USDC** per `POST /v1/watch/{id}/chain/topup` (chain balance; owner token + payment), **$0.10 USDC** per `POST /v1/confirm` (`lead_submit` / `listing_published`), and **$0.25 USDC** per `POST /v1/confirm/order` (`order_placed`) on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md). x402 wants one fixed price per resource — dual pricing on a single path makes facilitator verify fail when settle-time `paymentRequirements` drift from the first 402.
 
