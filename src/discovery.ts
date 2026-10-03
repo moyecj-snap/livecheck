@@ -146,6 +146,9 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
       title: OPENAPI_INFO_TITLE,
       version: OPENAPI_VERSION,
       description: OPENAPI_INFO_DESCRIPTION,
+      contact: {
+        email: "moyecj@gmail.com",
+      },
       "x-guidance": OPENAPI_INFO_GUIDANCE,
       "x-tags": [...OPENAPI_INFO_TAGS],
     },
@@ -442,6 +445,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
       },
       "/v1/watch/{id}": {
         get: {
+          security: [],
           operationId: "getSentinelWatch",
           summary: "Read a watcher (owner token required)",
           description:
@@ -471,6 +475,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
           },
         },
         delete: {
+          security: [],
           operationId: "deleteSentinelWatch",
           summary: "Stop a watcher early (no refund)",
           description:
@@ -551,6 +556,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
       },
       "/v1/watch/{id}/events": {
         get: {
+          security: [],
           operationId: "listSentinelWatchEvents",
           summary: "Paginated watcher event history (30 days, free)",
           description:
@@ -721,6 +727,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
       },
       "/v1/receipt/{id}": {
         get: {
+          security: [],
           operationId: "getConfirmReceipt",
           summary: "Fetch a Confirm receipt by id",
           description:
@@ -743,6 +750,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
       },
       "/.well-known/livecheck-keys.json": {
         get: {
+          security: [],
           operationId: "livecheckKeys",
           summary: "Ed25519 public key for Confirm receipts",
           description: "Free JWKS-style document. keys is empty when signing is not configured.",
@@ -754,6 +762,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
       },
       "/stats": {
         get: {
+          security: [],
           operationId: "livecheckStats",
           summary: "Confirm and Sentinel counts",
           description:
