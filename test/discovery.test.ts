@@ -55,6 +55,7 @@ type OpenApiDoc = {
     title?: string;
     version?: string;
     description?: string;
+    contact?: { email?: string };
     "x-guidance"?: string;
     "x-tags"?: string[];
   };
@@ -199,6 +200,7 @@ describe("discovery documents (mock gate)", () => {
     assert.ok(listingIdx > jobIdx, "guidance must name /v1/verify/listing after /v1/verify/job");
     assert.ok(genericIdx > listingIdx, "generic /v1/verify must follow job and listing");
     assert.deepEqual(doc.info?.["x-tags"], [...OPENAPI_INFO_TAGS]);
+    assert.equal(doc.info?.contact?.email, "moyecj@gmail.com");
     assert.equal((doc.info as { iconUrl?: string } | undefined)?.iconUrl, undefined);
     assert.notEqual(doc.info?.description, VERIFY_DESCRIPTION);
     assert.match(VERIFY_DESCRIPTION, /not a search engine/i);
@@ -326,11 +328,44 @@ describe("discovery documents (mock gate)", () => {
       assert.equal(routeOp["x-payment-info"]?.price?.amount, route.amount);
       assert.equal(routeOp["x-payment-info"]?.intent_prices, undefined, `${route.path} must have one price, no intent_prices`);
     }
-    const stats = paths["/stats"] as { get?: { description?: string; tags?: string[] } } | undefined;
+    const stats = paths["/stats"] as { get?: { description?: string; tags?: string[]; security?: unknown } } | undefined;
     assert.match(stats?.get?.description ?? "", /Sentinel/);
     assert.match(doc.info?.["x-guidance"] ?? "", /\/v1\/watch\/renew/);
     assert.match(doc.info?.description ?? "", /watcher renew/);
     assert.ok(stats?.get?.tags?.includes("Sentinel"));
+    const httpMethods = ["get", "post", "put", "patch", "delete", "options", "head", "trace"] as const;
+    const freeOperations = [
+      ["/.well-known/livecheck-keys.json", "get"],
+      ["/stats", "get"],
+      ["/v1/receipt/{id}", "get"],
+      ["/v1/watch/{id}", "get"],
+      ["/v1/watch/{id}", "delete"],
+      ["/v1/watch/{id}/events", "get"],
+    ] as const;
+    const seenFree = new Set<string>();
+    for (const [path, pathItem] of Object.entries(paths)) {
+      const item = pathItem as Record<string, { "x-payment-info"?: unknown; security?: unknown } | undefined>;
+      for (const method of httpMethods) {
+        const operation = item[method];
+        if (!operation) continue;
+        const key = `${method} ${path}`;
+        if (operation["x-payment-info"]) {
+          assert.equal(operation.security, undefined, `${key} is paid and must not declare security`);
+          assert.equal(
+            freeOperations.some(([freePath, freeMethod]) => freePath === path && freeMethod === method),
+            false,
+            `${key} is paid`,
+          );
+        } else {
+          assert.deepEqual(operation.security, [], `${key} is free and must set security to []`);
+          seenFree.add(key);
+        }
+      }
+    }
+    assert.deepEqual(
+      [...seenFree].sort(),
+      freeOperations.map(([path, method]) => `${method} ${path}`).sort(),
+    );
   });
 
   it("GET /.well-known/x402 is free 200 JSON listing concrete paid URLs only", async () => {
