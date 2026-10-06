@@ -323,4 +323,32 @@ describe("stats fleet merge", () => {
     assert.equal(doc.traffic.all.payers.l7d.verify.unique_payers, null);
     assert.match(doc.store.machines?.find((machine) => !machine.included)?.error ?? "", /HTTP 500/);
   });
+
+  it("sums docs-example calls and does not treat a peer that predates the field as complete", () => {
+    const local = volume("8e4766c7d59608", (doc) => {
+      doc.traffic.docs_example.available = true;
+      doc.traffic.docs_example.calls = { l7d: 1, l30d: 2 };
+    });
+    const peer = volume("860792be4622e8", (doc) => {
+      doc.traffic.docs_example.available = true;
+      doc.traffic.docs_example.calls = { l7d: 4, l30d: 4 };
+    });
+    const merged = mergeFleetStats(local, [{ doc: peer, machineId: peer.store.fly_machine_id, included: true }]);
+    assert.equal(merged.traffic.docs_example.available, true);
+    assert.equal(merged.traffic.docs_example.calls.l7d, 5);
+    assert.equal(merged.traffic.docs_example.calls.l30d, 6);
+    assert.match(merged.traffic.note, /Included machines have 5 L7d \/ 6 L30d docs-example paid_calls/);
+    assert.match(statsHtml(merged), /Docs-example URLs are test traffic/);
+    assert.match(statsHtml(merged), /5 L7d \/ 6 L30d paid calls/);
+
+    const legacy = volume("860792be4622e8", (doc) => {
+      delete (doc.traffic as { docs_example?: unknown }).docs_example;
+    });
+    const partial = mergeFleetStats(local, [{ doc: legacy, machineId: legacy.store.fly_machine_id, included: true }]);
+    assert.equal(partial.traffic.docs_example.available, false);
+    assert.equal(partial.traffic.docs_example.calls.l7d, 1);
+    assert.equal(partial.traffic.external_complete, true);
+    assert.match(partial.traffic.note, /Docs-example omission is incomplete/);
+    assert.match(statsHtml(partial), /not a measurement/);
+  });
 });

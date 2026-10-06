@@ -586,51 +586,88 @@ export function queryRetentionWindows(
   db: DatabaseSync,
   now = new Date(),
   excludePayers: readonly string[] = [],
+  excludeUrlSha256: readonly string[] = [],
 ): RetentionWindows {
   return {
-    l7d: queryWindow(db, isoCutoff(now, 7), excludePayers),
-    l30d: queryWindow(db, isoCutoff(now, 30), excludePayers),
+    l7d: queryWindow(db, isoCutoff(now, 7), excludePayers, excludeUrlSha256),
+    l30d: queryWindow(db, isoCutoff(now, 30), excludePayers, excludeUrlSha256),
   };
 }
 
 const VERIFY_FAMILY_SQL = `('verify', 'verify/job', 'verify/listing')`;
 const CONFIRM_FAMILY_SQL = `('confirm', 'confirm/order')`;
 
-function payerExcludeClause(exclude: readonly string[]): string {
-  if (exclude.length === 0) return "";
-  return ` AND (payer IS NULL OR lower(payer) NOT IN (${exclude.map(() => "?").join(", ")}))`;
+function normalizeSha256List(hashes: readonly string[]): string[] {
+  return [...new Set(hashes.map((hash) => hash.trim().toLowerCase()).filter((hash) => isSha256Hex(hash)))];
+}
+
+/**
+ * External audience filter. Null payers stay (they are not a team wallet).
+ * A docs-example url_sha256 drops the row entirely, payer or not.
+ */
+function audienceFilter(
+  excludePayers: readonly string[],
+  excludeUrlSha256: readonly string[],
+): { sql: string; params: string[] } {
+  const payers = [...new Set(excludePayers.map((payer) => payer.toLowerCase()))];
+  const hashes = normalizeSha256List(excludeUrlSha256);
+  const clauses: string[] = [];
+  const params: string[] = [];
+  if (payers.length > 0) {
+    clauses.push(`(payer IS NULL OR lower(payer) NOT IN (${payers.map(() => "?").join(", ")}))`);
+    params.push(...payers);
+  }
+  if (hashes.length > 0) {
+    clauses.push(`lower(url_sha256) NOT IN (${hashes.map(() => "?").join(", ")})`);
+    params.push(...hashes);
+  }
+  return {
+    sql: clauses.length > 0 ? ` AND ${clauses.join(" AND ")}` : "",
+    params,
+  };
 }
 
 function queryFamilyCounts(
   db: DatabaseSync,
   sinceIso: string,
   familySql: string,
-  exclude: readonly string[],
+  excludePayers: readonly string[],
+  excludeUrlSha256: readonly string[],
 ): RouteCounts {
+  const filter = audienceFilter(excludePayers, excludeUrlSha256);
   const row = db
     .prepare(
       `SELECT COUNT(*) AS calls,
               COUNT(DISTINCT payer) AS unique_payers
        FROM paid_calls
-       WHERE ts >= ? AND route IN ${familySql}${payerExcludeClause(exclude)}`,
+       WHERE ts >= ? AND route IN ${familySql}${filter.sql}`,
     )
-    .get(sinceIso, ...exclude) as { calls: number | bigint; unique_payers: number | bigint };
+    .get(sinceIso, ...filter.params) as { calls: number | bigint; unique_payers: number | bigint };
   return { calls: Number(row.calls), unique_payers: Number(row.unique_payers) };
 }
 
-function queryWindow(db: DatabaseSync, sinceIso: string, excludePayers: readonly string[] = []): WindowCounts {
+function queryWindow(
+  db: DatabaseSync,
+  sinceIso: string,
+  excludePayers: readonly string[] = [],
+  excludeUrlSha256: readonly string[] = [],
+): WindowCounts {
   const out = emptyWindowCounts();
-  const exclude = [...new Set(excludePayers.map((payer) => payer.toLowerCase()))];
+  const filter = audienceFilter(excludePayers, excludeUrlSha256);
   const rows = db
     .prepare(
       `SELECT route,
               COUNT(*) AS calls,
               COUNT(DISTINCT payer) AS unique_payers
        FROM paid_calls
-       WHERE ts >= ?${payerExcludeClause(exclude)}
+       WHERE ts >= ?${filter.sql}
        GROUP BY route`,
     )
-    .all(sinceIso, ...exclude) as Array<{ route: string; calls: number | bigint; unique_payers: number | bigint }>;
+    .all(sinceIso, ...filter.params) as Array<{
+    route: string;
+    calls: number | bigint;
+    unique_payers: number | bigint;
+  }>;
   for (const row of rows) {
     if (!isPaidCallRoute(row.route)) continue;
     out.routes[row.route] = {
@@ -638,17 +675,50 @@ function queryWindow(db: DatabaseSync, sinceIso: string, excludePayers: readonly
       unique_payers: Number(row.unique_payers),
     };
   }
-  out.verify = queryFamilyCounts(db, sinceIso, VERIFY_FAMILY_SQL, exclude);
-  out.confirm = queryFamilyCounts(db, sinceIso, CONFIRM_FAMILY_SQL, exclude);
+  out.verify = queryFamilyCounts(db, sinceIso, VERIFY_FAMILY_SQL, excludePayers, excludeUrlSha256);
+  out.confirm = queryFamilyCounts(db, sinceIso, CONFIRM_FAMILY_SQL, excludePayers, excludeUrlSha256);
   return out;
 }
 
 export function queryRetentionWindowsFromStore(
   now = new Date(),
   excludePayers: readonly string[] = [],
+  excludeUrlSha256: readonly string[] = [],
 ): RetentionWindows | undefined {
   if (!state?.ok) return undefined;
-  return queryRetentionWindows(state.db, now, excludePayers);
+  return queryRetentionWindows(state.db, now, excludePayers, excludeUrlSha256);
+}
+
+/** Row counts for specific url_sha256 values. Used to label docs-example test traffic. */
+export function queryPaidCallCountsForUrlHashes(
+  db: DatabaseSync,
+  now = new Date(),
+  urlSha256: readonly string[] = [],
+): { l7d: number; l30d: number } {
+  const hashes = normalizeSha256List(urlSha256);
+  if (hashes.length === 0) return { l7d: 0, l30d: 0 };
+  const countSince = (sinceIso: string) => {
+    const row = db
+      .prepare(
+        `SELECT COUNT(*) AS calls
+         FROM paid_calls
+         WHERE ts >= ? AND lower(url_sha256) IN (${hashes.map(() => "?").join(", ")})`,
+      )
+      .get(sinceIso, ...hashes) as { calls: number | bigint };
+    return Number(row.calls);
+  };
+  return {
+    l7d: countSince(isoCutoff(now, 7)),
+    l30d: countSince(isoCutoff(now, 30)),
+  };
+}
+
+export function queryPaidCallCountsForUrlHashesFromStore(
+  now = new Date(),
+  urlSha256: readonly string[] = [],
+): { l7d: number; l30d: number } | undefined {
+  if (!state?.ok) return undefined;
+  return queryPaidCallCountsForUrlHashes(state.db, now, urlSha256);
 }
 
 export function queryConfirmIntentCounts(db: DatabaseSync, sinceIso: string): ConfirmIntentCounts {
