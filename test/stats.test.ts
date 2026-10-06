@@ -23,6 +23,13 @@ import {
   resetSentinelBenches,
 } from "../src/sentinel-stats-benches.js";
 import { buildPaidCallEvent, hashUrl } from "../src/paid-call.js";
+import {
+  DOCS_EXAMPLE_URL,
+  DOCS_EXAMPLE_URL_SHA256,
+  docsExampleUrlHashes,
+  isDocsExampleUrl,
+  isDocsExampleUrlHash,
+} from "../src/docs-example-url.js";
 import { DEFAULT_INTERNAL_WALLETS, internalWallets } from "../src/internal-wallets.js";
 import {
   closePaidCallStore,
@@ -659,6 +666,7 @@ describe("internal wallet list and external payers", () => {
     assert.equal(DEFAULT_INTERNAL_WALLETS.length, 5);
     assert.equal(internalWallets({}).includes("0x5016cfc01db6ec359465bda316404947a5b5893a"), true);
     assert.equal(internalWallets({}).includes("0xec2abd3eda89bed90124736e317e847d5fb6d034"), false);
+    assert.equal(internalWallets({}).includes("0xc9c7b38c0942914fc8ea12063bc92dcd3b581670"), false);
   });
 
   it("drops team wallets from external verify and confirm payers", () => {
@@ -810,5 +818,140 @@ describe("internal wallet list and external payers", () => {
     assert.equal(doc.traffic.all.payers.l30d.confirm.unique_payers, 2);
     assert.match(doc.traffic.note, /Includes internal test traffic/);
     assert.match(doc.notes.join(" "), /Includes internal test traffic/);
+  });
+
+  it("keeps docs-example paid calls in all and out of external payers", () => {
+    initPaidCallStore(":memory:");
+    const now = new Date("2026-09-12T12:00:00Z");
+    const when = new Date("2026-09-10T12:00:00Z");
+    const docsOnlyPayer = "0x9Cd5b9a8341DcAf7825348D70792ad9903F2C5a7";
+    const customer = "0x1111111111111111111111111111111111111111";
+    const docsConfirmPayer = "0x2222222222222222222222222222222222222222";
+    const customerUrl = "https://boards.greenhouse.io/acme/jobs/2201";
+    assert.equal(hashUrl(DOCS_EXAMPLE_URL), DOCS_EXAMPLE_URL_SHA256);
+    assert.equal(isDocsExampleUrl(DOCS_EXAMPLE_URL), true);
+    assert.equal(isDocsExampleUrl("https://BOARDS.GREENHOUSE.IO/example/jobs/1842/"), true);
+    assert.equal(isDocsExampleUrl(customerUrl), false);
+    assert.equal(isDocsExampleUrlHash(DOCS_EXAMPLE_URL_SHA256), true);
+    assert.equal(docsExampleUrlHashes().includes(hashUrl(`${DOCS_EXAMPLE_URL}/`)), true);
+    assert.equal(isDocsExampleUrl(`${DOCS_EXAMPLE_URL}?ref=docs`), true);
+    assert.equal(isDocsExampleUrlHash(hashUrl(`${DOCS_EXAMPLE_URL}?ref=docs`)), false);
+
+    const retain = (
+      route: "verify" | "verify/job" | "confirm",
+      urlHash: string,
+      payer: string,
+      intent?: "lead_submit",
+    ) => {
+      assert.equal(
+        retainPaidCall(
+          buildPaidCallEvent(
+            {
+              route,
+              host: "boards.greenhouse.io",
+              url_hash: urlHash,
+              status: route === "confirm" ? undefined : "live",
+              intent,
+              verdict: route === "confirm" ? "unknown" : undefined,
+            },
+            { payer },
+            when,
+          ),
+        ),
+        true,
+      );
+    };
+
+    retain("verify/job", DOCS_EXAMPLE_URL_SHA256, docsOnlyPayer);
+    retain("verify/job", hashUrl(customerUrl), customer);
+    retain("verify/job", DOCS_EXAMPLE_URL_SHA256, customer);
+    retain("confirm", DOCS_EXAMPLE_URL_SHA256, docsConfirmPayer, "lead_submit");
+    retain("verify", hashUrl("https://jobs.example.com/opening"), DEFAULT_INTERNAL_WALLETS[0]!);
+
+    const doc = buildStatsDocument(now);
+    assert.equal(doc.traffic.all.payers.l7d.verify.calls, 4);
+    assert.equal(doc.traffic.all.payers.l7d.verify.unique_payers, 3);
+    assert.equal(doc.traffic.all.payers.l7d.routes["verify/job"].calls, 3);
+    assert.equal(doc.traffic.all.payers.l7d.routes["verify/job"].unique_payers, 2);
+    assert.equal(doc.traffic.all.payers.l7d.confirm.calls, 1);
+    assert.equal(doc.traffic.all.payers.l7d.confirm.unique_payers, 1);
+    assert.equal(doc.traffic.external.payers.l7d.verify.calls, 1);
+    assert.equal(doc.traffic.external.payers.l7d.verify.unique_payers, 1);
+    assert.equal(doc.traffic.external.payers.l7d.routes["verify/job"].calls, 1);
+    assert.equal(doc.traffic.external.payers.l7d.routes["verify/job"].unique_payers, 1);
+    assert.equal(doc.traffic.external.payers.l7d.routes.verify.calls, 0);
+    assert.equal(doc.traffic.external.payers.l7d.confirm.calls, 0);
+    assert.equal(doc.traffic.external.payers.l7d.confirm.unique_payers, 0);
+    assert.equal(doc.traffic.external.payers.l30d.verify.calls, 1);
+    assert.equal(doc.traffic.external.payers.l30d.verify.unique_payers, 1);
+    assert.equal(doc.traffic.external.payers.l30d.confirm.unique_payers, 0);
+    assert.equal(doc.traffic.docs_example.available, true);
+    assert.equal(doc.traffic.docs_example.url, DOCS_EXAMPLE_URL);
+    assert.equal(doc.traffic.docs_example.calls.l7d, 3);
+    assert.equal(doc.traffic.docs_example.calls.l30d, 3);
+    assert.equal(
+      doc.traffic.docs_example.label,
+      "Docs-example URLs are test traffic and are omitted from traffic.external.",
+    );
+    assert.match(doc.traffic.note, /boards\.greenhouse\.io\/example\/jobs\/1842/);
+    assert.match(doc.traffic.note, /3 L7d \/ 3 L30d docs-example paid_calls/);
+    assert.match(doc.traffic.note, /omits 5 configured team wallets/);
+    const html = statsHtml(doc);
+    assert.match(html, /Docs-example URLs are test traffic/);
+    assert.match(html, /3 L7d \/ 3 L30d paid calls/);
+    assert.match(html, new RegExp(DOCS_EXAMPLE_URL.replace(/[/.]/g, "\\$&")));
+  });
+
+  it("still omits docs-example URLs when the team-wallet filter is off", () => {
+    const previous = process.env.LIVECHECK_INTERNAL_WALLETS;
+    process.env.LIVECHECK_INTERNAL_WALLETS = "off";
+    try {
+      initPaidCallStore(":memory:");
+      const now = new Date("2026-09-12T12:00:00Z");
+      const when = new Date("2026-09-10T12:00:00Z");
+      const customer = "0x1111111111111111111111111111111111111111";
+      assert.equal(
+        retainPaidCall(
+          buildPaidCallEvent(
+            {
+              route: "verify/job",
+              host: "boards.greenhouse.io",
+              url_hash: DOCS_EXAMPLE_URL_SHA256,
+              status: "live",
+            },
+            { payer: "0x9Cd5b9a8341DcAf7825348D70792ad9903F2C5a7" },
+            when,
+          ),
+        ),
+        true,
+      );
+      assert.equal(
+        retainPaidCall(
+          buildPaidCallEvent(
+            {
+              route: "verify/job",
+              host: "boards.greenhouse.io",
+              url_hash: hashUrl("https://boards.greenhouse.io/acme/jobs/2201"),
+              status: "live",
+            },
+            { payer: customer },
+            when,
+          ),
+        ),
+        true,
+      );
+      const doc = buildStatsDocument(now);
+      assert.equal(doc.traffic.internal_wallets_configured, 0);
+      assert.equal(doc.traffic.all.payers.l7d.verify.calls, 2);
+      assert.equal(doc.traffic.all.payers.l7d.verify.unique_payers, 2);
+      assert.equal(doc.traffic.external.payers.l7d.verify.calls, 1);
+      assert.equal(doc.traffic.external.payers.l7d.verify.unique_payers, 1);
+      assert.equal(doc.traffic.docs_example.calls.l7d, 1);
+      assert.match(doc.traffic.note, /No internal wallets are configured/);
+      assert.doesNotMatch(doc.traffic.note, /traffic\.external matches traffic\.all/);
+    } finally {
+      if (previous === undefined) delete process.env.LIVECHECK_INTERNAL_WALLETS;
+      else process.env.LIVECHECK_INTERNAL_WALLETS = previous;
+    }
   });
 });

@@ -7,6 +7,7 @@ import { after, before, describe, it } from "node:test";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { DatabaseSync } from "node:sqlite";
+import { DOCS_EXAMPLE_URL, DOCS_EXAMPLE_URL_SHA256, docsExampleUrlHashes } from "../src/docs-example-url.js";
 import { serve } from "@hono/node-server";
 import { createApp } from "../src/app.js";
 import {
@@ -29,6 +30,7 @@ import {
   parsePaidCallLogLine,
   queryConfirmIntentWindows,
   queryConfirmIntentWindowsFromStore,
+  queryPaidCallCountsForUrlHashes,
   queryRetentionWindows,
   queryRetentionWindowsFromStore,
   listPaidCallRowsFromStore,
@@ -228,6 +230,43 @@ describe("sqlite insert and L7d/L30d queries", () => {
     assert.equal(windows.l7d.verify.calls, 2);
     assert.equal(windows.l7d.verify.unique_payers, 1);
     assert.deepEqual(aggregatePaidCallRows(listPaidCallRows(opened.db), now), windows);
+  });
+
+  it("drops docs-example url_sha256 from an external window and keeps other greenhouse URLs", () => {
+    const opened = initPaidCallStore(":memory:");
+    assert.equal(opened.ok, true);
+    if (!opened.ok) return;
+    const now = new Date("2026-09-12T12:00:00Z");
+    const when = new Date("2026-09-10T12:00:00Z");
+    const customerUrl = "https://boards.greenhouse.io/acme/jobs/2201";
+    const insert = (urlHash: string, payer: string) => {
+      const row = paidCallEventToRow(
+        buildPaidCallEvent(
+          { route: "verify/job", host: "boards.greenhouse.io", url_hash: urlHash, status: "live" },
+          { payer },
+          when,
+        ),
+      );
+      assert.ok(row);
+      insertPaidCallRow(opened.db, row);
+    };
+    insert(DOCS_EXAMPLE_URL_SHA256, PAYER_A);
+    insert(hashUrl(`${DOCS_EXAMPLE_URL}/`), PAYER_A);
+    insert(hashUrl(customerUrl), PAYER_B);
+    const all = queryRetentionWindows(opened.db, now);
+    const external = queryRetentionWindows(opened.db, now, [], docsExampleUrlHashes());
+    assert.equal(all.l7d.verify.calls, 3);
+    assert.equal(all.l7d.verify.unique_payers, 2);
+    assert.equal(all.l7d.routes["verify/job"].calls, 3);
+    assert.equal(external.l7d.verify.calls, 1);
+    assert.equal(external.l7d.verify.unique_payers, 1);
+    assert.equal(external.l7d.routes["verify/job"].calls, 1);
+    assert.equal(external.l7d.routes["verify/job"].unique_payers, 1);
+    assert.equal(external.l30d.confirm.calls, 0);
+    assert.deepEqual(queryPaidCallCountsForUrlHashes(opened.db, now, docsExampleUrlHashes()), {
+      l7d: 2,
+      l30d: 2,
+    });
   });
 
   it("retainPaidCall is a no-op until the store is opened, then inserts", () => {

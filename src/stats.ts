@@ -5,6 +5,10 @@ import {
   ORDER_PLACED_PRICE_USD,
   WATCH_PRICE_USD,
 } from "./config.js";
+import {
+  DOCS_EXAMPLE_URL,
+  docsExampleUrlHashes,
+} from "./docs-example-url.js";
 import { internalWallets } from "./internal-wallets.js";
 import { PAID_CALL_ROUTES } from "./paid-call.js";
 import {
@@ -13,6 +17,7 @@ import {
   isoCutoff,
   paidCallStoreStatus,
   queryConfirmIntentWindowsFromStore,
+  queryPaidCallCountsForUrlHashesFromStore,
   queryRetentionWindowsFromStore,
   type ConfirmIntentCounts,
   type PaidRouteCounts,
@@ -110,12 +115,30 @@ export type TrafficSlice = {
 
 export const INTERNAL_TEST_TRAFFIC_LABEL = "Includes internal test traffic.";
 
+export const DOCS_EXAMPLE_TEST_TRAFFIC_LABEL =
+  "Docs-example URLs are test traffic and are omitted from traffic.external.";
+
+/** Paid calls to the public docs example. Still inside traffic.all. */
+export type DocsExampleTraffic = {
+  label: typeof DOCS_EXAMPLE_TEST_TRAFFIC_LABEL;
+  /**
+   * False when this volume's paid-call store is closed, or a fleet peer
+   * did not publish the split. Zeros are not a measurement in that case.
+   */
+  available: boolean;
+  /** Canonical docs example. Rows match paid_calls.url_sha256, not a stored raw URL. */
+  url: typeof DOCS_EXAMPLE_URL;
+  calls: { l7d: number; l30d: number };
+};
+
 export type TrafficHonesty = {
   includes_internal_test_traffic: true;
   label: typeof INTERNAL_TEST_TRAFFIC_LABEL;
   note: string;
   /** Count only. Addresses stay off the public document. */
   internal_wallets_configured: number;
+  /** Docs-example paid_calls counted in `all` and omitted from `external`. */
+  docs_example: DocsExampleTraffic;
   /**
    * False when an included fleet volume did not publish this split
    * (older build). external is then not a full-fleet figure.
@@ -211,14 +234,23 @@ export function trafficHonestyNote(input: {
   fleet: boolean;
   walletCountsDisagree?: boolean;
   routesComplete?: boolean;
+  docsExample: {
+    available: boolean;
+    calls: { l7d: number; l30d: number };
+    /** False when a fleet peer did not publish traffic.docs_example. */
+    complete: boolean;
+  };
 }): string {
   const parts = [
     INTERNAL_TEST_TRAFFIC_LABEL,
     "Headline confirm windows and sentinel counts are all wallets.",
     input.walletCount === 0
-      ? "No internal wallets are configured, so traffic.external matches traffic.all."
+      ? "No internal wallets are configured (LIVECHECK_INTERNAL_WALLETS=off disables the team-wallet list)."
       : `traffic.external omits ${input.walletCount} configured team wallets (built-in list plus LIVECHECK_INTERNAL_WALLETS).`,
-    "One-shot check receipts have no payer and stay in both checks_run totals. paid_calls with a null payer stay in external.",
+    DOCS_EXAMPLE_TEST_TRAFFIC_LABEL,
+    `The stored paid_calls column is url_sha256 (SHA-256 of the full URL). traffic.external omits ${DOCS_EXAMPLE_URL}. Those calls stay in traffic.all.`,
+    docsExampleNote(input.docsExample, input.fleet),
+    "One-shot check receipts have no payer and stay in both checks_run totals. paid_calls with a null payer stay in external unless the URL is the docs example.",
     "traffic.payers counts verify and confirm paid_calls only.",
     "traffic.payers windows include routes for verify, verify/job, verify/listing, confirm, and confirm/order (calls and distinct payers). verify and confirm remain family totals: calls are the sum, unique payers are distinct across that family on one SQLite file. Rows written before the route split stay verify or confirm.",
     input.fleet
@@ -239,6 +271,33 @@ export function trafficHonestyNote(input: {
     );
   }
   return parts.join(" ");
+}
+
+function docsExampleNote(
+  docsExample: {
+    available: boolean;
+    calls: { l7d: number; l30d: number };
+    complete: boolean;
+  },
+  fleet: boolean,
+): string {
+  if (!docsExample.complete) {
+    return "Docs-example omission is incomplete: at least one included machine did not publish traffic.docs_example. That machine may still count those paid_calls in traffic.external.";
+  }
+  if (!docsExample.available) {
+    return "Docs-example paid_call counts are not published for this response. A closed paid-call store is missing, not zero.";
+  }
+  const who = fleet ? "Included machines have" : "This volume has";
+  return `${who} ${docsExample.calls.l7d} L7d / ${docsExample.calls.l30d} L30d docs-example paid_calls.`;
+}
+
+export function emptyDocsExampleTraffic(): DocsExampleTraffic {
+  return {
+    label: DOCS_EXAMPLE_TEST_TRAFFIC_LABEL,
+    available: false,
+    url: DOCS_EXAMPLE_URL,
+    calls: { l7d: 0, l30d: 0 },
+  };
 }
 
 export function emptyTrafficPayers(): TrafficPayers {
@@ -456,6 +515,45 @@ export function publishedTraffic(doc: StatsDocument): TrafficHonesty | undefined
   return traffic;
 }
 
+function readDocsExample(traffic: TrafficHonesty | undefined): DocsExampleTraffic | undefined {
+  const docs = traffic?.docs_example;
+  if (!docs) return undefined;
+  if (docs.label !== DOCS_EXAMPLE_TEST_TRAFFIC_LABEL) return undefined;
+  if (docs.url !== DOCS_EXAMPLE_URL) return undefined;
+  if (typeof docs.available !== "boolean") return undefined;
+  if (typeof docs.calls?.l7d !== "number" || typeof docs.calls?.l30d !== "number") return undefined;
+  return docs;
+}
+
+/**
+ * Sum docs-example call counts. A peer that predates the field does not
+ * contribute a number, and the merged count is not a full measurement.
+ */
+function mergeDocsExampleTraffic(
+  localTraffic: TrafficHonesty | undefined,
+  peers: readonly { included: boolean; doc?: StatsDocument }[],
+): { available: boolean; calls: { l7d: number; l30d: number }; complete: boolean } {
+  let calls = { l7d: 0, l30d: 0 };
+  let available = true;
+  let complete = true;
+  const absorb = (traffic: TrafficHonesty | undefined) => {
+    const docs = readDocsExample(traffic);
+    if (!docs) {
+      complete = false;
+      available = false;
+      return;
+    }
+    if (!docs.available) available = false;
+    calls = { l7d: calls.l7d + docs.calls.l7d, l30d: calls.l30d + docs.calls.l30d };
+  };
+  absorb(localTraffic);
+  for (const peer of peers) {
+    if (!peer.included || !peer.doc) continue;
+    absorb(publishedTraffic(peer.doc));
+  }
+  return { available: complete && available, calls, complete };
+}
+
 /**
  * Sum per-volume wallet splits. A peer without `traffic` still adds its
  * sentinel headlines to `all` (that is what the old document counted) and
@@ -478,6 +576,7 @@ export function mergeTrafficHonesty(
   );
   const walletCounts = new Set<number>();
   if (localTraffic) walletCounts.add(localTraffic.internal_wallets_configured);
+  const docsExample = mergeDocsExampleTraffic(localTraffic, peers);
 
   for (const peer of peers) {
     if (!peer.included || !peer.doc) continue;
@@ -515,8 +614,15 @@ export function mergeTrafficHonesty(
       fleet: true,
       walletCountsDisagree: walletCounts.size > 1,
       routesComplete,
+      docsExample,
     }),
     internal_wallets_configured: walletCount,
+    docs_example: {
+      label: DOCS_EXAMPLE_TEST_TRAFFIC_LABEL,
+      available: docsExample.available,
+      url: DOCS_EXAMPLE_URL,
+      calls: docsExample.calls,
+    },
     external_complete: externalComplete,
     routes_complete: routesComplete,
     all: { ...all, payers: withholdUniquePayers(all.payers) },
@@ -551,12 +657,20 @@ export function buildTrafficHonesty(
   payersAll: ReturnType<typeof queryRetentionWindowsFromStore>,
   payersExternal: ReturnType<typeof queryRetentionWindowsFromStore>,
   walletCount: number,
+  docsExample: DocsExampleTraffic,
 ): TrafficHonesty {
   return {
     includes_internal_test_traffic: true,
     label: INTERNAL_TEST_TRAFFIC_LABEL,
-    note: trafficHonestyNote({ walletCount, externalComplete: true, fleet: false, routesComplete: true }),
+    note: trafficHonestyNote({
+      walletCount,
+      externalComplete: true,
+      fleet: false,
+      routesComplete: true,
+      docsExample: { available: docsExample.available, calls: docsExample.calls, complete: true },
+    }),
     internal_wallets_configured: walletCount,
+    docs_example: docsExample,
     external_complete: true,
     routes_complete: true,
     all: {
@@ -586,13 +700,31 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
   const watchAll = loadWatchStats();
   const watchExternal = loadWatchStats(wallets);
   const oneShotChecks = countReceiptsSince("1970-01-01T00:00:00Z", "check").receipts;
+  const exampleHashes = docsExampleUrlHashes();
   const payersAll = queryRetentionWindowsFromStore(now);
-  const payersExternal = wallets.length > 0 ? queryRetentionWindowsFromStore(now, wallets) : payersAll;
+  const payersExternal = queryRetentionWindowsFromStore(now, wallets, exampleHashes);
+  const exampleCounts = queryPaidCallCountsForUrlHashesFromStore(now, exampleHashes);
+  const docsExample: DocsExampleTraffic = exampleCounts
+    ? {
+        label: DOCS_EXAMPLE_TEST_TRAFFIC_LABEL,
+        available: true,
+        url: DOCS_EXAMPLE_URL,
+        calls: exampleCounts,
+      }
+    : emptyDocsExampleTraffic();
   return {
     ok: true,
     service: "livecheck",
     generated_at: now.toISOString().replace(/\.\d{3}Z$/, "Z"),
-    traffic: buildTrafficHonesty(watchAll, watchExternal, oneShotChecks, payersAll, payersExternal, wallets.length),
+    traffic: buildTrafficHonesty(
+      watchAll,
+      watchExternal,
+      oneShotChecks,
+      payersAll,
+      payersExternal,
+      wallets.length,
+      docsExample,
+    ),
     intents: {
       lead_submit: {
         payable: true,
@@ -666,7 +798,7 @@ function payerTable(doc: StatsDocument): string {
     ? ""
     : `<p class="muted">Per-route payer counts are incomplete: at least one included machine did not publish routes. Family totals above still include those calls.</p>`;
   return `<h3>Payers</h3>
-  <p class="muted">${escHtml(doc.traffic.label)} Verify and confirm paid_calls only. The first table is family totals (verify includes verify/job and verify/listing; confirm includes confirm/order). Unique payers in a family are distinct across that family, not the sum of the route rows. All includes internal test traffic. External omits configured team wallets. Null payers stay in external calls and are not a unique payer. On this machine, unique payers are COUNT(DISTINCT payer). A fleet document shows withheld instead of adding per-volume distincts.</p>
+  <p class="muted">${escHtml(doc.traffic.label)} Verify and confirm paid_calls only. The first table is family totals (verify includes verify/job and verify/listing; confirm includes confirm/order). Unique payers in a family are distinct across that family, not the sum of the route rows. All includes internal test traffic. External omits configured team wallets and docs-example URLs. Null payers stay in external calls unless the URL is the docs example, and are not a unique payer. On this machine, unique payers are COUNT(DISTINCT payer). A fleet document shows withheld instead of adding per-volume distincts.</p>
   <table>
     <thead>
       <tr><th>Audience</th><th>Window</th><th>Verify calls</th><th>Verify unique payers</th><th>Confirm calls</th><th>Confirm unique payers</th></tr>
@@ -679,7 +811,7 @@ function payerTable(doc: StatsDocument): string {
     </tbody>
   </table>
   <h3>Payers by route</h3>
-  <p class="muted">${escHtml(doc.traffic.label)} Stored route after /v1/ (verify, verify/job, verify/listing, confirm, confirm/order). External rows omit configured team wallets.</p>
+  <p class="muted">${escHtml(doc.traffic.label)} Stored route after /v1/ (verify, verify/job, verify/listing, confirm, confirm/order). External rows omit configured team wallets and docs-example URLs.</p>
   ${routesNote}
   <table>
     <thead>
@@ -692,6 +824,15 @@ function payerTable(doc: StatsDocument): string {
       ${routeRow("External", "L30d", external.l30d)}
     </tbody>
   </table>`;
+}
+
+function docsExampleHtml(doc: StatsDocument): string {
+  const docs = doc.traffic.docs_example;
+  const label = escHtml(docs.label);
+  if (!docs.available) {
+    return `${label} Counts are not a measurement on this response (paid-call store closed, or a machine did not publish the split).`;
+  }
+  return `${label} ${docs.calls.l7d} L7d / ${docs.calls.l30d} L30d paid calls. These rows stay in All and are omitted from External. URL: <code>${escHtml(docs.url)}</code>.`;
 }
 
 export function statsHtml(doc: StatsDocument): string {
@@ -730,6 +871,7 @@ export function statsHtml(doc: StatsDocument): string {
 <body>
   <h1>Livecheck stats</h1>
   <p class="honesty"><strong>${escHtml(doc.traffic.label)}</strong> ${escHtml(doc.traffic.note)}</p>
+  <p class="muted">${docsExampleHtml(doc)}</p>
   <p>Generated ${doc.generated_at}. Payable Confirm intents: <code>lead_submit</code> (GA) and <code>listing_published</code> at $${lead.price_usd.toFixed(2)} USDC; <code>order_placed</code> at $${order.price_usd.toFixed(2)} USDC.</p>
   <p class="muted">Volume scope: ${doc.store.scope}${doc.store.fly_machine_id ? ` · serving machine <code>${doc.store.fly_machine_id}</code>` : ""}. Unscoped confirm paid_calls (no stored intent): L7d ${doc.store.confirm_unscoped_paid_calls.l7d} / L30d ${doc.store.confirm_unscoped_paid_calls.l30d}.${statsMachineSummary(doc)}</p>
   <table>
