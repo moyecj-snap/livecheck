@@ -35,6 +35,7 @@ import { FIXTURES } from "./fixtures.js";
 import { LLMS_TXT, llmsTxtHeaders } from "./llms.js";
 import { isInternalTestMode, withBurstProtection } from "./check-capacity.js";
 import { recordSuccessfulPaidCheck, responseRouteFromPath, withPaidCallContext } from "./paid-call.js";
+import { checkPaidVerdict } from "./receipt.js";
 import { applyPaymentGate, settlementMode } from "./payments.js";
 import { withSettleAbortContext } from "./settle-abort.js";
 import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl, publicWatchChainTopupUrl, publicWatchRenewUrl, publicWatchUrl } from "./public-url.js";
@@ -237,6 +238,14 @@ async function handlePaidCheck(c: Context) {
       requestUrl: c.req.url,
       host: c.req.header("host"),
     });
+    recordSuccessfulPaidCheck({
+      route: "check",
+      url: parsed.target.url,
+      intent: classified.condition.detector,
+      verdict: checkPaidVerdict(classified.fired),
+      http_status: classified.observation.http_status,
+      user_agent: c.req.header("user-agent"),
+    });
     return c.json(result);
   } catch (error) {
     if (error instanceof CheckError) {
@@ -271,6 +280,14 @@ async function handlePaidWatch(c: Context) {
       host: c.req.header("host"),
       observation: created.observation,
     });
+    recordSuccessfulPaidCheck({
+      route: "watch",
+      url: created.result.target.url,
+      intent: created.result.condition.detector,
+      verdict: "created",
+      http_status: created.observation?.http_status,
+      user_agent: c.req.header("user-agent"),
+    });
     return c.json(result, 201);
   } catch (error) {
     if (error instanceof WatchError) {
@@ -296,6 +313,13 @@ async function handlePaidWatchRenew(c: Context) {
       url: renewed.target.url,
       requestUrl: c.req.url,
       host: c.req.header("host"),
+    });
+    recordSuccessfulPaidCheck({
+      route: "watch/renew",
+      url: renewed.target.url,
+      intent: renewed.condition.detector,
+      verdict: "renewed",
+      user_agent: c.req.header("user-agent"),
     });
     return c.json(result);
   } catch (error) {

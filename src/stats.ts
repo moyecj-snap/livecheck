@@ -6,17 +6,21 @@ import {
   WATCH_PRICE_USD,
 } from "./config.js";
 import {
+  CONFIRM_DOCS_EXAMPLE_URL,
   DOCS_EXAMPLE_URL,
+  DOCS_EXAMPLE_URLS,
   docsExampleUrlHashes,
 } from "./docs-example-url.js";
+import { graderWallets } from "./grader-wallets.js";
 import { internalWallets } from "./internal-wallets.js";
-import { PAID_CALL_ROUTES } from "./paid-call.js";
+import { PAID_CALL_ROUTES, type PaidCallRoute } from "./paid-call.js";
 import {
   emptyRouteCounts,
   emptyWindowCounts,
   isoCutoff,
   paidCallStoreStatus,
   queryConfirmIntentWindowsFromStore,
+  queryPaidCallCountsForPayersFromStore,
   queryPaidCallCountsForUrlHashesFromStore,
   queryRetentionWindowsFromStore,
   type ConfirmIntentCounts,
@@ -109,7 +113,7 @@ export type TrafficPayers = {
 
 export type TrafficSlice = {
   sentinel: TrafficSentinelCounts;
-  /** verify + confirm paid_calls only. Check and watch payers live on sentinel. */
+  /** Every paid route in paid_calls: verify, confirm, check, watch, renew. */
   payers: TrafficPayers;
 };
 
@@ -118,7 +122,10 @@ export const INTERNAL_TEST_TRAFFIC_LABEL = "Includes internal test traffic.";
 export const DOCS_EXAMPLE_TEST_TRAFFIC_LABEL =
   "Docs-example URLs are test traffic and are omitted from traffic.external.";
 
-/** Paid calls to the public docs example. Still inside traffic.all. */
+export const GRADER_TEST_TRAFFIC_LABEL =
+  "Known grader and auditor wallets are test traffic and are omitted from traffic.external.";
+
+/** Paid calls to the public docs examples. Still inside traffic.all. */
 export type DocsExampleTraffic = {
   label: typeof DOCS_EXAMPLE_TEST_TRAFFIC_LABEL;
   /**
@@ -126,9 +133,34 @@ export type DocsExampleTraffic = {
    * did not publish the split. Zeros are not a measurement in that case.
    */
   available: boolean;
-  /** Canonical docs example. Rows match paid_calls.url_sha256, not a stored raw URL. */
+  /** Canonical verify docs example. Rows match paid_calls.url_sha256, not a stored raw URL. */
   url: typeof DOCS_EXAMPLE_URL;
+  /** Verify and confirm docs/Bazaar examples. Matched by url_sha256. */
+  urls: readonly string[];
   calls: { l7d: number; l30d: number };
+};
+
+/** Paid calls from known grader wallets. Still inside traffic.all. Addresses stay off this document. */
+export type GraderTraffic = {
+  label: typeof GRADER_TEST_TRAFFIC_LABEL;
+  available: boolean;
+  wallets_configured: number;
+  calls: { l7d: number; l30d: number };
+  /** Null on a fleet document: a sum of per-volume distincts is not a fleet distinct. */
+  unique_payers: { l7d: number | null; l30d: number | null };
+};
+
+export type TrafficRevenueWindow = {
+  l7d_usd: number;
+  l30d_usd: number;
+};
+
+/** Sum of paid_calls × route price. Check, watch, and renew are included. */
+export type TrafficRevenue = {
+  source: "paid_calls";
+  available: boolean;
+  all: TrafficRevenueWindow;
+  external: TrafficRevenueWindow;
 };
 
 export type TrafficHonesty = {
@@ -139,6 +171,10 @@ export type TrafficHonesty = {
   internal_wallets_configured: number;
   /** Docs-example paid_calls counted in `all` and omitted from `external`. */
   docs_example: DocsExampleTraffic;
+  /** Grader/auditor wallets counted in `all` and omitted from `external`. */
+  graders: GraderTraffic;
+  /** Route-priced sum of paid_calls. external uses the same omissions as traffic.external. */
+  revenue: TrafficRevenue;
   /**
    * False when an included fleet volume did not publish this split
    * (older build). external is then not a full-fleet figure.
@@ -240,6 +276,12 @@ export function trafficHonestyNote(input: {
     /** False when a fleet peer did not publish traffic.docs_example. */
     complete: boolean;
   };
+  graders: {
+    available: boolean;
+    wallets_configured: number;
+    calls: { l7d: number; l30d: number };
+    complete: boolean;
+  };
 }): string {
   const parts = [
     INTERNAL_TEST_TRAFFIC_LABEL,
@@ -247,12 +289,18 @@ export function trafficHonestyNote(input: {
     input.walletCount === 0
       ? "No internal wallets are configured (LIVECHECK_INTERNAL_WALLETS=off disables the team-wallet list)."
       : `traffic.external omits ${input.walletCount} configured team wallets (built-in list plus LIVECHECK_INTERNAL_WALLETS).`,
+    GRADER_TEST_TRAFFIC_LABEL,
+    input.graders.wallets_configured === 0
+      ? "No grader wallets are configured (LIVECHECK_GRADER_WALLETS=off disables the list)."
+      : `traffic.external omits ${input.graders.wallets_configured} known grader wallets (built-in list plus LIVECHECK_GRADER_WALLETS).`,
+    graderNote(input.graders, input.fleet),
     DOCS_EXAMPLE_TEST_TRAFFIC_LABEL,
-    `The stored paid_calls column is url_sha256 (SHA-256 of the full URL). traffic.external omits ${DOCS_EXAMPLE_URL}. Those calls stay in traffic.all.`,
+    `The stored paid_calls column is url_sha256 (SHA-256 of the full URL). traffic.external omits ${DOCS_EXAMPLE_URL} and ${CONFIRM_DOCS_EXAMPLE_URL}. Those calls stay in traffic.all.`,
     docsExampleNote(input.docsExample, input.fleet),
-    "One-shot check receipts have no payer and stay in both checks_run totals. paid_calls with a null payer stay in external unless the URL is the docs example.",
-    "traffic.payers counts verify and confirm paid_calls only.",
-    "traffic.payers windows include routes for verify, verify/job, verify/listing, confirm, and confirm/order (calls and distinct payers). verify and confirm remain family totals: calls are the sum, unique payers are distinct across that family on one SQLite file. Rows written before the route split stay verify or confirm.",
+    "One-shot check receipts have no payer and stay in both sentinel checks_run totals. Check, watch, and renew payers are on traffic.payers when the paid_call row stored one. paid_calls with a null payer stay in external unless the URL is a docs example.",
+    "traffic.payers counts every paid route in paid_calls: verify, confirm, check, watch, and watch/renew.",
+    "traffic.revenue is calls times the route price (verify $0.01, check $0.02, confirm $0.10, confirm/order $0.25, watch and watch/renew $2.50), from paid_calls. external revenue uses the same wallet and docs-example omissions.",
+    "traffic.payers windows include routes for verify, verify/job, verify/listing, confirm, confirm/order, check, watch, and watch/renew (calls and distinct payers). verify, confirm, and watch remain family totals: calls are the sum, unique payers are distinct across that family on one SQLite file. Rows written before a route was stored keep the older route value.",
     input.fleet
       ? "unique_payers is withheld on this fleet document. Adding per-volume distinct payers is not a fleet-wide distinct."
       : "unique_payers is COUNT(DISTINCT payer) on this machine's SQLite.",
@@ -271,6 +319,24 @@ export function trafficHonestyNote(input: {
     );
   }
   return parts.join(" ");
+}
+
+function graderNote(
+  graders: {
+    available: boolean;
+    calls: { l7d: number; l30d: number };
+    complete: boolean;
+  },
+  fleet: boolean,
+): string {
+  if (!graders.complete) {
+    return "Grader omission is incomplete: at least one included machine did not publish traffic.graders. That machine may still count those wallets in traffic.external.";
+  }
+  if (!graders.available) {
+    return "Grader paid_call counts are not published for this response. A closed paid-call store is missing, not zero.";
+  }
+  const who = fleet ? "Included machines have" : "This volume has";
+  return `${who} ${graders.calls.l7d} L7d / ${graders.calls.l30d} L30d grader paid_calls.`;
 }
 
 function docsExampleNote(
@@ -296,7 +362,55 @@ export function emptyDocsExampleTraffic(): DocsExampleTraffic {
     label: DOCS_EXAMPLE_TEST_TRAFFIC_LABEL,
     available: false,
     url: DOCS_EXAMPLE_URL,
+    urls: DOCS_EXAMPLE_URLS,
     calls: { l7d: 0, l30d: 0 },
+  };
+}
+
+export function emptyGraderTraffic(): GraderTraffic {
+  return {
+    label: GRADER_TEST_TRAFFIC_LABEL,
+    available: false,
+    wallets_configured: 0,
+    calls: { l7d: 0, l30d: 0 },
+    unique_payers: { l7d: 0, l30d: 0 },
+  };
+}
+
+const ROUTE_PRICE_CENTS: Record<PaidCallRoute, number> = {
+  verify: 1,
+  "verify/job": 1,
+  "verify/listing": 1,
+  confirm: 10,
+  "confirm/order": 25,
+  check: 2,
+  watch: 250,
+  "watch/renew": 250,
+};
+
+/** Whole cents, then dollars. Avoids binary float drift on $0.10 and $2.50. */
+export function paidCallRevenueUsd(routes: PaidRouteCounts | undefined): number {
+  let cents = 0;
+  for (const route of PAID_CALL_ROUTES) {
+    cents += (routes?.[route]?.calls ?? 0) * ROUTE_PRICE_CENTS[route];
+  }
+  return cents / 100;
+}
+
+export function emptyTrafficRevenue(): TrafficRevenue {
+  return {
+    source: "paid_calls",
+    available: false,
+    all: { l7d_usd: 0, l30d_usd: 0 },
+    external: { l7d_usd: 0, l30d_usd: 0 },
+  };
+}
+
+function revenueFromPayers(payers: TrafficPayers): TrafficRevenueWindow {
+  if (!payers.available) return { l7d_usd: 0, l30d_usd: 0 };
+  return {
+    l7d_usd: paidCallRevenueUsd(payers.l7d.routes),
+    l30d_usd: paidCallRevenueUsd(payers.l30d.routes),
   };
 }
 
@@ -402,6 +516,14 @@ function copyWindowCounts(window: WindowCounts): WindowCounts {
   return {
     verify: { ...window.verify },
     confirm: { ...window.confirm },
+    check: {
+      calls: window.check?.calls ?? 0,
+      unique_payers: window.check?.unique_payers ?? 0,
+    },
+    watch: {
+      calls: window.watch?.calls ?? 0,
+      unique_payers: window.watch?.unique_payers ?? 0,
+    },
     routes: copyRouteCounts(window.routes),
   };
 }
@@ -448,6 +570,8 @@ export function withholdUniquePayers(payers: TrafficPayers): TrafficPayers {
     return {
       verify: blank(counts.verify),
       confirm: blank(counts.confirm),
+      check: blank(counts.check ?? { calls: 0 }),
+      watch: blank(counts.watch ?? { calls: 0 }),
       routes,
     };
   };
@@ -455,9 +579,13 @@ export function withholdUniquePayers(payers: TrafficPayers): TrafficPayers {
 }
 
 function addWindowCounts(left: WindowCounts, right: WindowCounts): WindowCounts {
+  const family = (a: RouteCounts | undefined, b: RouteCounts | undefined): RouteCounts =>
+    addRouteCounts(a ?? { calls: 0, unique_payers: 0 }, b ?? { calls: 0, unique_payers: 0 });
   return {
-    verify: addRouteCounts(left.verify, right.verify),
-    confirm: addRouteCounts(left.confirm, right.confirm),
+    verify: family(left.verify, right.verify),
+    confirm: family(left.confirm, right.confirm),
+    check: family(left.check, right.check),
+    watch: family(left.watch, right.watch),
     routes: addRouteCountMap(left.routes, right.routes),
   };
 }
@@ -554,6 +682,81 @@ function mergeDocsExampleTraffic(
   return { available: complete && available, calls, complete };
 }
 
+function readGraders(traffic: TrafficHonesty | undefined): GraderTraffic | undefined {
+  const graders = traffic?.graders;
+  if (!graders || graders.label !== GRADER_TEST_TRAFFIC_LABEL) return undefined;
+  if (typeof graders.available !== "boolean") return undefined;
+  if (typeof graders.wallets_configured !== "number") return undefined;
+  if (typeof graders.calls?.l7d !== "number" || typeof graders.calls?.l30d !== "number") return undefined;
+  const l7 = graders.unique_payers?.l7d;
+  const l30 = graders.unique_payers?.l30d;
+  if (l7 !== null && typeof l7 !== "number") return undefined;
+  if (l30 !== null && typeof l30 !== "number") return undefined;
+  return graders;
+}
+
+function mergeGraderTraffic(
+  localTraffic: TrafficHonesty | undefined,
+  peers: readonly { included: boolean; doc?: StatsDocument }[],
+): { traffic: GraderTraffic; complete: boolean } {
+  let calls = { l7d: 0, l30d: 0 };
+  let available = true;
+  let complete = true;
+  const absorb = (traffic: TrafficHonesty | undefined) => {
+    const graders = readGraders(traffic);
+    if (!graders) {
+      complete = false;
+      available = false;
+      return;
+    }
+    if (!graders.available) available = false;
+    calls = { l7d: calls.l7d + graders.calls.l7d, l30d: calls.l30d + graders.calls.l30d };
+  };
+  absorb(localTraffic);
+  for (const peer of peers) {
+    if (!peer.included || !peer.doc) continue;
+    absorb(publishedTraffic(peer.doc));
+  }
+  return {
+    complete,
+    traffic: {
+      label: GRADER_TEST_TRAFFIC_LABEL,
+      available: complete && available,
+      wallets_configured: localTraffic?.graders?.wallets_configured ?? 0,
+      calls,
+      unique_payers: { l7d: null, l30d: null },
+    },
+  };
+}
+
+function readRevenue(traffic: TrafficHonesty | undefined): TrafficRevenue | undefined {
+  const revenue = traffic?.revenue;
+  if (!revenue || revenue.source !== "paid_calls") return undefined;
+  if (typeof revenue.available !== "boolean") return undefined;
+  if (typeof revenue.all?.l7d_usd !== "number" || typeof revenue.all?.l30d_usd !== "number") return undefined;
+  if (typeof revenue.external?.l7d_usd !== "number" || typeof revenue.external?.l30d_usd !== "number") return undefined;
+  return revenue;
+}
+
+function mergeTrafficRevenue(
+  localTraffic: TrafficHonesty | undefined,
+  peers: readonly { included: boolean; doc?: StatsDocument }[],
+  allPayers: TrafficPayers,
+  externalPayers: TrafficPayers,
+): TrafficRevenue {
+  let complete = Boolean(readRevenue(localTraffic));
+  for (const peer of peers) {
+    if (!peer.included || !peer.doc) continue;
+    if (!readRevenue(publishedTraffic(peer.doc))) complete = false;
+  }
+  return {
+    source: "paid_calls",
+    available: complete && allPayers.available && externalPayers.available,
+    all: revenueFromPayers(allPayers),
+    external: revenueFromPayers(externalPayers),
+  };
+}
+
 /**
  * Sum per-volume wallet splits. A peer without `traffic` still adds its
  * sentinel headlines to `all` (that is what the old document counted) and
@@ -605,6 +808,8 @@ export function mergeTrafficHonesty(
   }
 
   const walletCount = localTraffic?.internal_wallets_configured ?? 0;
+  const graders = mergeGraderTraffic(localTraffic, peers);
+  const revenue = mergeTrafficRevenue(localTraffic, peers, all.payers, external.payers);
   return {
     includes_internal_test_traffic: true,
     label: INTERNAL_TEST_TRAFFIC_LABEL,
@@ -615,14 +820,23 @@ export function mergeTrafficHonesty(
       walletCountsDisagree: walletCounts.size > 1,
       routesComplete,
       docsExample,
+      graders: {
+        available: graders.traffic.available,
+        wallets_configured: graders.traffic.wallets_configured,
+        calls: graders.traffic.calls,
+        complete: graders.complete,
+      },
     }),
     internal_wallets_configured: walletCount,
     docs_example: {
       label: DOCS_EXAMPLE_TEST_TRAFFIC_LABEL,
       available: docsExample.available,
       url: DOCS_EXAMPLE_URL,
+      urls: DOCS_EXAMPLE_URLS,
       calls: docsExample.calls,
     },
+    graders: graders.traffic,
+    revenue,
     external_complete: externalComplete,
     routes_complete: routesComplete,
     all: { ...all, payers: withholdUniquePayers(all.payers) },
@@ -658,7 +872,16 @@ export function buildTrafficHonesty(
   payersExternal: ReturnType<typeof queryRetentionWindowsFromStore>,
   walletCount: number,
   docsExample: DocsExampleTraffic,
+  graders: GraderTraffic,
 ): TrafficHonesty {
+  const allPayers = trafficPayersFromStore(payersAll);
+  const externalPayers = trafficPayersFromStore(payersExternal);
+  const revenue: TrafficRevenue = {
+    source: "paid_calls",
+    available: allPayers.available && externalPayers.available,
+    all: revenueFromPayers(allPayers),
+    external: revenueFromPayers(externalPayers),
+  };
   return {
     includes_internal_test_traffic: true,
     label: INTERNAL_TEST_TRAFFIC_LABEL,
@@ -668,18 +891,26 @@ export function buildTrafficHonesty(
       fleet: false,
       routesComplete: true,
       docsExample: { available: docsExample.available, calls: docsExample.calls, complete: true },
+      graders: {
+        available: graders.available,
+        wallets_configured: graders.wallets_configured,
+        calls: graders.calls,
+        complete: true,
+      },
     }),
     internal_wallets_configured: walletCount,
     docs_example: docsExample,
+    graders,
+    revenue,
     external_complete: true,
     routes_complete: true,
     all: {
       sentinel: trafficSentinelFromWatch(watchAll, oneShotChecks),
-      payers: trafficPayersFromStore(payersAll),
+      payers: allPayers,
     },
     external: {
       sentinel: trafficSentinelFromWatch(watchExternal, oneShotChecks),
-      payers: trafficPayersFromStore(payersExternal),
+      payers: externalPayers,
     },
   };
 }
@@ -697,21 +928,37 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
   const unscoped = { l7d: scoped7?.unscoped ?? 0, l30d: scoped30?.unscoped ?? 0 };
   const notes = statsNotes(unscoped, LOCAL_VOLUME_NOTE, "volume");
   const wallets = internalWallets();
+  const graders = graderWallets();
+  const externalPayersExcluded = [...new Set([...wallets, ...graders])];
   const watchAll = loadWatchStats();
-  const watchExternal = loadWatchStats(wallets);
+  const watchExternal = loadWatchStats(externalPayersExcluded);
   const oneShotChecks = countReceiptsSince("1970-01-01T00:00:00Z", "check").receipts;
   const exampleHashes = docsExampleUrlHashes();
   const payersAll = queryRetentionWindowsFromStore(now);
-  const payersExternal = queryRetentionWindowsFromStore(now, wallets, exampleHashes);
+  const payersExternal = queryRetentionWindowsFromStore(now, externalPayersExcluded, exampleHashes);
   const exampleCounts = queryPaidCallCountsForUrlHashesFromStore(now, exampleHashes);
+  const graderCounts = queryPaidCallCountsForPayersFromStore(now, graders);
   const docsExample: DocsExampleTraffic = exampleCounts
     ? {
         label: DOCS_EXAMPLE_TEST_TRAFFIC_LABEL,
         available: true,
         url: DOCS_EXAMPLE_URL,
+        urls: DOCS_EXAMPLE_URLS,
         calls: exampleCounts,
       }
     : emptyDocsExampleTraffic();
+  const graderTraffic: GraderTraffic = graderCounts
+    ? {
+        label: GRADER_TEST_TRAFFIC_LABEL,
+        available: true,
+        wallets_configured: graders.length,
+        calls: { l7d: graderCounts.l7d.calls, l30d: graderCounts.l30d.calls },
+        unique_payers: {
+          l7d: graderCounts.l7d.unique_payers,
+          l30d: graderCounts.l30d.unique_payers,
+        },
+      }
+    : { ...emptyGraderTraffic(), wallets_configured: graders.length };
   return {
     ok: true,
     service: "livecheck",
@@ -724,6 +971,7 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
       payersExternal,
       wallets.length,
       docsExample,
+      graderTraffic,
     ),
     intents: {
       lead_submit: {
@@ -784,11 +1032,16 @@ function payerTable(doc: StatsDocument): string {
   const external = doc.traffic.external.payers;
   if (!all.available || !external.available) {
     return `<h3>Payers</h3>
-  <p class="muted">Verify and confirm payer windows are not published for this response. A closed paid-call store is missing, not zero. Check and watch payers are not in this table.</p>`;
+  <p class="muted">Payer windows are not published for this response. A closed paid-call store is missing, not zero.</p>`;
   }
   const payerCell = (value: number | null) => (value === null ? "withheld" : String(value));
+  const familyCell = (counts: RouteCounts | undefined) => {
+    const calls = counts?.calls ?? 0;
+    const payers = counts?.unique_payers;
+    return `<td>${calls}</td><td>${payerCell(payers ?? null)}</td>`;
+  };
   const row = (audience: string, windowLabel: string, counts: WindowCounts) =>
-    `<tr><td>${audience}</td><td>${windowLabel}</td><td>${counts.verify.calls}</td><td>${payerCell(counts.verify.unique_payers)}</td><td>${counts.confirm.calls}</td><td>${payerCell(counts.confirm.unique_payers)}</td></tr>`;
+    `<tr><td>${audience}</td><td>${windowLabel}</td>${familyCell(counts.verify)}${familyCell(counts.confirm)}${familyCell(counts.check)}${familyCell(counts.watch)}</tr>`;
   const routeRow = (audience: string, windowLabel: string, counts: WindowCounts) =>
     PAID_CALL_ROUTES.map((route) => {
       const item = counts.routes?.[route] ?? { calls: 0, unique_payers: null };
@@ -798,10 +1051,11 @@ function payerTable(doc: StatsDocument): string {
     ? ""
     : `<p class="muted">Per-route payer counts are incomplete: at least one included machine did not publish routes. Family totals above still include those calls.</p>`;
   return `<h3>Payers</h3>
-  <p class="muted">${escHtml(doc.traffic.label)} Verify and confirm paid_calls only. The first table is family totals (verify includes verify/job and verify/listing; confirm includes confirm/order). Unique payers in a family are distinct across that family, not the sum of the route rows. All includes internal test traffic. External omits configured team wallets and docs-example URLs. Null payers stay in external calls unless the URL is the docs example, and are not a unique payer. On this machine, unique payers are COUNT(DISTINCT payer). A fleet document shows withheld instead of adding per-volume distincts.</p>
+  <p class="muted">${escHtml(doc.traffic.label)} Every paid route in paid_calls. Family totals: verify includes verify/job and verify/listing; confirm includes confirm/order; watch includes watch/renew. Unique payers in a family are distinct across that family, not the sum of the route rows. All includes internal and grader test traffic. External omits configured team wallets, known grader wallets, and docs-example URLs. Null payers stay in external calls unless the URL is a docs example, and are not a unique payer. On this machine, unique payers are COUNT(DISTINCT payer). A fleet document shows withheld instead of adding per-volume distincts. Revenue is calls times the route price.</p>
+  <p class="muted">Revenue from paid_calls: all L7d $${doc.traffic.revenue.all.l7d_usd.toFixed(2)} / L30d $${doc.traffic.revenue.all.l30d_usd.toFixed(2)}; external L7d $${doc.traffic.revenue.external.l7d_usd.toFixed(2)} / L30d $${doc.traffic.revenue.external.l30d_usd.toFixed(2)}.${doc.traffic.revenue.available ? "" : " Revenue is not a measurement on this response."}</p>
   <table>
     <thead>
-      <tr><th>Audience</th><th>Window</th><th>Verify calls</th><th>Verify unique payers</th><th>Confirm calls</th><th>Confirm unique payers</th></tr>
+      <tr><th>Audience</th><th>Window</th><th>Verify calls</th><th>Verify unique payers</th><th>Confirm calls</th><th>Confirm unique payers</th><th>Check calls</th><th>Check unique payers</th><th>Watch calls</th><th>Watch unique payers</th></tr>
     </thead>
     <tbody>
       ${row("All (includes internal test traffic)", "L7d", all.l7d)}
@@ -811,7 +1065,7 @@ function payerTable(doc: StatsDocument): string {
     </tbody>
   </table>
   <h3>Payers by route</h3>
-  <p class="muted">${escHtml(doc.traffic.label)} Stored route after /v1/ (verify, verify/job, verify/listing, confirm, confirm/order). External rows omit configured team wallets and docs-example URLs.</p>
+  <p class="muted">${escHtml(doc.traffic.label)} Stored route after /v1/ (verify, verify/job, verify/listing, confirm, confirm/order, check, watch, watch/renew). External rows omit configured team wallets, known grader wallets, and docs-example URLs.</p>
   ${routesNote}
   <table>
     <thead>
@@ -832,7 +1086,18 @@ function docsExampleHtml(doc: StatsDocument): string {
   if (!docs.available) {
     return `${label} Counts are not a measurement on this response (paid-call store closed, or a machine did not publish the split).`;
   }
-  return `${label} ${docs.calls.l7d} L7d / ${docs.calls.l30d} L30d paid calls. These rows stay in All and are omitted from External. URL: <code>${escHtml(docs.url)}</code>.`;
+  const urls = (docs.urls?.length ? docs.urls : [docs.url]).map((url) => `<code>${escHtml(url)}</code>`).join(", ");
+  return `${label} ${docs.calls.l7d} L7d / ${docs.calls.l30d} L30d paid calls. These rows stay in All and are omitted from External. URLs: ${urls}.`;
+}
+
+function graderHtml(doc: StatsDocument): string {
+  const graders = doc.traffic.graders;
+  const label = escHtml(graders.label);
+  if (!graders.available) {
+    return `${label} Counts are not a measurement on this response (paid-call store closed, or a machine did not publish the split).`;
+  }
+  const payers = (value: number | null) => (value === null ? "withheld" : String(value));
+  return `${label} ${graders.wallets_configured} wallets configured. ${graders.calls.l7d} L7d / ${graders.calls.l30d} L30d paid calls (${payers(graders.unique_payers.l7d)} / ${payers(graders.unique_payers.l30d)} unique payers). These rows stay in All and are omitted from External.`;
 }
 
 export function statsHtml(doc: StatsDocument): string {
@@ -872,6 +1137,7 @@ export function statsHtml(doc: StatsDocument): string {
   <h1>Livecheck stats</h1>
   <p class="honesty"><strong>${escHtml(doc.traffic.label)}</strong> ${escHtml(doc.traffic.note)}</p>
   <p class="muted">${docsExampleHtml(doc)}</p>
+  <p class="muted">${graderHtml(doc)}</p>
   <p>Generated ${doc.generated_at}. Payable Confirm intents: <code>lead_submit</code> (GA) and <code>listing_published</code> at $${lead.price_usd.toFixed(2)} USDC; <code>order_placed</code> at $${order.price_usd.toFixed(2)} USDC.</p>
   <p class="muted">Volume scope: ${doc.store.scope}${doc.store.fly_machine_id ? ` · serving machine <code>${doc.store.fly_machine_id}</code>` : ""}. Unscoped confirm paid_calls (no stored intent): L7d ${doc.store.confirm_unscoped_paid_calls.l7d} / L30d ${doc.store.confirm_unscoped_paid_calls.l30d}.${statsMachineSummary(doc)}</p>
   <table>

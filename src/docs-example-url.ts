@@ -13,6 +13,14 @@ export const DOCS_EXAMPLE_HOST = "boards.greenhouse.io";
 export const DOCS_EXAMPLE_PATH = "/example/jobs/1842";
 export const DOCS_EXAMPLE_URL = `https://${DOCS_EXAMPLE_HOST}${DOCS_EXAMPLE_PATH}`;
 
+/** Bazaar / OpenAPI confirm example. Test traffic regardless of payer. */
+export const CONFIRM_DOCS_EXAMPLE_HOST = "example.com";
+export const CONFIRM_DOCS_EXAMPLE_PATH = "/thank-you";
+export const CONFIRM_DOCS_EXAMPLE_REF = "ABC123";
+export const CONFIRM_DOCS_EXAMPLE_URL = `https://${CONFIRM_DOCS_EXAMPLE_HOST}${CONFIRM_DOCS_EXAMPLE_PATH}?ref=${CONFIRM_DOCS_EXAMPLE_REF}`;
+
+export const DOCS_EXAMPLE_URLS = [DOCS_EXAMPLE_URL, CONFIRM_DOCS_EXAMPLE_URL] as const;
+
 /**
  * `paid_calls.url_sha256` already seen in prod on verify/job.
  * Equals `hashUrl(DOCS_EXAMPLE_URL)`. The literal stays in the exclusion
@@ -28,6 +36,10 @@ const DOCS_EXAMPLE_URL_FORMS = [
   `${DOCS_EXAMPLE_URL}/`,
   `http://${DOCS_EXAMPLE_HOST}${DOCS_EXAMPLE_PATH}`,
   `http://${DOCS_EXAMPLE_HOST}${DOCS_EXAMPLE_PATH}/`,
+  CONFIRM_DOCS_EXAMPLE_URL,
+  `https://${CONFIRM_DOCS_EXAMPLE_HOST}${CONFIRM_DOCS_EXAMPLE_PATH}/?ref=${CONFIRM_DOCS_EXAMPLE_REF}`,
+  `http://${CONFIRM_DOCS_EXAMPLE_HOST}${CONFIRM_DOCS_EXAMPLE_PATH}?ref=${CONFIRM_DOCS_EXAMPLE_REF}`,
+  `http://${CONFIRM_DOCS_EXAMPLE_HOST}${CONFIRM_DOCS_EXAMPLE_PATH}/?ref=${CONFIRM_DOCS_EXAMPLE_REF}`,
 ] as const;
 
 /**
@@ -44,9 +56,13 @@ export function isDocsExampleUrl(url: string): boolean {
     return false;
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-  if (parsed.hostname.toLowerCase() !== DOCS_EXAMPLE_HOST) return false;
+  const host = parsed.hostname.toLowerCase();
   const path = parsed.pathname.replace(/\/+$/, "") || "/";
-  return path === DOCS_EXAMPLE_PATH;
+  if (host === DOCS_EXAMPLE_HOST && path === DOCS_EXAMPLE_PATH) return true;
+  if (host === CONFIRM_DOCS_EXAMPLE_HOST && path === CONFIRM_DOCS_EXAMPLE_PATH) {
+    return parsed.searchParams.get("ref") === CONFIRM_DOCS_EXAMPLE_REF;
+  }
+  return false;
 }
 
 /** Values matched against `paid_calls.url_sha256` when building traffic.external. */

@@ -99,7 +99,7 @@ Expect HTTP **200** JSON:
 - `price_usd`: **0.1**
 - `id` starts with `cfm_`
 
-Accept **only** `verdict=confirmed` with Level-2 evidence (ref / ticket / lead id, or unique confirmation-URL token).
+Accept **only** `verdict=confirmed` with Level-2 evidence (a ref / ticket / lead id printed on the page). A URL token alone is not proof, and a non-2xx page is never confirmed.
 
 ## 7. Honesty contrast — thank-you fluff → `unknown`
 

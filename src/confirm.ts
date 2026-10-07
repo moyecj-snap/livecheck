@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { CONFIRM_PRICE_USD } from "./config.js";
-import { HUMAN_REVIEW_NEXT_STEP, applyConfirmedGate } from "./confirm-shared.js";
+import { HUMAN_REVIEW_NEXT_STEP, applyConfirmedGate, isSuccessHttpStatus } from "./confirm-shared.js";
 import { classifyListingPublished, LISTING_PUBLISHED_INTENT } from "./listing-published.js";
 import { classifyOrderPlaced, ORDER_PLACED_INTENT } from "./order-placed.js";
 import type { ConfirmIntent, ConfirmResult, ConfirmVerdictStatus, EvidenceLevel, FetchedPage } from "./types.js";
@@ -251,18 +251,16 @@ export function evidenceLevelFor(input: {
     return 2;
   }
   if (
-    input.independent_evidence &&
-    input.signals.some((s) => s === "level_2" || s === "confirmation_id" || s === "confirmation_url_token")
-  ) {
-    return 2;
-  }
-  if (
     input.signals.some(
       (s) =>
         s.startsWith("failure_banner:") ||
         s === "thank_you_copy" ||
         s === "level_2_not_independent" ||
-        s === "no_confirmation_id",
+        s === "no_confirmation_id" ||
+        s === "confirmation_url_token" ||
+        s === "url_token_not_sufficient" ||
+        s === "non_2xx" ||
+        s === "confirmation_id_ignored_non_2xx",
     )
   ) {
     return 1;
@@ -318,56 +316,60 @@ export function classifyLeadSubmit(
   if (independent) signals.push("cookieless_fetch");
   else signals.push("cookies_used");
 
+  const httpOk = isSuccessHttpStatus(page.httpStatus);
+  if (!httpOk) signals.push("non_2xx");
+
   const failedPhrase = includesPhrase(text, FAILED_PHRASES);
   const thankYou = includesPhrase(text, THANK_YOU_PHRASES);
   const labeledId = extractLabeledConfirmationId(`${page.title ?? ""}\n${page.text}`);
   const urlToken =
     extractUrlConfirmationToken(page.canonicalUrl) ?? extractUrlConfirmationToken(page.requestedUrl);
-  const level2Id = labeledId ?? urlToken;
+  if (urlToken) signals.push("confirmation_url_token");
+
+  const base = {
+    signals,
+    independent_signals: independent ? 1 : 0,
+    independent_evidence: independent,
+    evidence_id: options.evidenceId ?? evidenceId(),
+    http_status: page.httpStatus,
+    fetched_at: isoNow(now),
+    url: page.requestedUrl,
+    canonical_url: page.canonicalUrl,
+    price_usd: CONFIRM_PRICE_USD,
+  };
 
   if (failedPhrase) {
     signals.push(`failure_banner:${failedPhrase}`);
     return finishResult({
+      ...base,
       verdict: "failed",
       effect: { type: "lead_submit" },
       evidence_strength: 1,
       signals,
-      independent_signals: independent ? 1 : 0,
-      independent_evidence: independent,
-      evidence_id: options.evidenceId ?? evidenceId(),
-      http_status: page.httpStatus,
-      fetched_at: isoNow(now),
-      url: page.requestedUrl,
-      canonical_url: page.canonicalUrl,
-      price_usd: CONFIRM_PRICE_USD,
     });
   }
 
-  if (level2Id && independent) {
-    if (labeledId) signals.push("confirmation_id");
-    if (urlToken) signals.push("confirmation_url_token");
+  // Proof is an id printed on a 2xx page. A ref/path token is never enough,
+  // and a 404 or any other non-2xx page cannot be confirmed.
+  if (labeledId && independent && httpOk) {
+    signals.push("confirmation_id");
     signals.push("level_2");
     return finishResult({
+      ...base,
       verdict: "confirmed",
-      effect: { type: "lead_submit", id: level2Id },
+      effect: { type: "lead_submit", id: labeledId },
       evidence_strength: 2,
       signals,
       independent_signals: 1,
       independent_evidence: true,
-      evidence_id: options.evidenceId ?? evidenceId(),
-      http_status: page.httpStatus,
-      fetched_at: isoNow(now),
-      url: page.requestedUrl,
-      canonical_url: page.canonicalUrl,
-      price_usd: CONFIRM_PRICE_USD,
     });
   }
 
-  if (level2Id && !independent) {
-    signals.push("level_2_not_independent");
-  }
+  if (labeledId && !httpOk) signals.push("confirmation_id_ignored_non_2xx");
+  if (labeledId && !independent) signals.push("level_2_not_independent");
+  if (urlToken) signals.push("url_token_not_sufficient");
   if (thankYou) signals.push("thank_you_copy");
-  if (!level2Id && !thankYou) signals.push("no_confirmation_id");
+  if (!labeledId && !thankYou) signals.push("no_confirmation_id");
 
   return finishResult({
     verdict: "unknown",

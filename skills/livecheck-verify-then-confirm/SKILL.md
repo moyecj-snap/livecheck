@@ -88,7 +88,7 @@ The contrast is an extra `$0.10` if paid; skip and still treat fluff as `unknown
 2. Parse `status` `live|closed|unknown` + `signals`. If `closed` or `unknown` (and not a known Ashby/Lever unknown), stop or escalate — do not treat as success.
 3. Run the agent’s own `lead_submit` action (separate actor). Demo: treat submit as already done; use the thank-you fixture.
 4. **Confirm** — unpaid → 402; pay; body `{"url":"<thank-you or result URL>","intent":"lead_submit"}` (optional `claim` fingerprint). Demo fixture: `https://livecheck.fly.dev/fixtures/confirm/thank-you-id`.
-5. Accept only `verdict=confirmed` with Level-2 evidence (ref / ticket / lead id, or unique confirmation-URL token). Thank-you fluff alone → `unknown` — never treat as confirmed (`https://livecheck.fly.dev/fixtures/confirm/thank-you-only`).
+5. Accept only `verdict=confirmed` with Level-2 evidence: a ref / ticket / lead id printed on the page. A token that appears only in the URL is not proof, and a non-2xx page is never confirmed. Thank-you fluff alone → `unknown` — never treat as confirmed (`https://livecheck.fly.dev/fixtures/confirm/thank-you-only`).
 6. On `failed` / `unknown`, prefer abstention over false success.
 
 ## Verify signals (production strings)

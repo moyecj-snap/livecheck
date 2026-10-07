@@ -173,22 +173,35 @@ export function verifyBazaarExtensions(): Record<string, unknown> {
 export const VERIFY_ROUTE_DESCRIPTION = VERIFY_DESCRIPTION;
 
 export const CONFIRM_EXAMPLE = {
+  example: true,
+  note: "Illustrative Bazaar shape, not a live fetch. https://example.com/thank-you?ref=ABC123 returns HTTP 404 and the ref query is not on-page proof, so a live POST /v1/confirm of this input is unknown, never confirmed.",
   url: "https://example.com/thank-you?ref=ABC123",
   canonical_url: "https://example.com/thank-you?ref=ABC123",
   id: "cfm_01J8Z0K3N4P5Q6R7S8T9V0WXYZ",
-  verdict: "confirmed",
-  effect: { type: "lead_submit", id: "ABC123" },
-  evidence_strength: 2,
-  evidence_level: 2,
-  confidence: 0.92,
-  signals: ["cookieless_fetch", "confirmation_id", "level_2"],
+  verdict: "unknown",
+  effect: { type: "lead_submit" },
+  evidence_strength: 1,
+  evidence_level: 1,
+  confidence: 0.48,
+  signals: [
+    "cookieless_fetch",
+    "confirmation_url_token",
+    "url_token_not_sufficient",
+    "non_2xx",
+    "no_confirmation_id",
+  ],
   independent_signals: 1,
   independent_evidence: true,
   evidence_id: "ev_01example",
-  http_status: 200,
+  http_status: 404,
   fetched_at: "2026-09-06T17:00:00Z",
   price_usd: CONFIRM_PRICE_USD,
   route: "confirm",
+  next_step: {
+    action: "human_review",
+    endpoint: "/v1/judge",
+    est_price_usd: 1,
+  },
   receipt: {
     hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     verify_url: "https://livecheck.fly.dev/v1/receipt/cfm_01J8Z0K3N4P5Q6R7S8T9V0WXYZ",
@@ -291,6 +304,8 @@ export const CONFIRM_INPUT_SCHEMA = {
 } as const;
 
 export const ORDER_CONFIRM_EXAMPLE = {
+  example: true,
+  note: "Illustrative confirmed shape only. An order id in the URL is not proof; it has to be printed on a 2xx page. This object is not a live fetch.",
   url: "https://shop.example.com/thank-you?order_id=ORD-18421",
   canonical_url: "https://shop.example.com/thank-you?order_id=ORD-18421",
   id: "cfm_01J8Z0K3N4P5Q6R7S8T9V0WORD",

@@ -8,11 +8,11 @@ export const PAID_CALL_EVENT = "livecheck.paid_call" as const;
 
 /**
  * Specific route stored on `paid_calls` and echoed on the JSON body.
- * Check and watch stay on receipts and the watch store.
+ * Check, watch, and watch/renew are rows here too (payer, tx, detector, verdict, UA).
  *
  * SQLite cannot ALTER a CHECK. `migratePaidCallStore` rebuilds `paid_calls`
- * when the check is still `verify|confirm` only. Rows written before that
- * rebuild stay `verify` or `confirm` — the alias was not recorded.
+ * when the check is missing a current route. Rows written before a rebuild
+ * keep the route that was stored.
  */
 export const PAID_CALL_ROUTES = [
   "verify",
@@ -20,6 +20,9 @@ export const PAID_CALL_ROUTES = [
   "verify/listing",
   "confirm",
   "confirm/order",
+  "check",
+  "watch",
+  "watch/renew",
 ] as const;
 
 export type PaidCallRoute = (typeof PAID_CALL_ROUTES)[number];
@@ -36,6 +39,27 @@ export function isVerifyPaidRoute(route: PaidCallRoute): boolean {
 
 export function isConfirmPaidRoute(route: PaidCallRoute): boolean {
   return route === "confirm" || route === "confirm/order";
+}
+
+/** One-shot check, watcher create, and watcher renew. */
+export function isSentinelPaidRoute(route: PaidCallRoute): boolean {
+  return route === "check" || route === "watch" || route === "watch/renew";
+}
+
+export const SENTINEL_DETECTORS = ["status_change", "keyword", "text_diff", "numeric_threshold"] as const;
+export type SentinelDetector = (typeof SENTINEL_DETECTORS)[number];
+
+export const SENTINEL_PAID_VERDICTS = ["observed", "fired", "unfired", "created", "renewed"] as const;
+export type SentinelPaidVerdict = (typeof SENTINEL_PAID_VERDICTS)[number];
+
+export function sanitizeSentinelDetector(value: unknown): SentinelDetector | undefined {
+  return SENTINEL_DETECTORS.includes(value as SentinelDetector) ? (value as SentinelDetector) : undefined;
+}
+
+export function sanitizeSentinelVerdict(value: unknown): SentinelPaidVerdict | undefined {
+  return SENTINEL_PAID_VERDICTS.includes(value as SentinelPaidVerdict)
+    ? (value as SentinelPaidVerdict)
+    : undefined;
 }
 
 /**
@@ -238,8 +262,10 @@ export function buildPaidCallEvent(
     url_hash: remembered.url_hash,
     ts: isoTs(now),
   };
-  if (isConfirmPaidRoute(remembered.route) && remembered.intent) {
-    event.intent = remembered.intent;
+  if ((isConfirmPaidRoute(remembered.route) || isSentinelPaidRoute(remembered.route)) && remembered.intent) {
+    event.intent = isSentinelPaidRoute(remembered.route)
+      ? sanitizeSentinelDetector(remembered.intent)
+      : remembered.intent;
   }
   if (isVerifyPaidRoute(remembered.route)) {
     const status = sanitizeVerifyStatus(remembered.status);
@@ -247,6 +273,10 @@ export function buildPaidCallEvent(
   }
   if (isConfirmPaidRoute(remembered.route) && remembered.verdict) {
     event.verdict = remembered.verdict;
+  }
+  if (isSentinelPaidRoute(remembered.route) && remembered.verdict) {
+    const verdict = sanitizeSentinelVerdict(remembered.verdict);
+    if (verdict) event.verdict = verdict;
   }
   const httpStatus = sanitizeHttpStatus(remembered.http_status);
   const userAgent = sanitizeUserAgent(remembered.user_agent);
@@ -312,9 +342,13 @@ export function rememberPaidCall(input: {
     host: hostnameOnly(input.url),
     url_hash: hashUrl(input.url),
   };
-  if (isConfirmPaidRoute(input.route) && input.intent) remembered.intent = input.intent;
+  if ((isConfirmPaidRoute(input.route) || isSentinelPaidRoute(input.route)) && input.intent) {
+    remembered.intent = input.intent;
+  }
   if (isVerifyPaidRoute(input.route) && input.status) remembered.status = input.status;
-  if (isConfirmPaidRoute(input.route) && input.verdict) remembered.verdict = input.verdict;
+  if ((isConfirmPaidRoute(input.route) || isSentinelPaidRoute(input.route)) && input.verdict) {
+    remembered.verdict = input.verdict;
+  }
   if (input.http_status !== undefined) remembered.http_status = input.http_status;
   if (input.user_agent) remembered.user_agent = input.user_agent;
   const store = paidCallAls.getStore();

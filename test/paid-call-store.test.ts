@@ -10,6 +10,7 @@ import { DatabaseSync } from "node:sqlite";
 import { DOCS_EXAMPLE_URL, DOCS_EXAMPLE_URL_SHA256, docsExampleUrlHashes } from "../src/docs-example-url.js";
 import { serve } from "@hono/node-server";
 import { createApp } from "../src/app.js";
+import { closeWatchStore, initWatchStore } from "../src/watch-store.js";
 import {
   PAID_CALL_EVENT,
   buildPaidCallEvent,
@@ -439,6 +440,100 @@ describe("HTTP paid check writes a retained row", () => {
   });
 });
 
+describe("HTTP check, watch, and renew write retained rows", () => {
+  const app = createApp();
+  let origin = "";
+  let close: () => void = () => {};
+
+  before(async () => {
+    initPaidCallStore(":memory:");
+    initWatchStore(":memory:");
+    await new Promise<void>((resolve) => {
+      const server = serve({ fetch: app.fetch, port: 0, hostname: "127.0.0.1" }, (info) => {
+        origin = `http://127.0.0.1:${info.port}`;
+        close = () => server.close();
+        resolve();
+      });
+    });
+  });
+
+  after(() => {
+    close();
+    closeWatchStore();
+    closePaidCallStore();
+  });
+
+  it("mock-paid check stores detector, verdict, and user-agent", async () => {
+    const target = `${origin}/fixtures/live-apply-now`;
+    const res = await fetch(`${origin}/v1/check`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-livecheck-mock": "1",
+        "user-agent": "Lumiere-grader/1.0",
+      },
+      body: JSON.stringify({
+        target: { type: "url", url: target, render: "never" },
+        condition: { detector: "status_change", params: {} },
+      }),
+    });
+    assert.equal(res.status, 200);
+    const rows = listPaidCallRowsFromStore().filter((row) => row.route === "check");
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].intent, "status_change");
+    assert.equal(rows[0].verdict, "observed");
+    assert.equal(rows[0].user_agent, "Lumiere-grader/1.0");
+    assert.equal(rows[0].http_status, 200);
+    assert.equal(rows[0].host, "127.0.0.1");
+    assert.equal(rows[0].url_sha256, hashUrl(target));
+    assert.equal(JSON.stringify(rows[0]).includes(target), false);
+  });
+
+  it("mock-paid watch and renew store detector, verdict, and user-agent", async () => {
+    const target = `${origin}/fixtures/live-apply-now`;
+    const created = await fetch(`${origin}/v1/watch`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-livecheck-mock": "1",
+        "user-agent": "livecheck-test/watch",
+      },
+      body: JSON.stringify({
+        target: { type: "url", url: target, render: "never", selector: null },
+        condition: { detector: "status_change", params: {} },
+        callback: { url: "https://example.com/hooks/livecheck", secret: "whsec_test", deliver: "on_change" },
+        interval_s: 900,
+      }),
+    });
+    assert.equal(created.status, 201);
+    const createdBody = (await created.json()) as { id: string; owner_token: string };
+    const watchRows = listPaidCallRowsFromStore().filter((row) => row.route === "watch");
+    assert.equal(watchRows.length, 1);
+    assert.equal(watchRows[0].intent, "status_change");
+    assert.equal(watchRows[0].verdict, "created");
+    assert.equal(watchRows[0].user_agent, "livecheck-test/watch");
+    assert.equal(watchRows[0].http_status, 200);
+
+    const renewed = await fetch(`${origin}/v1/watch/renew`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-livecheck-mock": "1",
+        "user-agent": "livecheck-test/renew",
+        "x-livecheck-owner-token": createdBody.owner_token,
+      },
+      body: JSON.stringify({ id: createdBody.id }),
+    });
+    assert.equal(renewed.status, 200);
+    const renewRows = listPaidCallRowsFromStore().filter((row) => row.route === "watch/renew");
+    assert.equal(renewRows.length, 1);
+    assert.equal(renewRows[0].intent, "status_change");
+    assert.equal(renewRows[0].verdict, "renewed");
+    assert.equal(renewRows[0].user_agent, "livecheck-test/renew");
+    assert.equal(renewRows[0].url_sha256, hashUrl(target));
+  });
+});
+
 describe("CoS CLI", () => {
   it("prints L7d/L30d counts from a sqlite file", async () => {
     const dir = mkdtempSync(join(tmpdir(), "paid-call-cos-"));
@@ -575,9 +670,19 @@ describe("paid_calls intent migrate and backfill", () => {
       intent: "order_placed",
       verdict: "unknown",
     });
+    insertPaidCallRow(db, {
+      ts: "2026-09-10T18:50:00Z",
+      route: "check",
+      host: "example.com",
+      url_sha256: hashUrl("https://example.com/page"),
+      intent: "status_change",
+      verdict: "observed",
+      user_agent: "livecheck-test/check",
+    });
     const after = listPaidCallRows(db);
-    assert.equal(after.length, 3);
+    assert.equal(after.length, 4);
     assert.equal(after.some((row) => row.route === "verify/job"), true);
+    assert.equal(after.some((row) => row.route === "check" && row.verdict === "observed"), true);
     assert.equal(after.some((row) => row.route === "confirm" && row.intent === undefined), true);
     const orderIntents = queryConfirmIntentWindows(db, new Date("2026-09-11T19:00:00.000Z"));
     assert.equal(orderIntents.l7d.order_placed, 1);
@@ -618,15 +723,45 @@ describe("paid_calls intent migrate and backfill", () => {
       url_sha256: hashUrl("https://example.com/products/widget"),
       status: "live",
     });
+    insertPaidCallRow(db, {
+      ts: "2026-09-10T18:10:00Z",
+      route: "check",
+      host: "example.com",
+      url_sha256: hashUrl("https://example.com/watched"),
+      intent: "keyword",
+      verdict: "fired",
+      user_agent: "livecheck-test/check",
+    });
+    insertPaidCallRow(db, {
+      ts: "2026-09-10T18:15:00Z",
+      route: "watch",
+      host: "example.com",
+      url_sha256: hashUrl("https://example.com/watched"),
+      intent: "status_change",
+      verdict: "created",
+    });
+    insertPaidCallRow(db, {
+      ts: "2026-09-10T18:20:00Z",
+      route: "watch/renew",
+      host: "example.com",
+      url_sha256: hashUrl("https://example.com/watched"),
+      intent: "status_change",
+      verdict: "renewed",
+    });
     const listed = listPaidCallRows(db);
     assert.deepEqual(
       listed.map((row) => row.route),
-      ["verify", "verify/listing"],
+      ["verify", "verify/listing", "check", "watch", "watch/renew"],
     );
     const windows = queryRetentionWindows(db, new Date("2026-09-11T19:00:00.000Z"));
     assert.equal(windows.l7d.routes.verify.calls, 1);
     assert.equal(windows.l7d.routes["verify/listing"].calls, 1);
+    assert.equal(windows.l7d.routes.check.calls, 1);
+    assert.equal(windows.l7d.routes.watch.calls, 1);
+    assert.equal(windows.l7d.routes["watch/renew"].calls, 1);
     assert.equal(windows.l7d.verify.calls, 2);
+    assert.equal(windows.l7d.check.calls, 1);
+    assert.equal(windows.l7d.watch.calls, 2);
     db.close();
   });
 

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { ORDER_PLACED_PRICE_USD } from "./config.js";
-import { HUMAN_REVIEW_NEXT_STEP, applyConfirmedGate } from "./confirm-shared.js";
+import { HUMAN_REVIEW_NEXT_STEP, applyConfirmedGate, isSuccessHttpStatus } from "./confirm-shared.js";
 import type { ConfirmResult, ConfirmVerdictStatus, EvidenceLevel, FetchedPage } from "./types.js";
 
 export const ORDER_PLACED_INTENT = "order_placed" as const;
@@ -247,16 +247,14 @@ export function orderPlacedEvidenceLevel(input: {
   if (
     input.verdict === "confirmed" &&
     input.independent_evidence &&
-    (input.signals.includes("level_2") ||
-      input.signals.includes("order_id") ||
-      input.signals.includes("order_url_token"))
+    (input.signals.includes("level_2") || input.signals.includes("order_id"))
   ) {
     return 2;
   }
   if (
     input.independent_evidence &&
     input.signals.includes("level_2") &&
-    (input.signals.includes("order_id") || input.signals.includes("order_url_token"))
+    input.signals.includes("order_id")
   ) {
     return 2;
   }
@@ -270,7 +268,11 @@ export function orderPlacedEvidenceLevel(input: {
         s === "level_2_not_independent" ||
         s === "no_order_id" ||
         s === "claim_mismatch" ||
-        s === "ambiguous_status",
+        s === "ambiguous_status" ||
+        s === "order_url_token" ||
+        s === "url_token_not_sufficient" ||
+        s === "non_2xx" ||
+        s === "order_id_ignored_non_2xx",
     )
   ) {
     return 1;
@@ -334,13 +336,16 @@ export function classifyOrderPlaced(
   const challenge =
     Boolean(includesPhrase(text, CHALLENGE_PHRASES)) ||
     page.html.toLowerCase().includes("cf-challenge");
+  const httpOk = isSuccessHttpStatus(page.httpStatus);
+  if (!httpOk) signals.push("non_2xx");
   const labeledId = extractLabeledOrderId(rawText);
   const urlToken = extractUrlOrderToken(page.canonicalUrl) ?? extractUrlOrderToken(page.requestedUrl);
-  const level2Id = labeledId ?? urlToken;
-  const mismatch = claimMismatch(options.claim, level2Id, rawText);
+  const mismatch = claimMismatch(options.claim, labeledId, rawText);
 
-  if (labeledId) signals.push("order_id");
+  if (labeledId && httpOk) signals.push("order_id");
+  if (labeledId && !httpOk) signals.push("order_id_ignored_non_2xx");
   if (urlToken) signals.push("order_url_token");
+  if (urlToken && !labeledId) signals.push("url_token_not_sufficient");
   if (thankYou) signals.push("thank_you_copy");
   if (loginwall) signals.push("loginwalled");
   if (challenge) signals.push("challenge_page");
@@ -350,10 +355,7 @@ export function classifyOrderPlaced(
   }
 
   const base = {
-    effect: {
-      type: ORDER_PLACED_INTENT,
-      ...(level2Id && independent && !mismatch ? { id: level2Id } : {}),
-    },
+    effect: { type: ORDER_PLACED_INTENT },
     signals,
     independent_signals: independent ? 1 : 0,
     independent_evidence: independent,
@@ -376,24 +378,24 @@ export function classifyOrderPlaced(
     });
   }
 
-  // Honesty: thank-you fluff, login walls, cookies, or claim mismatch never confirm.
-  // Confirmed only with an independent order/confirmation/ref/ticket id on the page or URL.
-  const canConfirm = Boolean(level2Id) && independent && !loginwall && !challenge && !mismatch;
+  // Honesty: thank-you fluff, login walls, cookies, claim mismatch, URL tokens,
+  // and non-2xx pages never confirm. The id has to be printed on a 2xx page.
+  const canConfirm = Boolean(labeledId) && independent && !loginwall && !challenge && !mismatch && httpOk;
 
-  if (canConfirm && level2Id) {
+  if (canConfirm && labeledId) {
     signals.push("level_2");
     return finishOrderPlaced({
       ...base,
-      effect: { type: ORDER_PLACED_INTENT, id: level2Id },
+      effect: { type: ORDER_PLACED_INTENT, id: labeledId },
       verdict: "confirmed",
       evidence_strength: 2,
       signals,
     });
   }
 
-  if (level2Id && !independent) signals.push("level_2_not_independent");
-  if (!level2Id) signals.push("no_order_id");
-  if (!thankYou && !loginwall && !level2Id) signals.push("ambiguous_status");
+  if (labeledId && !independent) signals.push("level_2_not_independent");
+  if (!labeledId) signals.push("no_order_id");
+  if (!thankYou && !loginwall && !labeledId) signals.push("ambiguous_status");
 
   return finishOrderPlaced({
     ...base,

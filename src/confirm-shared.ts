@@ -4,6 +4,11 @@ import { parseEbayItemUrl } from "./ebay.js";
 export const CONFIRMED_MIN_CONFIDENCE = 0.9;
 export const CONFIRMED_MIN_EVIDENCE_LEVEL = 2;
 
+/** 2xx only. 404 and every other error status cannot support `confirmed`. */
+export function isSuccessHttpStatus(status: number): boolean {
+  return Number.isInteger(status) && status >= 200 && status < 300;
+}
+
 export const HUMAN_REVIEW_NEXT_STEP: ConfirmNextStep = {
   action: "human_review",
   endpoint: "/v1/judge",
