@@ -311,10 +311,15 @@ export function sealConfirmResultDetailed(
   return { result: sealed, durable: remembered.durable };
 }
 
-function checkReceiptVerdict(fired: boolean | null): string {
+/** paid_calls / receipt verdict for a one-shot check. null fired → observed. */
+export function checkPaidVerdict(fired: boolean | null): "fired" | "unfired" | "observed" {
   if (fired === true) return "fired";
   if (fired === false) return "unfired";
   return "observed";
+}
+
+function checkReceiptVerdict(fired: boolean | null): string {
+  return checkPaidVerdict(fired);
 }
 
 /** Confirm-style additive id + Ed25519 receipt. Same key family; id prefix is chk_. */

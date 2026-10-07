@@ -470,7 +470,7 @@ Payable Confirm intents are **`lead_submit`** ($0.10) and **`listing_published`*
 POST /v1/confirm
 Content-Type: application/json
 
-{ "url": "https://example.com/thank-you", "intent": "lead_submit", "claim": {} }
+{ "url": "https://livecheck.fly.dev/demo/thank-you?ref=ABC123", "intent": "lead_submit", "claim": {} }
 ```
 
 ```http
@@ -482,9 +482,9 @@ Content-Type: application/json
 
 `claim` is optional (not required). After payment:
 
-- **lead_submit confirmed** — Level 2 only: extractable confirmation/ref/ticket/lead id, or a unique token in the confirmation URL. Thank-you copy alone is never confirmed. `evidence_level` is 2 and `confidence` is ≥ 0.90 (lead_submit L2 uses 0.92).
+- **lead_submit confirmed** — Level 2 only: a confirmation/ref/ticket/lead id printed on the page. A token in the URL is not proof. Thank-you copy alone is never confirmed. A 404 or any other non-2xx response is never confirmed. `evidence_level` is 2 and `confidence` is ≥ 0.90 (lead_submit L2 uses 0.92).
 - **order_placed** — caller claims an order was placed; `url` is typically a thank-you / confirmation / order-status page after checkout. Optional `claim.order_id` / `claim.total` / `claim.email_domain` may match or veto; they are never invented. Mapping:
-  - Independent order / confirmation / receipt / ref / ticket id on the page or confirmation URL → `confirmed` only if `evidence_level≥2` and `confidence≥0.90`
+  - Independent order / confirmation / receipt / ref / ticket id printed on a 2xx page → `confirmed` only if `evidence_level≥2` and `confidence≥0.90`. A token that appears only in the URL is not proof. Non-2xx is never confirmed.
   - Explicit payment failed / declined / cancelled banners → `failed`
   - Thank-you fluff only, login walls, challenge pages, cookies, or ambiguous status → `unknown` (`next_step` → `/v1/judge` stub)
   - Honesty: prefer unknown over a false confirmed. Never invent order ids.
@@ -518,7 +518,7 @@ JSON and HTML include `benches` next to live Confirm intent windows. These are *
 
 | Field | Source |
 | --- | --- |
-| `benches.lead_submit` | `bench/lead-submit-report.json` (fallback: N=77, FC=0). `false_confirmed_rate`, `n`, `false_confirmed`. |
+| `benches.lead_submit` | `bench/lead-submit-report.json` (fallback: N=81, FC=0). `false_confirmed_rate`, `n`, `false_confirmed`. |
 | `benches.listing_published` | `bench/listing-published-report.json` (fallback: main `b10322b`, N=102, FC=0). |
 | `benches.order_placed` | `bench/order-placed-report.json` (fallback: main `0e9faa1`, N=100, FC=0). |
 
@@ -541,7 +541,7 @@ Prices on that object stay `$0.02` / `$2.50` / `$0.50`. `status` is `payable`. U
 
 The outage bench gate `outage_no_content_change` (2xx → 5xx → 2xx, zero content `change` events; 5xx is unreachable rather than closed) is **not** in `sentinel.benches`. Do not treat `GET /stats` as republished for that gate. The hardcoded fallback stays main `590627c` until a separate honesty republish after the gate is green.
 
-Headline `sentinel` counts and confirm windows **include internal test traffic**. `notes[0]` and the HTML banner say so. `traffic.external` omits the built-in team wallets in `src/internal-wallets.ts` plus any `LIVECHECK_INTERNAL_WALLETS` addresses (`off` disables the wallet split). It also omits paid calls whose stored `url_sha256` is the public docs example `https://boards.greenhouse.io/example/jobs/1842` (http/https, trailing slash optional). Those calls stay in `traffic.all`. `traffic.docs_example` counts them and labels them as test traffic. `traffic.all` matches the headlines. One-shot `chk_` receipts have no payer, so they stay in both `checks_run` totals. Verify/confirm `traffic.*.payers` is calls and distinct payers. On the default one-machine document, `unique_payers` is `COUNT(DISTINCT payer)`. On an emergency fleet sum, `unique_payers` is null (withheld), not a sum of per-volume distincts. A peer that predates `traffic` still contributes its sentinel headlines to the fleet sum, and `traffic.external_complete` is false.
+Headline `sentinel` counts and confirm windows **include internal test traffic**. `notes[0]` and the HTML banner say so. `traffic.external` omits the built-in team wallets in `src/internal-wallets.ts` plus any `LIVECHECK_INTERNAL_WALLETS` addresses (`off` disables the wallet split). Test wallets and test URLs are one list in [`src/test-traffic.ts`](src/test-traffic.ts), with a label on each entry: Lumière and vet402 (`grader`), the docs-example tester `0x9cd5b9a8341dcaf7825348d70792ad9903f2c5a7` (`tester`), the Greenhouse docs job, `https://example.com/thank-you?ref=ABC123`, and `https://livecheck.fly.dev/demo/thank-you?ref=ABC123`. Add a grader by appending one object. `LIVECHECK_TEST_WALLETS` appends `0xaddr:grader:Label` or `0xaddr:tester:Label` (`off` drops the built-in test list). `LIVECHECK_GRADER_WALLETS=off` drops graders only. Those calls stay in `traffic.all`. `traffic.docs_example`, `traffic.graders`, and `traffic.testers` count them. `traffic.all` matches the headlines. One-shot `chk_` receipts have no payer, so they stay in both `checks_run` totals. Verify/confirm `traffic.*.payers` is calls and distinct payers. On the default one-machine document, `unique_payers` is `COUNT(DISTINCT payer)`. On an emergency fleet sum, `unique_payers` is null (withheld), not a sum of per-volume distincts. A peer that predates `traffic` still contributes its sentinel headlines to the fleet sum, and `traffic.external_complete` is false.
 
 ### Signed receipts
 
@@ -713,7 +713,7 @@ Shapes:
 }
 
 // confirm
-{ "url": "https://example.com/thank-you", "intent": "lead_submit", "claim": {} }
+{ "url": "https://livecheck.fly.dev/demo/thank-you?ref=ABC123", "intent": "lead_submit", "claim": {} }
 
 // watch
 {
@@ -866,7 +866,7 @@ After this ships: `fly deploy` from Origin. Listing the catalog is free; CDP cat
 
 ### Paid-call analytics (`livecheck.paid_call`)
 
-Each successful paid `POST /v1/verify`, `POST /v1/verify/job`, `POST /v1/verify/listing`, `POST /v1/confirm`, and `POST /v1/confirm/order` writes **one** structured JSON line to stdout **and** a row in a small SQLite table (when the Fly volume is mounted). `route` is the path after `/v1/` (`verify`, `verify/job`, `verify/listing`, `confirm`, `confirm/order`). The same string is on the JSON body. Confirm/order stores `route: "confirm/order"` plus `intent: "order_placed"`. Stripe PaymentIntent recording is unchanged. Keep the `event` name and the original fields; `fly logs | grep livecheck.paid_call` must keep working. Optional `http_status` (fetched target) and `user_agent` (caller, redacted) may be present. The x402 settle payload does not name a facilitator, so that field is not recorded. Check and watch are not `paid_calls` rows.
+Each successful paid `POST /v1/verify`, `POST /v1/verify/job`, `POST /v1/verify/listing`, `POST /v1/check`, `POST /v1/watch`, `POST /v1/watch/renew`, `POST /v1/confirm`, and `POST /v1/confirm/order` writes **one** structured JSON line to stdout **and** a row in a small SQLite table (when the Fly volume is mounted). `route` is the path after `/v1/` (`verify`, `verify/job`, `verify/listing`, `check`, `watch`, `watch/renew`, `confirm`, `confirm/order`). The same string is on the JSON body for verify and confirm. Confirm/order stores `route: "confirm/order"` plus `intent: "order_placed"`. Check and watch store the detector on `intent` and a verdict (`observed` / `fired` / `unfired`, or `created` / `renewed`). Stripe PaymentIntent recording is unchanged. Keep the `event` name and the original fields; `fly logs | grep livecheck.paid_call` must keep working. Optional `http_status` (fetched target) and `user_agent` (caller, redacted) may be present on every paid route, including check. The x402 settle payload does not name a facilitator, so that field is not recorded.
 
 ```json
 {"event":"livecheck.paid_call","route":"verify","status":"live","host":"boards.greenhouse.io","url_hash":"…","payer":"0x…","tx":"0x…","payment_intent":"pi_…","ts":"2026-09-06T20:34:00Z"}
@@ -874,7 +874,7 @@ Each successful paid `POST /v1/verify`, `POST /v1/verify/job`, `POST /v1/verify/
 
 Confirm lines add `intent` (`lead_submit`, `listing_published`, or `order_placed`) and `verdict` instead of `status`. Privacy rule: **never** log or store raw query strings, emails, or full URLs — hostname + SHA-256 of the full URL only. `payer` / `tx` / `payment_intent` are omitted when missing (mock/dev).
 
-Retained columns (SQLite `paid_calls` at `PAID_CALL_DB_PATH`, default `/data/paid-calls.sqlite` on Fly): `ts`, `route` (`verify` | `verify/job` | `verify/listing` | `confirm` | `confirm/order`), `payer`, `tx`, `payment_intent`, `host` (target domain, hostname only), `url_sha256` (same digest as log `url_hash`), `intent`, `verdict` (confirm family), `status` (verify family: `live` | `closed` | `unknown`), `http_status` (fetched target, nullable), `user_agent` (caller, nullable). Older rows stay valid with the new columns NULL. SQLite cannot `ALTER` a `CHECK`, so opening the store rebuilds `paid_calls` when the check still allows only `verify|confirm` (copy into `paid_calls_route_v2`, drop, rename). Historical rows stay `verify` or `confirm` because the alias was not stored. `GET /stats` `traffic.payers.*.routes` breaks calls and distinct payers out per stored route (L7d and L30d, all wallets and external). `verify` and `confirm` on the same window stay family totals. Public `/stats` is one machine, so those distincts are `COUNT(DISTINCT payer)` on that SQLite file. `LIVECHECK_STATS_FLEET=1` withholds `unique_payers` instead of adding per-volume distincts. The honesty label stays **Includes internal test traffic.**
+Retained columns (SQLite `paid_calls` at `PAID_CALL_DB_PATH`, default `/data/paid-calls.sqlite` on Fly): `ts`, `route` (`verify` | `verify/job` | `verify/listing` | `confirm` | `confirm/order` | `check` | `watch` | `watch/renew`), `payer`, `tx`, `payment_intent`, `host` (target domain, hostname only), `url_sha256` (same digest as log `url_hash`), `intent` (confirm intent, or check/watch detector), `verdict` (confirm family, or check `observed`/`fired`/`unfired`, or watch `created`/`renewed`), `status` (verify family: `live` | `closed` | `unknown`), `http_status` (fetched target, nullable), `user_agent` (caller, nullable). Older rows stay valid with the new columns NULL. SQLite cannot `ALTER` a `CHECK`, so opening the store rebuilds `paid_calls` when the check is missing a current route (copy into `paid_calls_route_v2`, drop, rename). Historical rows keep the route that was stored. `GET /stats` `traffic.payers` and `traffic.revenue` count every paid route, so check and watch no longer drop out of unique payers or revenue. `traffic.external` omits team wallets, the test wallets and URLs in `src/test-traffic.ts` (graders, the docs-example tester, Greenhouse / example.com / hosted confirm demo), and `LIVECHECK_GRADER_WALLETS` / `LIVECHECK_TEST_WALLETS` additions. `npm run recheck:confirm-receipts` is read-only: it lists stored `confirmed` Confirm receipts and paid_calls and says whether the new rule would still confirm them. It re-fetches only when a raw URL is stored; otherwise the row is `cannot re-evaluate: hash only` (a stored non-2xx status is flagged without a fetch). `verify`, `confirm`, and `watch` on the same window stay family totals. Public `/stats` is one machine, so those distincts are `COUNT(DISTINCT payer)` on that SQLite file. `LIVECHECK_STATS_FLEET=1` withholds `unique_payers` instead of adding per-volume distincts. The honesty label stays **Includes internal test traffic.** Check, watch, and renew receipts that predate this row can be copied in with `npm run receipt:backfill` (no payer or user-agent on the receipt).
 
 CoS pull — L7d / L30d **row counts only** (calls = rows; unique_payers = distinct non-null wallet). No other KPIs. Confirm rows now also print **intent-scoped** counts (`lead_submit` / `listing_published` / `order_placed` / `unscoped`).
 

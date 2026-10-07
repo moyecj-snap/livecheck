@@ -56,6 +56,18 @@ export function leadSubmitBenchCases(): LeadSubmitBenchCase[] {
   const cases: LeadSubmitBenchCase[] = [];
 
   cases.push({
+    id: "submitted-body-shows-abc123",
+    bucket: "true_submitted",
+    expect: "confirmed",
+    url: "https://forms.example.com/received",
+    httpStatus: 200,
+    html: pageHtml({
+      title: "Thank you",
+      body: `<h1>Thank you</h1><p>We've received your request.</p><p>Your confirmation number is ABC123.</p>`,
+    }),
+  });
+
+  cases.push({
     id: "submitted-fixture-thank-you-id",
     bucket: "true_submitted",
     expect: "confirmed",
@@ -94,8 +106,8 @@ export function leadSubmitBenchCases(): LeadSubmitBenchCase[] {
   for (const id of urlTokenIds) {
     cases.push({
       id: `submitted-url-${id}`,
-      bucket: "true_submitted",
-      expect: "confirmed",
+      bucket: "trap",
+      expect: "unknown",
       url: `https://forms.example.com/thank-you?ref=${id}`,
       httpStatus: 200,
       html: pageHtml({
@@ -109,8 +121,8 @@ export function leadSubmitBenchCases(): LeadSubmitBenchCase[] {
   for (const id of pathIds) {
     cases.push({
       id: `submitted-path-${id}`,
-      bucket: "true_submitted",
-      expect: "confirmed",
+      bucket: "trap",
+      expect: "unknown",
       url: `https://forms.example.com/confirmation/${id}`,
       httpStatus: 200,
       html: pageHtml({
@@ -234,6 +246,42 @@ export function leadSubmitBenchCases(): LeadSubmitBenchCase[] {
       html: pageHtml({ title, body: `<h1>${title}</h1><p>${body}</p>` }),
     });
   }
+
+  const exampleDomain = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Example Domain</title></head>
+<body><p>This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.</p></body></html>`;
+
+  cases.push({
+    id: "trap-bazaar-example-404",
+    bucket: "trap",
+    expect: "unknown",
+    url: "https://example.com/thank-you?ref=ABC123",
+    httpStatus: 404,
+    html: exampleDomain,
+  });
+
+  cases.push({
+    id: "trap-url-ref-200-no-confirmation-text",
+    bucket: "trap",
+    expect: "unknown",
+    url: "https://forms.example.com/thanks?ref=ABC123",
+    httpStatus: 200,
+    html: pageHtml({
+      title: "Contact",
+      body: `<h1>Contact</h1><p>Fill out the form below. No request has been received.</p>`,
+    }),
+  });
+
+  cases.push({
+    id: "trap-404-labeled-id",
+    bucket: "trap",
+    expect: "unknown",
+    url: "https://forms.example.com/thank-you",
+    httpStatus: 404,
+    html: pageHtml({
+      title: "Not Found",
+      body: `<h1>Not Found</h1><p>Confirmation number: ABC123</p>`,
+    }),
+  });
 
   return cases;
 }

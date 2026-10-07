@@ -48,6 +48,32 @@ describe("classifyOrderPlaced", () => {
     assert.equal(verdict.price_usd, 0.25);
   });
 
+  it("does not confirm an order id that exists only in the URL", () => {
+    const verdict = classifyOrderPlaced(
+      page({
+        requestedUrl: "https://shop.example.com/thank-you?order_id=ORD-18421",
+        httpStatus: 200,
+        html: `<!doctype html><html><head><title>Thanks</title></head><body><h1>Thanks for your order</h1><p>We've received your order.</p></body></html>`,
+      }),
+    );
+    assert.equal(verdict.verdict, "unknown");
+    assert.equal(verdict.effect.id, undefined);
+    assert.ok(verdict.signals.includes("url_token_not_sufficient"));
+  });
+
+  it("does not confirm a non-2xx page that prints an order id", () => {
+    const verdict = classifyOrderPlaced(
+      page({
+        requestedUrl: "https://shop.example.com/orders/missing",
+        httpStatus: 404,
+        html: FIXTURES["confirm/order-thank-you-id"].body!,
+      }),
+    );
+    assert.notEqual(verdict.verdict, "confirmed");
+    assert.equal(verdict.verdict, "unknown");
+    assert.ok(verdict.signals.includes("non_2xx"));
+  });
+
   it("returns unknown for thank-you fluff only", () => {
     const verdict = classifyOrderPlaced(
       page({

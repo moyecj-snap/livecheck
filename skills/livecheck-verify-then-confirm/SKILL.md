@@ -52,7 +52,7 @@ curl -sS -D - -o /tmp/livecheck-verify.402 https://livecheck.fly.dev/v1/verify \
 
 curl -sS -D - -o /tmp/livecheck-confirm.402 https://livecheck.fly.dev/v1/confirm \
   -H 'content-type: application/json' \
-  -d '{"url":"https://livecheck.fly.dev/fixtures/confirm/thank-you-id","intent":"lead_submit"}'
+  -d '{"url":"https://livecheck.fly.dev/demo/thank-you?ref=ABC123","intent":"lead_submit"}'
 ```
 
 Paid Verify (`$0.01`) — expect `status=live`:
@@ -63,14 +63,14 @@ purl https://livecheck.fly.dev/v1/verify \
   -d '{"url":"https://livecheck.fly.dev/fixtures/live-apply-now"}'
 ```
 
-**Actor:** for the demo, treat form submit as already done. Do not build a form product. Confirm the thank-you fixture next.
+**Actor:** for the demo, treat form submit as already done. Do not build a form product. Confirm the hosted thank-you page next.
 
 Paid Confirm (`$0.10`) — expect `verdict=confirmed`, Level-2 id `ABC123`:
 
 ```bash
 purl https://livecheck.fly.dev/v1/confirm \
   -H 'content-type: application/json' \
-  -d '{"url":"https://livecheck.fly.dev/fixtures/confirm/thank-you-id","intent":"lead_submit"}'
+  -d '{"url":"https://livecheck.fly.dev/demo/thank-you?ref=ABC123","intent":"lead_submit"}'
 ```
 
 Honesty contrast (thank-you fluff → `unknown`, never confirmed):
@@ -86,9 +86,9 @@ The contrast is an extra `$0.10` if paid; skip and still treat fluff as `unknown
 ## Steps
 1. **Verify first** — unpaid call expects HTTP 402; complete x402 payment; body `{"url":"<absolute job, Shopify/HTML product, or eBay /itm/ URL>"}`. Demo fixture: `https://livecheck.fly.dev/fixtures/live-apply-now`.
 2. Parse `status` `live|closed|unknown` + `signals`. If `closed` or `unknown` (and not a known Ashby/Lever unknown), stop or escalate — do not treat as success.
-3. Run the agent’s own `lead_submit` action (separate actor). Demo: treat submit as already done; use the thank-you fixture.
-4. **Confirm** — unpaid → 402; pay; body `{"url":"<thank-you or result URL>","intent":"lead_submit"}` (optional `claim` fingerprint). Demo fixture: `https://livecheck.fly.dev/fixtures/confirm/thank-you-id`.
-5. Accept only `verdict=confirmed` with Level-2 evidence (ref / ticket / lead id, or unique confirmation-URL token). Thank-you fluff alone → `unknown` — never treat as confirmed (`https://livecheck.fly.dev/fixtures/confirm/thank-you-only`).
+3. Run the agent’s own `lead_submit` action (separate actor). Demo: treat submit as already done; use the hosted thank-you page.
+4. **Confirm** — unpaid → 402; pay; body `{"url":"<thank-you or result URL>","intent":"lead_submit"}` (optional `claim` fingerprint). Demo page: `https://livecheck.fly.dev/demo/thank-you?ref=ABC123` (HTTP 200, confirmation number printed).
+5. Accept only `verdict=confirmed` with Level-2 evidence: a ref / ticket / lead id printed on the page. A token that appears only in the URL is not proof, and a non-2xx page is never confirmed. Thank-you fluff alone → `unknown` — never treat as confirmed (`https://livecheck.fly.dev/fixtures/confirm/thank-you-only`).
 6. On `failed` / `unknown`, prefer abstention over false success.
 
 ## Verify signals (production strings)

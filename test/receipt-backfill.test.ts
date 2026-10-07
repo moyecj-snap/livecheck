@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { buildPaidCallEvent, hashUrl } from "../src/paid-call.js";
-import { insertPaidCallRow, openPaidCallDb } from "../src/paid-call-store.js";
+import { insertPaidCallRow, listPaidCallRows, openPaidCallDb } from "../src/paid-call-store.js";
 import {
   RECEIPT_RECONSTRUCTION_IMPOSSIBLE,
   runReceiptBackfill,
@@ -96,6 +96,48 @@ describe("receipt backfill", () => {
     assert.equal(report.windows.l7d.lead_submit, 1);
     assert.equal(report.receipts.l7d.lead_submit, 1);
     assert.equal(report.receipt_reconstruction.possible, false);
+    closeReceiptStore();
+  });
+
+  it("copies a check receipt into paid_calls once", () => {
+    const dir = mkdtempSync(join(tmpdir(), "receipt-backfill-check-"));
+    const paidPath = join(dir, "paid-calls.sqlite");
+    const receiptPath = join(dir, "receipts.sqlite");
+    openPaidCallDb(paidPath).close();
+    const url_hash = hashUrl("https://boards.greenhouse.io/example/jobs/1842");
+    const receipts = initReceiptStore(receiptPath);
+    assert.equal(receipts.ok, true);
+    rememberConfirmReceipt({
+      id: "chk_01BACKFILLCHECK0000000001",
+      intent: "check",
+      verdict: "observed",
+      confidence: 0.5,
+      evidence_level: 0,
+      canonical_json: "{}",
+      payload_hash: "ab".repeat(32),
+      signature: null,
+      signer: null,
+      observed_at: "2026-09-10T18:00:00Z",
+      url_hash,
+      claim_hash: "ef".repeat(32),
+      created_at: "2026-09-10T18:00:00Z",
+    });
+    closeReceiptStore();
+    const now = new Date("2026-09-11T19:00:00.000Z");
+    const first = runReceiptBackfill({ paidCallDbPath: paidPath, receiptDbPath: receiptPath, now });
+    assert.equal(first.sentinel_rows_inserted, 1);
+    const second = runReceiptBackfill({ paidCallDbPath: paidPath, receiptDbPath: receiptPath, now });
+    assert.equal(second.sentinel_rows_inserted, 0);
+    const db = openPaidCallDb(paidPath);
+    const rows = listPaidCallRows(db);
+    db.close();
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].route, "check");
+    assert.equal(rows[0].host, "");
+    assert.equal(rows[0].url_sha256, url_hash);
+    assert.equal(rows[0].verdict, "observed");
+    assert.equal(rows[0].payer, undefined);
+    assert.equal(rows[0].user_agent, undefined);
     closeReceiptStore();
   });
 

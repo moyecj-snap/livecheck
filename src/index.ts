@@ -2,7 +2,7 @@ import { createApp } from "./app.js";
 import { DEFAULT_PORT, isLiveSettlement, missingLiveKeyNames, port } from "./config.js";
 import { isEbayAdapterEnabled, logEbayAdapterDisabled } from "./ebay.js";
 import { loadDotEnvIfPresent } from "./env.js";
-import { initPaidCallStore } from "./paid-call-store.js";
+import { backfillPaidCallsFromReceipts, initPaidCallStore } from "./paid-call-store.js";
 import { rescueMisplacedReceipts } from "./receipt-rescue.js";
 import { initReceiptStore } from "./receipt-store.js";
 import { startWatchScheduler } from "./watch-scheduler.js";
@@ -45,6 +45,12 @@ if (store.ok && receiptStore.ok) {
   } else {
     console.log(
       "receipt rescue: no leftover confirm_receipts on paid-calls.sqlite (already migrated or never misplaced)",
+    );
+  }
+  const backfill = backfillPaidCallsFromReceipts(store.db, receiptStore.db);
+  if (backfill.inserted > 0) {
+    console.log(
+      `paid_call backfill: inserted ${backfill.inserted} check/watch/renew rows from receipts (payer, tx, and user-agent are not on receipts)`,
     );
   }
 }

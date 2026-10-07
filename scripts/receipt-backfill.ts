@@ -67,6 +67,7 @@ async function main(): Promise<void> {
     `paid_calls=${report.source.paid_calls ?? ""}`,
     `receipts=${report.source.receipts ?? "(missing)"}`,
     `intent_rows_updated=${report.intent_rows_updated}`,
+    `sentinel_rows_inserted=${report.sentinel_rows_inserted}`,
     "",
     "Confirm paid_calls by stored intent (not lead_submit-attributed unscoped rows):",
     `  L7d   lead_submit=${report.windows.l7d.lead_submit} listing_published=${report.windows.l7d.listing_published} order_placed=${report.windows.l7d.order_placed} unscoped=${report.windows.l7d.unscoped}`,

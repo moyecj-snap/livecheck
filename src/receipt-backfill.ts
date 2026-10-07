@@ -6,6 +6,7 @@ import {
   isoCutoff,
   openPaidCallDb,
   parsePaidCallLogLine,
+  backfillPaidCallsFromReceipts,
   queryConfirmIntentWindows,
   type ConfirmIntentWindows,
 } from "./paid-call-store.js";
@@ -29,6 +30,8 @@ export type ReceiptBackfillReport = {
     l30d: { lead_submit: number; listing_published: number; order_placed: number };
   };
   intent_rows_updated: number;
+  /** check/watch/renew receipts copied into paid_calls. No payer or user-agent on the source. */
+  sentinel_rows_inserted: number;
   unscoped_remaining: { l7d: number; l30d: number };
   receipt_reconstruction: { possible: false; reason: string };
   notes: string[];
@@ -94,14 +97,18 @@ export function runReceiptBackfill(input: {
 
   const paidDb = openPaidCallDb(paidPath);
   let intent_rows_updated = 0;
+  let sentinel_rows_inserted = 0;
   try {
     if (input.logText) {
       for (const event of parsePaidCallEventsFromLogText(input.logText)) {
         intent_rows_updated += backfillPaidCallIntentFromEvent(paidDb, event);
       }
     }
-    const windows = queryConfirmIntentWindows(paidDb, now);
     const receiptDb = openReceiptsIfPresent(receiptPath);
+    if (receiptDb) {
+      sentinel_rows_inserted = backfillPaidCallsFromReceipts(paidDb, receiptDb).inserted;
+    }
+    const windows = queryConfirmIntentWindows(paidDb, now);
     try {
       const receipts = receiptCounts(receiptDb, now);
       const report: ReceiptBackfillReport = {
@@ -115,6 +122,7 @@ export function runReceiptBackfill(input: {
         windows,
         receipts,
         intent_rows_updated,
+        sentinel_rows_inserted,
         unscoped_remaining: { l7d: windows.l7d.unscoped, l30d: windows.l30d.unscoped },
         receipt_reconstruction: { possible: false, reason: RECEIPT_RECONSTRUCTION_IMPOSSIBLE },
         notes,

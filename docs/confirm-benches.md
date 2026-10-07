@@ -17,7 +17,7 @@ npm test -- test/lead-submit-bench.test.ts test/listing-published-bench.test.ts 
 
 | Intent | N | false_confirmed | FC rate | Report | Recorded |
 | --- | ---: | ---: | ---: | --- | --- |
-| `lead_submit` | 77 | 0 | 0 | `bench/lead-submit-report.json` | `a17f56b` |
+| `lead_submit` | 81 | 0 | 0 | `bench/lead-submit-report.json` | `a17f56b` |
 | `listing_published` | 102 | 0 | 0 | `bench/listing-published-report.json` | main `b10322b` |
 | `order_placed` | 100 | 0 | 0 | `bench/order-placed-report.json` | main `0e9faa1` |
 
@@ -27,6 +27,8 @@ Gate: `false_confirmed = 0` and `N ≥ 50` (true-positive / true-negative / trap
 
 - Prefer unknown over a false confirmed.
 - Thank-you / listing / order fluff alone is never confirmed.
+- A reference or confirmation token in the URL (query or path) is never proof. The id has to be printed on the page.
+- A 404 or any other non-2xx page is never `confirmed` (`failed` or `unknown` only).
 - Never invent confirmation / listing / order ids.
 - Cookie-bound fetches are not independent evidence (`lead_submit`).
 

@@ -97,8 +97,8 @@ export function orderPlacedBenchCases(): OrderPlacedBenchCase[] {
   for (const orderId of urlTokenIds) {
     cases.push({
       id: `placed-url-${orderId}`,
-      bucket: "true_placed",
-      expect: "confirmed",
+      bucket: "trap",
+      expect: "unknown",
       url: `https://shop.example.com/thank-you?order_id=${orderId}`,
       httpStatus: 200,
       html: orderHtml({
@@ -112,8 +112,8 @@ export function orderPlacedBenchCases(): OrderPlacedBenchCase[] {
   for (const orderId of pathIds) {
     cases.push({
       id: `placed-path-${orderId}`,
-      bucket: "true_placed",
-      expect: "confirmed",
+      bucket: "trap",
+      expect: "unknown",
       url: `https://shop.example.com/orders/${orderId}`,
       httpStatus: 200,
       html: orderHtml({
@@ -147,8 +147,8 @@ export function orderPlacedBenchCases(): OrderPlacedBenchCase[] {
 
   cases.push({
     id: "placed-order-status-path",
-    bucket: "true_placed",
-    expect: "confirmed",
+    bucket: "trap",
+    expect: "unknown",
     url: "https://shop.example.com/order-status/ORD-41001",
     httpStatus: 200,
     html: orderHtml({

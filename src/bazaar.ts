@@ -10,6 +10,7 @@ import {
   VERIFY_DESCRIPTION,
   WATCH_PRICE_USD,
 } from "./config.js";
+import { CONFIRM_DEMO_URL } from "./docs-example-url.js";
 import { WATCH_HINT_DETECTOR, WATCH_HINT_SUGGEST } from "./watch-hint.js";
 
 /** Paid 200 Verify / Confirm only. Not on 402 bodies or payment-required headers. */
@@ -173,15 +174,17 @@ export function verifyBazaarExtensions(): Record<string, unknown> {
 export const VERIFY_ROUTE_DESCRIPTION = VERIFY_DESCRIPTION;
 
 export const CONFIRM_EXAMPLE = {
-  url: "https://example.com/thank-you?ref=ABC123",
-  canonical_url: "https://example.com/thank-you?ref=ABC123",
+  example: true,
+  note: "Illustrative shape of a live POST /v1/confirm. GET /demo/thank-you?ref=ABC123 is HTTP 200 and prints Confirmation number ABC123, so this input is confirmed. A ref that appears only in the URL is not proof.",
+  url: CONFIRM_DEMO_URL,
+  canonical_url: CONFIRM_DEMO_URL,
   id: "cfm_01J8Z0K3N4P5Q6R7S8T9V0WXYZ",
   verdict: "confirmed",
   effect: { type: "lead_submit", id: "ABC123" },
   evidence_strength: 2,
   evidence_level: 2,
   confidence: 0.92,
-  signals: ["cookieless_fetch", "confirmation_id", "level_2"],
+  signals: ["cookieless_fetch", "confirmation_url_token", "confirmation_id", "level_2"],
   independent_signals: 1,
   independent_evidence: true,
   evidence_id: "ev_01example",
@@ -291,6 +294,8 @@ export const CONFIRM_INPUT_SCHEMA = {
 } as const;
 
 export const ORDER_CONFIRM_EXAMPLE = {
+  example: true,
+  note: "Illustrative confirmed shape only. An order id in the URL is not proof; it has to be printed on a 2xx page. This object is not a live fetch.",
   url: "https://shop.example.com/thank-you?order_id=ORD-18421",
   canonical_url: "https://shop.example.com/thank-you?order_id=ORD-18421",
   id: "cfm_01J8Z0K3N4P5Q6R7S8T9V0WORD",

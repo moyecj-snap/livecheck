@@ -19,6 +19,9 @@ import {
   parseOrderConfirmRequest,
   UnsupportedIntentError,
 } from "../src/confirm.js";
+import { CONFIRM_EXAMPLE } from "../src/bazaar.js";
+import { CONFIRM_DEMO_URL } from "../src/docs-example-url.js";
+import { DEMO_REF_MAX_LENGTH } from "../src/demo-thank-you.js";
 import { FIXTURES } from "../src/fixtures.js";
 import type { FetchedPage } from "../src/types.js";
 
@@ -62,6 +65,51 @@ describe("classifyLeadSubmit", () => {
     assert.ok(verdict.evidence_id.startsWith("ev_"));
     assert.equal(verdict.price_usd, CONFIRM_PRICE_USD);
     assert.equal(verdict.price_usd, 0.1);
+  });
+
+  it("does not confirm the bazaar example.com 404 just because ref=ABC123 is in the URL", () => {
+    const verdict = classifyLeadSubmit(
+      page({
+        requestedUrl: "https://example.com/thank-you?ref=ABC123",
+        canonicalUrl: "https://example.com/thank-you?ref=ABC123",
+        httpStatus: 404,
+        html: `<!doctype html><html lang="en"><head><title>Example Domain</title></head><body><p>This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.</p></body></html>`,
+      }),
+    );
+    assert.notEqual(verdict.verdict, "confirmed");
+    assert.equal(verdict.verdict, "unknown");
+    assert.equal(verdict.http_status, 404);
+    assert.equal(verdict.effect.id, undefined);
+    assert.ok(verdict.signals.includes("confirmation_url_token"));
+    assert.ok(verdict.signals.includes("url_token_not_sufficient"));
+    assert.ok(verdict.signals.includes("non_2xx"));
+  });
+
+  it("does not confirm a 200 page whose only token is a ref query param", () => {
+    const verdict = classifyLeadSubmit(
+      page({
+        requestedUrl: "https://forms.example.com/thanks?ref=ABC123",
+        httpStatus: 200,
+        html: `<!doctype html><html><head><title>Contact</title></head><body><h1>Contact</h1><p>Fill out the form below.</p></body></html>`,
+      }),
+    );
+    assert.equal(verdict.verdict, "unknown");
+    assert.equal(verdict.effect.id, undefined);
+    assert.ok(verdict.signals.includes("url_token_not_sufficient"));
+  });
+
+  it("does not confirm a 404 page even when the body prints a confirmation id", () => {
+    const verdict = classifyLeadSubmit(
+      page({
+        requestedUrl: "https://forms.example.com/thank-you",
+        httpStatus: 404,
+        html: `<!doctype html><html><head><title>Not Found</title></head><body><h1>Not Found</h1><p>Confirmation number: ABC123</p></body></html>`,
+      }),
+    );
+    assert.notEqual(verdict.verdict, "confirmed");
+    assert.equal(verdict.verdict, "unknown");
+    assert.ok(verdict.signals.includes("non_2xx"));
+    assert.ok(verdict.signals.includes("confirmation_id_ignored_non_2xx"));
   });
 
   it("returns unknown for thank-you copy only", () => {
@@ -234,6 +282,85 @@ describe("confirmUrl + HTTP", () => {
     assert.ok(body.receipt?.hash);
     assert.ok(body.receipt?.verify_url?.includes("/v1/receipt/"));
     assert.deepEqual(body.watch, { suggest: "/v1/watch", detector: "status_change", price_usd: 2.5 });
+  });
+
+  it("POST /v1/confirm of the vet402 example.com URL is not confirmed", async () => {
+    const res = await fetch(`${origin}/v1/confirm`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-livecheck-mock": "1",
+        "user-agent": "vet402-observatory-l1/1.0 (+https://vet402.com/observatory/methodology)",
+      },
+      body: JSON.stringify({
+        url: "https://example.com/thank-you?ref=ABC123",
+        intent: "lead_submit",
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      verdict: string;
+      confidence?: number;
+      evidence_level?: number;
+      http_status?: number;
+      effect?: { id?: string };
+      example?: boolean;
+    };
+    assert.notEqual(body.verdict, "confirmed");
+    assert.equal(body.verdict, "unknown");
+    assert.equal(body.http_status, 404);
+    assert.equal(body.effect?.id, undefined);
+    assert.ok((body.confidence ?? 1) < 0.9);
+    assert.notEqual(body.evidence_level, 2);
+    assert.notEqual(body.example, true);
+  });
+
+  it("GET /demo/thank-you is a 200 page that prints the ref and escapes it", async () => {
+    const ok = await fetch(`${origin}/demo/thank-you?ref=ABC123`);
+    assert.equal(ok.status, 200);
+    const html = await ok.text();
+    assert.match(html, /Confirmation number: ABC123/);
+    assert.match(html, /We've received your request/);
+
+    const evil = await fetch(`${origin}/demo/thank-you?ref=${encodeURIComponent("<script>alert(1)</script>")}`);
+    assert.equal(evil.status, 200);
+    const escaped = await evil.text();
+    assert.equal(escaped.includes("<script>alert"), false);
+    assert.match(escaped, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+
+    const extra = "EXTRA";
+    const ref = `${"X".repeat(DEMO_REF_MAX_LENGTH - 1)}9${extra}`;
+    const capped = await fetch(`${origin}/demo/thank-you?ref=${ref}`);
+    const cappedHtml = await capped.text();
+    assert.equal(cappedHtml.includes(extra), false);
+    assert.match(cappedHtml, new RegExp(`Confirmation number: ${"X".repeat(DEMO_REF_MAX_LENGTH - 1)}9`));
+  });
+
+  it("docs example input confirms when the page prints ABC123", async () => {
+    assert.equal(CONFIRM_EXAMPLE.url, CONFIRM_DEMO_URL);
+    assert.equal(CONFIRM_EXAMPLE.url, "https://livecheck.fly.dev/demo/thank-you?ref=ABC123");
+    assert.equal(CONFIRM_EXAMPLE.verdict, "confirmed");
+    assert.equal(CONFIRM_EXAMPLE.effect.id, "ABC123");
+    const demo = new URL(CONFIRM_DEMO_URL);
+    const res = await fetch(`${origin}/v1/confirm`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
+      body: JSON.stringify({
+        url: `${origin}${demo.pathname}${demo.search}`,
+        intent: "lead_submit",
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      verdict: string;
+      http_status?: number;
+      evidence_level?: number;
+      effect?: { id?: string };
+    };
+    assert.equal(body.verdict, "confirmed");
+    assert.equal(body.http_status, 200);
+    assert.equal(body.evidence_level, 2);
+    assert.equal(body.effect?.id, "ABC123");
   });
 
   it("POST /v1/confirm thank-you copy only is unknown", async () => {

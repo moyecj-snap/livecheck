@@ -36,7 +36,7 @@
         }
       },
       "example": {
-        "url": "https://livecheck.fly.dev/fixtures/confirm/thank-you-id",
+        "url": "https://livecheck.fly.dev/demo/thank-you?ref=ABC123",
         "intent": "lead_submit"
       }
     }

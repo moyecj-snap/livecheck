@@ -38,14 +38,14 @@
         }
       },
       "example": {
-        "url": "https://livecheck.fly.dev/fixtures/confirm/thank-you-id",
+        "url": "https://livecheck.fly.dev/demo/thank-you?ref=ABC123",
         "intent": "lead_submit"
       }
     }
   ],
   "demo_urls": {
     "verify_live": "https://livecheck.fly.dev/fixtures/live-apply-now",
-    "confirm_confirmed": "https://livecheck.fly.dev/fixtures/confirm/thank-you-id",
+    "confirm_confirmed": "https://livecheck.fly.dev/demo/thank-you?ref=ABC123",
     "confirm_unknown": "https://livecheck.fly.dev/fixtures/confirm/thank-you-only"
   },
   "agentcore_bazaar": {

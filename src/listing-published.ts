@@ -5,6 +5,7 @@ import {
   applyConfirmedGate,
   extractListingIdFromUrl,
   isSpecificListingUrl,
+  isSuccessHttpStatus,
 } from "./confirm-shared.js";
 import { parseEbayItemUrl } from "./ebay.js";
 import type {
@@ -259,16 +260,22 @@ export function classifyListingPublished(
     price_usd: CONFIRM_PRICE_USD,
   } as const;
 
+  const httpOk = isSuccessHttpStatus(verify.http_status);
+  if (!httpOk) signals.push("non_2xx");
+
   if (verify.status === "closed") {
     return finishListingPublished({
       ...base,
       verdict: "failed",
       evidence_strength: 1,
+      signals,
     });
   }
 
-  // Honesty: thank-you fluff, cookies, claim mismatch, or soft/non-specific live never confirm.
+  // Honesty: thank-you fluff, cookies, claim mismatch, soft/non-specific live,
+  // and any non-2xx target never confirm.
   const canConfirm =
+    httpOk &&
     independent &&
     !thankYou &&
     !mismatch &&
