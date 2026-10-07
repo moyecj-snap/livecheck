@@ -56,6 +56,18 @@ export function leadSubmitBenchCases(): LeadSubmitBenchCase[] {
   const cases: LeadSubmitBenchCase[] = [];
 
   cases.push({
+    id: "submitted-body-shows-abc123",
+    bucket: "true_submitted",
+    expect: "confirmed",
+    url: "https://forms.example.com/received",
+    httpStatus: 200,
+    html: pageHtml({
+      title: "Thank you",
+      body: `<h1>Thank you</h1><p>We've received your request.</p><p>Your confirmation number is ABC123.</p>`,
+    }),
+  });
+
+  cases.push({
     id: "submitted-fixture-thank-you-id",
     bucket: "true_submitted",
     expect: "confirmed",

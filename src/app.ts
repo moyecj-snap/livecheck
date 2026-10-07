@@ -30,6 +30,7 @@ import {
 } from "./confirm.js";
 import { isEbayAdapterEnabled } from "./ebay.js";
 import { demoHtml } from "./demo-page.js";
+import { DEMO_THANK_YOU_PATH, demoThankYouHtml } from "./demo-thank-you.js";
 import { discoveryHeaders, openApiDocument, wellKnownX402 } from "./discovery.js";
 import { FIXTURES } from "./fixtures.js";
 import { LLMS_TXT, llmsTxtHeaders } from "./llms.js";
@@ -161,6 +162,10 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
   });
 
   app.get(CONFIRM_DEMO_VIDEO_PATH, (c) => confirmDemoVideoResponse(c.req.raw));
+
+  app.get(DEMO_THANK_YOU_PATH, (c) => {
+    return c.html(demoThankYouHtml(c.req.query("ref") ?? ""));
+  });
 
   app.get("/fixtures/*", (c) => {
     const id = c.req.path.replace(/^\/fixtures\//, "");

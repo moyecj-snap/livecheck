@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 /** Landed main commits that recorded the listing / order honesty reports. */
 export const LISTING_PUBLISHED_BENCH_COMMIT = "b10322b";
 export const ORDER_PLACED_BENCH_COMMIT = "0e9faa1";
-/** This branch's recorded lead_submit honesty report (FC=0, N=80). */
+/** This branch's recorded lead_submit honesty report (FC=0, N=81). */
 export const LEAD_SUBMIT_BENCH_COMMIT = "a17f56b";
 
 export const CONFIRM_BENCH_REPORT_DOC = "docs/confirm-benches.md";
@@ -47,7 +47,7 @@ export type ConfirmBenchesLoad = {
 export const FALLBACK_CONFIRM_BENCHES: ConfirmBenches = {
   lead_submit: {
     false_confirmed_rate: 0,
-    n: 80,
+    n: 81,
     false_confirmed: 0,
     report: LEAD_SUBMIT_BENCH_REPORT_JSON,
     commit: LEAD_SUBMIT_BENCH_COMMIT,

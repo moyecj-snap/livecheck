@@ -1,4 +1,4 @@
-import { CHAIN_TOPUP_OUTPUT_SCHEMA, CHECK_OUTPUT_SCHEMA, CONFIRM_OUTPUT_SCHEMA, VERIFY_OUTPUT_SCHEMA, VERIFY_PAID_EXAMPLE, WATCH_OUTPUT_SCHEMA, WATCH_RENEW_OUTPUT_SCHEMA } from "./bazaar.js";
+import { CHAIN_TOPUP_OUTPUT_SCHEMA, CHECK_OUTPUT_SCHEMA, CONFIRM_EXAMPLE, CONFIRM_OUTPUT_SCHEMA, VERIFY_OUTPUT_SCHEMA, VERIFY_PAID_EXAMPLE, WATCH_OUTPUT_SCHEMA, WATCH_RENEW_OUTPUT_SCHEMA } from "./bazaar.js";
 import {
   OPENAPI_CHAIN_TOPUP_DESCRIPTION,
   OPENAPI_CHAIN_TOPUP_SUMMARY,
@@ -639,6 +639,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
                   },
                   required: ["url", "intent"],
                 },
+                example: { url: CONFIRM_EXAMPLE.url, intent: "lead_submit" },
               },
             },
           },

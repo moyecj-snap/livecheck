@@ -10,6 +10,7 @@ import {
   VERIFY_DESCRIPTION,
   WATCH_PRICE_USD,
 } from "./config.js";
+import { CONFIRM_DEMO_URL } from "./docs-example-url.js";
 import { WATCH_HINT_DETECTOR, WATCH_HINT_SUGGEST } from "./watch-hint.js";
 
 /** Paid 200 Verify / Confirm only. Not on 402 bodies or payment-required headers. */
@@ -174,34 +175,23 @@ export const VERIFY_ROUTE_DESCRIPTION = VERIFY_DESCRIPTION;
 
 export const CONFIRM_EXAMPLE = {
   example: true,
-  note: "Illustrative Bazaar shape, not a live fetch. https://example.com/thank-you?ref=ABC123 returns HTTP 404 and the ref query is not on-page proof, so a live POST /v1/confirm of this input is unknown, never confirmed.",
-  url: "https://example.com/thank-you?ref=ABC123",
-  canonical_url: "https://example.com/thank-you?ref=ABC123",
+  note: "Illustrative shape of a live POST /v1/confirm. GET /demo/thank-you?ref=ABC123 is HTTP 200 and prints Confirmation number ABC123, so this input is confirmed. A ref that appears only in the URL is not proof.",
+  url: CONFIRM_DEMO_URL,
+  canonical_url: CONFIRM_DEMO_URL,
   id: "cfm_01J8Z0K3N4P5Q6R7S8T9V0WXYZ",
-  verdict: "unknown",
-  effect: { type: "lead_submit" },
-  evidence_strength: 1,
-  evidence_level: 1,
-  confidence: 0.48,
-  signals: [
-    "cookieless_fetch",
-    "confirmation_url_token",
-    "url_token_not_sufficient",
-    "non_2xx",
-    "no_confirmation_id",
-  ],
+  verdict: "confirmed",
+  effect: { type: "lead_submit", id: "ABC123" },
+  evidence_strength: 2,
+  evidence_level: 2,
+  confidence: 0.92,
+  signals: ["cookieless_fetch", "confirmation_url_token", "confirmation_id", "level_2"],
   independent_signals: 1,
   independent_evidence: true,
   evidence_id: "ev_01example",
-  http_status: 404,
+  http_status: 200,
   fetched_at: "2026-09-06T17:00:00Z",
   price_usd: CONFIRM_PRICE_USD,
   route: "confirm",
-  next_step: {
-    action: "human_review",
-    endpoint: "/v1/judge",
-    est_price_usd: 1,
-  },
   receipt: {
     hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     verify_url: "https://livecheck.fly.dev/v1/receipt/cfm_01J8Z0K3N4P5Q6R7S8T9V0WXYZ",

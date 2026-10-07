@@ -24,6 +24,7 @@ import {
 } from "../src/sentinel-stats-benches.js";
 import { buildPaidCallEvent, hashUrl } from "../src/paid-call.js";
 import {
+  CONFIRM_DEMO_URL,
   CONFIRM_DOCS_EXAMPLE_URL,
   DOCS_EXAMPLE_URL,
   DOCS_EXAMPLE_URL_SHA256,
@@ -199,7 +200,7 @@ describe("GET /stats", () => {
     assert.equal(body.intents?.order_placed?.status, "ga");
     assert.deepEqual(body.benches?.lead_submit, {
       false_confirmed_rate: 0,
-      n: 80,
+      n: 81,
       false_confirmed: 0,
       report: "bench/lead-submit-report.json",
       commit: "a17f56b",
@@ -275,7 +276,7 @@ describe("GET /stats", () => {
     const html = await res.text();
     assert.match(html, /<h3>Confirm benches<\/h3>/);
     assert.match(html, /lead_submit/);
-    assert.match(html, /0\/80/);
+    assert.match(html, /0\/81/);
     assert.match(html, /0\/102/);
     assert.match(html, /0\/100/);
     assert.match(html, /not a live dispute rate/);
@@ -528,7 +529,7 @@ describe("Confirm benches loader", () => {
     const load = resetConfirmBenches(null);
     assert.equal(load.source, "fallback");
     assert.deepEqual(load.benches, FALLBACK_CONFIRM_BENCHES);
-    assert.equal(load.benches.lead_submit.n, 80);
+    assert.equal(load.benches.lead_submit.n, 81);
     assert.equal(load.benches.listing_published.n, 102);
     assert.equal(load.benches.order_placed.n, 100);
     assert.equal(load.benches.lead_submit.false_confirmed_rate, 0);
@@ -645,7 +646,7 @@ describe("GET /stats Confirm paid_calls vs receipts honesty", () => {
     assert.equal(doc.intents.order_placed.l7d.receipts, 0);
     assert.equal(doc.store.confirm_unscoped_paid_calls.l7d, 0);
     assert.equal(doc.benches.lead_submit.false_confirmed_rate, 0);
-    assert.equal(doc.benches.lead_submit.n, 80);
+    assert.equal(doc.benches.lead_submit.n, 81);
     assert.notEqual(doc.benches.listing_published.n, doc.intents.listing_published.l7d.paid_calls);
   });
 });
@@ -1033,6 +1034,9 @@ describe("internal wallet list and external payers", () => {
       assert.equal(doc.traffic.docs_example.calls.l30d, 2);
       assert.equal(doc.traffic.docs_example.urls.includes(DOCS_EXAMPLE_URL), true);
       assert.equal(doc.traffic.docs_example.urls.includes(CONFIRM_DOCS_EXAMPLE_URL), true);
+      assert.equal(doc.traffic.docs_example.urls.includes(CONFIRM_DEMO_URL), true);
+      assert.equal(isDocsExampleUrl(CONFIRM_DEMO_URL), true);
+      assert.equal(isDocsExampleUrlHash(hashUrl(CONFIRM_DEMO_URL)), true);
       assert.equal(doc.traffic.graders.available, true);
       assert.equal(doc.traffic.graders.wallets_configured, DEFAULT_GRADER_WALLETS.length);
       assert.equal(doc.traffic.graders.calls.l7d, 2);
@@ -1054,5 +1058,62 @@ describe("internal wallet list and external payers", () => {
       if (previous === undefined) delete process.env.LIVECHECK_GRADER_WALLETS;
       else process.env.LIVECHECK_GRADER_WALLETS = previous;
     }
+  });
+
+  it("keeps the docs-example tester out of external and in traffic.testers", () => {
+    initPaidCallStore(":memory:");
+    const now = new Date("2026-10-07T20:00:00Z");
+    const when = new Date("2026-10-07T16:00:00Z");
+    const tester = "0x9cd5b9a8341dcaf7825348d70792ad9903f2c5a7";
+    const customer = "0x1111111111111111111111111111111111111111";
+    const customerUrl = "https://jobs.example.com/opening-42";
+    assert.equal(
+      retainPaidCall(
+        buildPaidCallEvent(
+          {
+            route: "confirm",
+            host: "jobs.example.com",
+            url_hash: hashUrl("https://jobs.example.com/real-apply"),
+            intent: "lead_submit",
+            verdict: "confirmed",
+            http_status: 200,
+          },
+          { payer: tester, tx: `0x${"cc".repeat(32)}` },
+          when,
+        ),
+      ),
+      true,
+    );
+    assert.equal(
+      retainPaidCall(
+        buildPaidCallEvent(
+          {
+            route: "confirm",
+            host: "jobs.example.com",
+            url_hash: hashUrl(customerUrl),
+            intent: "lead_submit",
+            verdict: "confirmed",
+            http_status: 200,
+          },
+          { payer: customer, tx: `0x${"dd".repeat(32)}` },
+          when,
+        ),
+      ),
+      true,
+    );
+    const doc = buildStatsDocument(now);
+    assert.equal(doc.traffic.all.payers.l7d.confirm.calls, 2);
+    assert.equal(doc.traffic.external.payers.l7d.confirm.calls, 1);
+    assert.equal(doc.traffic.external.payers.l7d.confirm.unique_payers, 1);
+    assert.equal(doc.traffic.testers.available, true);
+    assert.equal(doc.traffic.testers.wallets_configured, 1);
+    assert.equal(doc.traffic.testers.calls.l7d, 1);
+    assert.equal(doc.traffic.testers.calls.l30d, 1);
+    assert.equal(doc.traffic.testers.unique_payers.l7d, 1);
+    assert.equal(doc.traffic.revenue.external.l7d_usd, 0.1);
+    assert.equal(doc.traffic.revenue.all.l7d_usd, 0.2);
+    const html = statsHtml(doc);
+    assert.equal(html.includes(tester), false);
+    assert.match(html, /tester wallets/);
   });
 });

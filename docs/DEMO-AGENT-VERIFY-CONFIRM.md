@@ -37,13 +37,13 @@ curl -sS -D - -o /tmp/livecheck-verify.402 https://livecheck.fly.dev/v1/verify \
 ```bash
 curl -sS -D - -o /tmp/livecheck-confirm.402 https://livecheck.fly.dev/v1/confirm \
   -H 'content-type: application/json' \
-  -d '{"url":"https://livecheck.fly.dev/fixtures/confirm/thank-you-id","intent":"lead_submit"}'
+  -d '{"url":"https://livecheck.fly.dev/demo/thank-you?ref=ABC123","intent":"lead_submit"}'
 ```
 
 Fixture pages (free GET):
 
 - Verify target: https://livecheck.fly.dev/fixtures/live-apply-now
-- Confirm L2 id: https://livecheck.fly.dev/fixtures/confirm/thank-you-id
+- Confirm L2 id: https://livecheck.fly.dev/demo/thank-you?ref=ABC123 (HTTP 200, prints Confirmation number ABC123)
 - Confirm fluff: https://livecheck.fly.dev/fixtures/confirm/thank-you-only
 
 ## 3. Install `purl`
@@ -77,7 +77,7 @@ Optional public job (same price; listing may go away): `https://job-boards.green
 
 ## 5. Actor (do not build a form product)
 
-For this demo, **treat form submit as already done**. Do not POST a real apply/contact form. The post-submit URL is the Confirm fixture in the next step.
+For this demo, **treat form submit as already done**. Do not POST a real apply/contact form. The post-submit URL is the hosted thank-you page in the next step.
 
 In a real workflow you would run your own `lead_submit` action here (separate actor), then Confirm that actor’s thank-you/result URL.
 
@@ -86,7 +86,7 @@ In a real workflow you would run your own `lead_submit` action here (separate ac
 ```bash
 purl https://livecheck.fly.dev/v1/confirm \
   -H 'content-type: application/json' \
-  -d '{"url":"https://livecheck.fly.dev/fixtures/confirm/thank-you-id","intent":"lead_submit"}'
+  -d '{"url":"https://livecheck.fly.dev/demo/thank-you?ref=ABC123","intent":"lead_submit"}'
 ```
 
 Expect HTTP **200** JSON:
@@ -122,8 +122,8 @@ Unpaid 402 on the same body is enough to prove the route without the extra spend
 | Health | HTTP 200, live settlement |
 | Unpaid Verify + Confirm | HTTP 402 + `payment-required` (no USDC spent) |
 | Paid Verify (live-apply-now) | HTTP 200, `status=live` |
-| Actor | No new form product; thank-you fixture used as if submit already happened |
-| Paid Confirm (thank-you-id) | HTTP 200, `verdict=confirmed`, Level-2 id `ABC123` |
+| Actor | No new form product; hosted thank-you page used as if submit already happened |
+| Paid Confirm (`/demo/thank-you?ref=ABC123`) | HTTP 200, `verdict=confirmed`, Level-2 id `ABC123` |
 | thank-you-only | `unknown` — never `confirmed` |
 | Spend | **~$0.11 USDC** on Base for the required path (`0.01` + `0.10`) |
 

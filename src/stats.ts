@@ -6,12 +6,12 @@ import {
   WATCH_PRICE_USD,
 } from "./config.js";
 import {
-  CONFIRM_DOCS_EXAMPLE_URL,
   DOCS_EXAMPLE_URL,
   DOCS_EXAMPLE_URLS,
   docsExampleUrlHashes,
 } from "./docs-example-url.js";
 import { graderWallets } from "./grader-wallets.js";
+import { testTrafficAddresses } from "./test-traffic.js";
 import { internalWallets } from "./internal-wallets.js";
 import { PAID_CALL_ROUTES, type PaidCallRoute } from "./paid-call.js";
 import {
@@ -125,6 +125,9 @@ export const DOCS_EXAMPLE_TEST_TRAFFIC_LABEL =
 export const GRADER_TEST_TRAFFIC_LABEL =
   "Known grader and auditor wallets are test traffic and are omitted from traffic.external.";
 
+export const TESTER_TEST_TRAFFIC_LABEL =
+  "Docs and manual tester wallets are test traffic and are omitted from traffic.external.";
+
 /** Paid calls to the public docs examples. Still inside traffic.all. */
 export type DocsExampleTraffic = {
   label: typeof DOCS_EXAMPLE_TEST_TRAFFIC_LABEL;
@@ -142,7 +145,7 @@ export type DocsExampleTraffic = {
 
 /** Paid calls from known grader wallets. Still inside traffic.all. Addresses stay off this document. */
 export type GraderTraffic = {
-  label: typeof GRADER_TEST_TRAFFIC_LABEL;
+  label: string;
   available: boolean;
   wallets_configured: number;
   calls: { l7d: number; l30d: number };
@@ -173,6 +176,8 @@ export type TrafficHonesty = {
   docs_example: DocsExampleTraffic;
   /** Grader/auditor wallets counted in `all` and omitted from `external`. */
   graders: GraderTraffic;
+  /** Manual tester wallets counted in `all` and omitted from `external`. */
+  testers: GraderTraffic;
   /** Route-priced sum of paid_calls. external uses the same omissions as traffic.external. */
   revenue: TrafficRevenue;
   /**
@@ -282,6 +287,12 @@ export function trafficHonestyNote(input: {
     calls: { l7d: number; l30d: number };
     complete: boolean;
   };
+  testers: {
+    available: boolean;
+    wallets_configured: number;
+    calls: { l7d: number; l30d: number };
+    complete: boolean;
+  };
 }): string {
   const parts = [
     INTERNAL_TEST_TRAFFIC_LABEL,
@@ -294,8 +305,12 @@ export function trafficHonestyNote(input: {
       ? "No grader wallets are configured (LIVECHECK_GRADER_WALLETS=off disables the list)."
       : `traffic.external omits ${input.graders.wallets_configured} known grader wallets (built-in list plus LIVECHECK_GRADER_WALLETS).`,
     graderNote(input.graders, input.fleet),
+    input.testers.wallets_configured === 0
+      ? "No tester wallets are configured."
+      : `traffic.external omits ${input.testers.wallets_configured} tester wallets from src/test-traffic.ts.`,
+    testerNote(input.testers, input.fleet),
     DOCS_EXAMPLE_TEST_TRAFFIC_LABEL,
-    `The stored paid_calls column is url_sha256 (SHA-256 of the full URL). traffic.external omits ${DOCS_EXAMPLE_URL} and ${CONFIRM_DOCS_EXAMPLE_URL}. Those calls stay in traffic.all.`,
+    `The stored paid_calls column is url_sha256 (SHA-256 of the full URL). traffic.external omits ${DOCS_EXAMPLE_URLS.join(", ")}. Those calls stay in traffic.all.`,
     docsExampleNote(input.docsExample, input.fleet),
     "One-shot check receipts have no payer and stay in both sentinel checks_run totals. Check, watch, and renew payers are on traffic.payers when the paid_call row stored one. paid_calls with a null payer stay in external unless the URL is a docs example.",
     "traffic.payers counts every paid route in paid_calls: verify, confirm, check, watch, and watch/renew.",
@@ -337,6 +352,24 @@ function graderNote(
   }
   const who = fleet ? "Included machines have" : "This volume has";
   return `${who} ${graders.calls.l7d} L7d / ${graders.calls.l30d} L30d grader paid_calls.`;
+}
+
+function testerNote(
+  testers: {
+    available: boolean;
+    calls: { l7d: number; l30d: number };
+    complete: boolean;
+  },
+  fleet: boolean,
+): string {
+  if (!testers.complete) {
+    return "Tester omission is incomplete: at least one included machine did not publish traffic.testers. That machine may still count those wallets in traffic.external.";
+  }
+  if (!testers.available) {
+    return "Tester paid_call counts are not published for this response. A closed paid-call store is missing, not zero.";
+  }
+  const who = fleet ? "Included machines have" : "This volume has";
+  return `${who} ${testers.calls.l7d} L7d / ${testers.calls.l30d} L30d tester paid_calls.`;
 }
 
 function docsExampleNote(
@@ -729,6 +762,53 @@ function mergeGraderTraffic(
   };
 }
 
+function readTesters(traffic: TrafficHonesty | undefined): GraderTraffic | undefined {
+  const testers = traffic?.testers;
+  if (!testers || testers.label !== TESTER_TEST_TRAFFIC_LABEL) return undefined;
+  if (typeof testers.available !== "boolean") return undefined;
+  if (typeof testers.wallets_configured !== "number") return undefined;
+  if (typeof testers.calls?.l7d !== "number" || typeof testers.calls?.l30d !== "number") return undefined;
+  const l7 = testers.unique_payers?.l7d;
+  const l30 = testers.unique_payers?.l30d;
+  if (l7 !== null && typeof l7 !== "number") return undefined;
+  if (l30 !== null && typeof l30 !== "number") return undefined;
+  return testers;
+}
+
+function mergeTesterTraffic(
+  localTraffic: TrafficHonesty | undefined,
+  peers: readonly { included: boolean; doc?: StatsDocument }[],
+): { traffic: GraderTraffic; complete: boolean } {
+  let calls = { l7d: 0, l30d: 0 };
+  let available = true;
+  let complete = true;
+  const absorb = (traffic: TrafficHonesty | undefined) => {
+    const testers = readTesters(traffic);
+    if (!testers) {
+      complete = false;
+      available = false;
+      return;
+    }
+    if (!testers.available) available = false;
+    calls = { l7d: calls.l7d + testers.calls.l7d, l30d: calls.l30d + testers.calls.l30d };
+  };
+  absorb(localTraffic);
+  for (const peer of peers) {
+    if (!peer.included || !peer.doc) continue;
+    absorb(publishedTraffic(peer.doc));
+  }
+  return {
+    complete,
+    traffic: {
+      label: TESTER_TEST_TRAFFIC_LABEL,
+      available: complete && available,
+      wallets_configured: localTraffic?.testers?.wallets_configured ?? 0,
+      calls,
+      unique_payers: { l7d: null, l30d: null },
+    },
+  };
+}
+
 function readRevenue(traffic: TrafficHonesty | undefined): TrafficRevenue | undefined {
   const revenue = traffic?.revenue;
   if (!revenue || revenue.source !== "paid_calls") return undefined;
@@ -809,6 +889,7 @@ export function mergeTrafficHonesty(
 
   const walletCount = localTraffic?.internal_wallets_configured ?? 0;
   const graders = mergeGraderTraffic(localTraffic, peers);
+  const testers = mergeTesterTraffic(localTraffic, peers);
   const revenue = mergeTrafficRevenue(localTraffic, peers, all.payers, external.payers);
   return {
     includes_internal_test_traffic: true,
@@ -826,6 +907,12 @@ export function mergeTrafficHonesty(
         calls: graders.traffic.calls,
         complete: graders.complete,
       },
+      testers: {
+        available: testers.traffic.available,
+        wallets_configured: testers.traffic.wallets_configured,
+        calls: testers.traffic.calls,
+        complete: testers.complete,
+      },
     }),
     internal_wallets_configured: walletCount,
     docs_example: {
@@ -836,6 +923,7 @@ export function mergeTrafficHonesty(
       calls: docsExample.calls,
     },
     graders: graders.traffic,
+    testers: testers.traffic,
     revenue,
     external_complete: externalComplete,
     routes_complete: routesComplete,
@@ -873,6 +961,7 @@ export function buildTrafficHonesty(
   walletCount: number,
   docsExample: DocsExampleTraffic,
   graders: GraderTraffic,
+  testers: GraderTraffic,
 ): TrafficHonesty {
   const allPayers = trafficPayersFromStore(payersAll);
   const externalPayers = trafficPayersFromStore(payersExternal);
@@ -897,10 +986,17 @@ export function buildTrafficHonesty(
         calls: graders.calls,
         complete: true,
       },
+      testers: {
+        available: testers.available,
+        wallets_configured: testers.wallets_configured,
+        calls: testers.calls,
+        complete: true,
+      },
     }),
     internal_wallets_configured: walletCount,
     docs_example: docsExample,
     graders,
+    testers,
     revenue,
     external_complete: true,
     routes_complete: true,
@@ -929,7 +1025,8 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
   const notes = statsNotes(unscoped, LOCAL_VOLUME_NOTE, "volume");
   const wallets = internalWallets();
   const graders = graderWallets();
-  const externalPayersExcluded = [...new Set([...wallets, ...graders])];
+  const testers = testTrafficAddresses("tester");
+  const externalPayersExcluded = [...new Set([...wallets, ...graders, ...testers])];
   const watchAll = loadWatchStats();
   const watchExternal = loadWatchStats(externalPayersExcluded);
   const oneShotChecks = countReceiptsSince("1970-01-01T00:00:00Z", "check").receipts;
@@ -938,6 +1035,7 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
   const payersExternal = queryRetentionWindowsFromStore(now, externalPayersExcluded, exampleHashes);
   const exampleCounts = queryPaidCallCountsForUrlHashesFromStore(now, exampleHashes);
   const graderCounts = queryPaidCallCountsForPayersFromStore(now, graders);
+  const testerCounts = queryPaidCallCountsForPayersFromStore(now, testers);
   const docsExample: DocsExampleTraffic = exampleCounts
     ? {
         label: DOCS_EXAMPLE_TEST_TRAFFIC_LABEL,
@@ -958,7 +1056,19 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
           l30d: graderCounts.l30d.unique_payers,
         },
       }
-    : { ...emptyGraderTraffic(), wallets_configured: graders.length };
+    : { ...emptyGraderTraffic(), label: GRADER_TEST_TRAFFIC_LABEL, wallets_configured: graders.length };
+  const testerTraffic: GraderTraffic = testerCounts
+    ? {
+        label: TESTER_TEST_TRAFFIC_LABEL,
+        available: true,
+        wallets_configured: testers.length,
+        calls: { l7d: testerCounts.l7d.calls, l30d: testerCounts.l30d.calls },
+        unique_payers: {
+          l7d: testerCounts.l7d.unique_payers,
+          l30d: testerCounts.l30d.unique_payers,
+        },
+      }
+    : { ...emptyGraderTraffic(), label: TESTER_TEST_TRAFFIC_LABEL, wallets_configured: testers.length };
   return {
     ok: true,
     service: "livecheck",
@@ -972,6 +1082,7 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
       wallets.length,
       docsExample,
       graderTraffic,
+      testerTraffic,
     ),
     intents: {
       lead_submit: {
@@ -1090,6 +1201,16 @@ function docsExampleHtml(doc: StatsDocument): string {
   return `${label} ${docs.calls.l7d} L7d / ${docs.calls.l30d} L30d paid calls. These rows stay in All and are omitted from External. URLs: ${urls}.`;
 }
 
+function testerHtml(doc: StatsDocument): string {
+  const testers = doc.traffic.testers;
+  const label = escHtml(testers.label);
+  if (!testers.available) {
+    return `${label} Counts are not a measurement on this response (paid-call store closed, or a machine did not publish the split).`;
+  }
+  const payers = (value: number | null) => (value === null ? "withheld" : String(value));
+  return `${label} ${testers.wallets_configured} wallets configured. ${testers.calls.l7d} L7d / ${testers.calls.l30d} L30d paid calls (${payers(testers.unique_payers.l7d)} / ${payers(testers.unique_payers.l30d)} unique payers). These rows stay in All and are omitted from External. The wallet list is src/test-traffic.ts.`;
+}
+
 function graderHtml(doc: StatsDocument): string {
   const graders = doc.traffic.graders;
   const label = escHtml(graders.label);
@@ -1138,6 +1259,7 @@ export function statsHtml(doc: StatsDocument): string {
   <p class="honesty"><strong>${escHtml(doc.traffic.label)}</strong> ${escHtml(doc.traffic.note)}</p>
   <p class="muted">${docsExampleHtml(doc)}</p>
   <p class="muted">${graderHtml(doc)}</p>
+  <p class="muted">${testerHtml(doc)}</p>
   <p>Generated ${doc.generated_at}. Payable Confirm intents: <code>lead_submit</code> (GA) and <code>listing_published</code> at $${lead.price_usd.toFixed(2)} USDC; <code>order_placed</code> at $${order.price_usd.toFixed(2)} USDC.</p>
   <p class="muted">Volume scope: ${doc.store.scope}${doc.store.fly_machine_id ? ` · serving machine <code>${doc.store.fly_machine_id}</code>` : ""}. Unscoped confirm paid_calls (no stored intent): L7d ${doc.store.confirm_unscoped_paid_calls.l7d} / L30d ${doc.store.confirm_unscoped_paid_calls.l30d}.${statsMachineSummary(doc)}</p>
   <table>

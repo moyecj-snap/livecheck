@@ -27,6 +27,7 @@ import {
   OPENAPI_VERIFY_TAGS,
   VERIFY_DESCRIPTION,
 } from "../src/config.js";
+import { CONFIRM_DEMO_URL } from "../src/docs-example-url.js";
 import { PAID_DISCOVERY_ROUTES, WELL_KNOWN_X402_ROUTES } from "../src/discovery.js";
 import { LLMS_TXT } from "../src/llms.js";
 import { livePaymentMiddlewareFromServer, resourceServerFromFacilitator } from "../src/payments.js";
@@ -92,6 +93,7 @@ type OpenApiDoc = {
         requestBody?: {
           content?: {
             "application/json"?: {
+              example?: { url?: string; intent?: string };
               schema?: {
                 required?: string[];
                 properties?: { intent?: { description?: string; enum?: string[] } };
@@ -273,6 +275,10 @@ describe("discovery documents (mock gate)", () => {
     assert.equal(confirm["x-payment-info"]?.price?.amount, "0.10");
     assert.equal(confirm["x-payment-info"]?.intent_prices, undefined);
     assert.deepEqual(confirm.requestBody?.content?.["application/json"]?.schema?.required, ["url", "intent"]);
+    assert.deepEqual(confirm.requestBody?.content?.["application/json"]?.example, {
+      url: CONFIRM_DEMO_URL,
+      intent: "lead_submit",
+    });
     assert.deepEqual(confirm.requestBody?.content?.["application/json"]?.schema?.properties?.intent?.enum, [
       "lead_submit",
       "listing_published",
