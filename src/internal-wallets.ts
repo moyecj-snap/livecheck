@@ -1,21 +1,35 @@
 import { sanitizePayer } from "./paid-call.js";
 
 /**
- * Team / seed wallets whose Verify, Confirm, Check, and Watch traffic is
- * internal. Public /stats still publishes all-wallet headlines and labels
- * them as internal test traffic. `traffic.external` omits this list.
+ * Team wallets omitted from `traffic.external`. One list, one entry per wallet.
+ * Add a wallet by appending one object. Addresses stay lowercase.
+ * Labels are the reason and are not published on `/stats`.
  *
- * Stored lowercase. `sanitizePayer` accepts checksummed input.
- * Add more at runtime with LIVECHECK_INTERNAL_WALLETS (comma-separated).
- * That env is additive. Set it to `off` to disable the wallet split.
+ * `LIVECHECK_INTERNAL_WALLETS` is additive (comma-separated 0x addresses).
+ * `off` drops the list.
+ * A paid_calls user_agent that starts with `livecheck-internal/` is internal
+ * the same way, even when the payer is not in this list.
  */
-export const DEFAULT_INTERNAL_WALLETS = [
-  "0xb78226fc84f02da1b69f5e10f595067e4f1987d1", // purl
-  "0x0561f30a23cf47ba6b9acf7bc22fac1144e64fae", // base-payer
-  "0xe54ef7a1b90bc18d5a68e9092b64a4b6812e407d", // AgentCash W0 seed
-  "0xe4a34fb0f642778f612793accdf1fad8ae358ee8", // bazaar connect
-  "0x5016cfc01db6ec359465bda316404947a5b5893a", // Patty box / AgentCash W1 seeding wallet
-] as const;
+export type InternalWallet = {
+  address: string;
+  label: string;
+};
+
+export const INTERNAL_USER_AGENT_PREFIX = "livecheck-internal/";
+
+export const INTERNAL_WALLETS: readonly InternalWallet[] = [
+  { address: "0xb78226fc84f02da1b69f5e10f595067e4f1987d1", label: "purl" },
+  { address: "0x0561f30a23cf47ba6b9acf7bc22fac1144e64fae", label: "base-payer" },
+  { address: "0xe54ef7a1b90bc18d5a68e9092b64a4b6812e407d", label: "Craig" },
+  { address: "0xe4a34fb0f642778f612793accdf1fad8ae358ee8", label: "bazaar connect" },
+  { address: "0x5016cfc01db6ec359465bda316404947a5b5893a", label: "AgentCash seed" },
+];
+
+export const DEFAULT_INTERNAL_WALLETS = INTERNAL_WALLETS.map((wallet) => wallet.address);
+
+export function isInternalUserAgent(value: string | null | undefined): boolean {
+  return (value ?? "").trim().toLowerCase().startsWith(INTERNAL_USER_AGENT_PREFIX);
+}
 
 const FILTER_OFF = new Set(["off", "none", "false", "0"]);
 

@@ -65,8 +65,10 @@ Ignore ethereum RPC errors on balance. Paid calls need **USDC on Base**.
 
 Stable fixture (expected `status=live`, apply form present):
 
+Our own purl runs send `-A 'livecheck-internal/purl-0.2.8'` so `/stats` counts them as internal. A customer agent should not send a user agent that starts with `livecheck-internal/`.
+
 ```bash
-purl https://livecheck.fly.dev/v1/verify \
+purl -A 'livecheck-internal/purl-0.2.8' https://livecheck.fly.dev/v1/verify \
   -H 'content-type: application/json' \
   -d '{"url":"https://livecheck.fly.dev/fixtures/live-apply-now"}'
 ```
@@ -84,7 +86,7 @@ In a real workflow you would run your own `lead_submit` action here (separate ac
 ## 6. Paid Confirm (`$0.10`) — expected `confirmed`
 
 ```bash
-purl https://livecheck.fly.dev/v1/confirm \
+purl -A 'livecheck-internal/purl-0.2.8' https://livecheck.fly.dev/v1/confirm \
   -H 'content-type: application/json' \
   -d '{"url":"https://livecheck.fly.dev/demo/thank-you?ref=ABC123","intent":"lead_submit"}'
 ```
@@ -106,7 +108,7 @@ Accept **only** `verdict=confirmed` with Level-2 evidence (a ref / ticket / lead
 Thank-you copy with **no** id is never confirmed. Optional extra **`$0.10`** if you actually pay this call (not part of the ~$0.11 required path):
 
 ```bash
-purl https://livecheck.fly.dev/v1/confirm \
+purl -A 'livecheck-internal/purl-0.2.8' https://livecheck.fly.dev/v1/confirm \
   -H 'content-type: application/json' \
   -d '{"url":"https://livecheck.fly.dev/fixtures/confirm/thank-you-only","intent":"lead_submit"}'
 ```

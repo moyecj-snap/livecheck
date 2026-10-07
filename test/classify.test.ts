@@ -3,6 +3,12 @@ import { describe, it } from "node:test";
 import { CLEAR_LIVE_JOB_CONFIDENCE, classify } from "../src/classify.js";
 import { FIXTURES } from "../src/fixtures.js";
 import { PRICE_USD } from "../src/config.js";
+import {
+  STRIPE_CLOSED_REDIRECT_URL,
+  STRIPE_CLOSED_SEARCH_URL,
+  STRIPE_LIVE_LISTING_URL,
+  STRIPE_LIVE_SEARCH_URL,
+} from "../src/job-redirect-bench-cases.js";
 import type { FetchedPage } from "../src/types.js";
 
 function page(partial: Partial<FetchedPage> & Pick<FetchedPage, "requestedUrl" | "html" | "httpStatus">): FetchedPage {
@@ -351,5 +357,86 @@ describe("classify fixtures", () => {
     );
     assert.equal(verdict.status, "closed");
     assert.ok(verdict.signals.includes("http_404"));
+  });
+
+  it("judges a search link that redirects to a Stripe listing as live", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: STRIPE_LIVE_SEARCH_URL,
+        canonicalUrl: STRIPE_LIVE_LISTING_URL,
+        redirected: true,
+        httpStatus: 200,
+        html: `<!doctype html><html><head><title>Stripe Careers | Abuse Investigator</title></head><body>
+          <h1>Abuse Investigator</h1>
+          <a class="hds-button careers-listing-details__apply-button" href="/careers/apply/abuse-investigator/8172508">Apply now</a>
+        </body></html>`,
+      }),
+    );
+    assert.equal(verdict.status, "live");
+    assert.equal(verdict.signals.includes("collection_or_category"), false);
+    assert.equal(verdict.signals.includes("redirected_to_board"), false);
+  });
+
+  it("recognizes /careers/listing/<slug>/<id> as a job page", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://stripe.com/careers/listing/abuse-investigator/8172508",
+        httpStatus: 200,
+        html: `<!doctype html><html><head><title>Abuse Investigator</title></head><body>
+          <h1>Abuse Investigator</h1>
+          <a href="/careers/apply/abuse-investigator/8172508">Apply now</a>
+        </body></html>`,
+      }),
+    );
+    assert.equal(verdict.status, "live");
+  });
+
+  it("returns closed when a job link redirects to the Stripe careers search", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: STRIPE_CLOSED_SEARCH_URL,
+        canonicalUrl: STRIPE_CLOSED_REDIRECT_URL,
+        redirected: true,
+        httpStatus: 200,
+        html: `<!doctype html><html><head><title>Open roles</title></head><body>
+          <h1>Open roles</h1>
+          <div class="job-card">Role A</div>
+          <div class="job-card">Role B</div>
+          <div class="job-card">Role C</div>
+          <a href="/careers/listing/role-a/1">Apply now</a>
+        </body></html>`,
+      }),
+    );
+    assert.equal(verdict.status, "closed");
+    assert.ok(verdict.signals.includes("redirected_to_board"));
+  });
+
+  it("returns unknown, never live, when a job link redirects to an unclear page", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://jobs.example.com/jobs/7782",
+        canonicalUrl: "https://jobs.example.com/notice/7782",
+        redirected: true,
+        httpStatus: 200,
+        html: `<!doctype html><html><head><title>Notice</title></head><body>
+          <p>Thanks for visiting.</p><a href="/apply">Apply now</a>
+        </body></html>`,
+      }),
+    );
+    assert.equal(verdict.status, "unknown");
+    assert.ok(verdict.signals.includes("redirected_away_from_job"));
+  });
+
+  it("keeps a real search query page unknown", () => {
+    const verdict = classify(
+      page({
+        requestedUrl: "https://example.com/search?q=engineer",
+        httpStatus: 200,
+        html: `<!doctype html><html><head><title>Search</title></head><body>
+          <h1>Search results</h1><a href="/jobs/1">Apply now</a>
+        </body></html>`,
+      }),
+    );
+    assert.equal(verdict.status, "unknown");
   });
 });
