@@ -33,6 +33,7 @@ import { demoHtml } from "./demo-page.js";
 import { DEMO_THANK_YOU_PATH, demoThankYouHtml } from "./demo-thank-you.js";
 import { discoveryHeaders, openApiDocument, wellKnownX402 } from "./discovery.js";
 import { FIXTURES } from "./fixtures.js";
+import { registerFreeJobRoutes } from "./free-job-page.js";
 import { LLMS_TXT, llmsTxtHeaders } from "./llms.js";
 import { isInternalTestMode, withBurstProtection } from "./check-capacity.js";
 import { recordSuccessfulPaidCheck, responseRouteFromPath, withPaidCallContext } from "./paid-call.js";
@@ -176,6 +177,9 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
     }
     return c.html(fixture.body ?? "", fixture.status as 200 | 404);
   });
+
+  // Free "Is this job still open?" page (Product Hunt). Not a paid route.
+  registerFreeJobRoutes(app);
 
   app.post("/v1/verify", handlePaidVerify);
   app.post("/v1/verify/job", handlePaidVerify);

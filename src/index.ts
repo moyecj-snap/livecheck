@@ -14,6 +14,7 @@ import { confirmBenchesLoadInfo } from "./confirm-stats-benches.js";
 import { sentinelBenchesLoadInfo } from "./sentinel-stats-benches.js";
 import { formatListenBinding, listenHttp } from "./listen.js";
 import { initWatchStore } from "./watch-store.js";
+import { initFreePageStore } from "./free-job-store.js";
 
 loadDotEnvIfPresent();
 
@@ -24,6 +25,13 @@ if (store.ok) {
   console.warn(
     `paid_call retention: stdout-only (${store.reason}). CoS interim: npm run paid-call:cos -- --from-logs`,
   );
+}
+
+const freePage = initFreePageStore();
+if (freePage.ok) {
+  console.log(`free /job page counts: sqlite ${freePage.path} (counts only, no URLs)`);
+} else {
+  console.warn(`free /job page counts: memory only (${freePage.reason})`);
 }
 
 const receiptStore = initReceiptStore();
