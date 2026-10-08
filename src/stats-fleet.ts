@@ -1,3 +1,4 @@
+import { fleetProtocolTraffic } from "./stats-protocols.js";
 import { DEFAULT_PORT } from "./config.js";
 import {
   FLEET_VOLUME_NOTE,
@@ -200,7 +201,12 @@ export function mergeFleetStats(local: StatsDocument, peers: readonly FleetPeerR
       confirm_unscoped_paid_calls: unscoped,
       note: volumeNote,
     },
-    traffic: mergeTrafficHonesty(local, peers),
+    traffic: {
+      ...mergeTrafficHonesty(local, peers),
+      ...(local.traffic?.protocols
+        ? { protocols: includedPeers.length > 0 ? fleetProtocolTraffic(local.traffic.protocols) : local.traffic.protocols }
+        : {}),
+    },
     notes: statsNotes(unscoped, volumeNote, "fleet"),
   };
 }
