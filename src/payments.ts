@@ -49,6 +49,8 @@ import { wrapFacilitatorForWatchPayer } from "./watch-payer.js";
 import { wrapFacilitatorForCatalog } from "./facilitator-catalog.js";
 import { emitPaidCallAfterSettle, extractPayer } from "./paid-call.js";
 import { createStripeClient, recordSettledPayment } from "./stripe-record.js";
+import { defaultMppResultsDbPath, openMppResultCache } from "./mpp-idempotency.js";
+import { defaultMppStoreDbPath } from "./mpp-store.js";
 import { MPP_ROUTES, createLiveMppGateway, missingMppKeyNames, readMppKeys, setMppStatus, withMppDispatch } from "./mpp.js";
 import { mppEnabled } from "./mpp-flags.js";
 
@@ -270,7 +272,8 @@ export function withOptionalMpp(x402Gate: MiddlewareHandler, env: NodeJS.Process
       `[mpp] enabled on ${MPP_ROUTES.join(", ")}: ${gateway.methods.join(", ")} livemode=${keys.livemode} hosted_fee_payer=${keys.hostedFeePayer} stripe_key=${keys.stripeKeySource}`,
     );
     setMppStatus({ enabled: true, active: true, livemode: keys.livemode, methods: [...gateway.methods] });
-    return withMppDispatch(x402Gate, gateway);
+    const results = openMppResultCache(defaultMppResultsDbPath(defaultMppStoreDbPath()));
+    return withMppDispatch(x402Gate, gateway, { results });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     console.warn(`[mpp] setup failed, serving x402 only: ${reason}`);
