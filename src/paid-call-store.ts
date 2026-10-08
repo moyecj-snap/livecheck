@@ -14,6 +14,7 @@ import {
   sanitizeHttpStatus,
   sanitizePayer,
   sanitizePaymentIntent,
+  sanitizeReceiptId,
   sanitizeTx,
   sanitizeUserAgent,
   sanitizeVerifyStatus,
@@ -75,6 +76,8 @@ export type PaidCallRow = {
   /** `unattributed` when the payer could not be recovered. `tx_transfer` when it was. */
   attribution?: string;
   attribution_note?: string;
+  /** chk_ / wtc_ / wrn_ / cfm_ / evt_ id when this row is the call that sealed that receipt. */
+  receipt_id?: string;
 };
 
 export type RouteCounts = {
@@ -143,7 +146,8 @@ const PAID_CALLS_COLUMNS = `
   user_agent TEXT,
   status TEXT,
   attribution TEXT,
-  attribution_note TEXT
+  attribution_note TEXT,
+  receipt_id TEXT
 `;
 
 const TABLE_SQL = `
@@ -160,8 +164,18 @@ CREATE INDEX IF NOT EXISTS idx_paid_calls_route_ts ON paid_calls(route, ts);
 CREATE INDEX IF NOT EXISTS idx_paid_calls_route_intent_ts ON paid_calls(route, intent, ts);
 `;
 
+/**
+ * Partial unique indexes. Multiple NULL tx / receipt_id values are allowed.
+ * Created only after duplicate receipt copies are deleted, so prod rows
+ * 105 and 107 cannot make CREATE INDEX fail.
+ */
+export const PAID_CALL_UNIQUE_INDEXES = `
+CREATE UNIQUE INDEX IF NOT EXISTS idx_paid_calls_receipt_id ON paid_calls(receipt_id) WHERE receipt_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_paid_calls_tx ON paid_calls(tx) WHERE tx IS NOT NULL;
+`;
+
 /** @deprecated CREATE TABLE only; migrate adds intent/verdict then indexes. */
-export const SCHEMA = TABLE_SQL + INDEXES_AFTER_MIGRATE;
+export const SCHEMA = TABLE_SQL + INDEXES_AFTER_MIGRATE + PAID_CALL_UNIQUE_INDEXES;
 
 type OpenStore = { ok: true; path: string; db: DatabaseSync };
 type ClosedStore = { ok: false; path?: string; reason: string };
@@ -280,6 +294,7 @@ function rebuildPaidCallsRouteCheck(db: DatabaseSync): void {
     "status",
     "attribution",
     "attribution_note",
+    "receipt_id",
   ].filter((name) => paidCallStoreTableColumns(db, "paid_calls").has(name));
   const columnList = copyColumns.join(", ");
   try {
@@ -333,8 +348,17 @@ export function migratePaidCallStore(db: DatabaseSync): void {
   ensureColumn(db, "paid_calls", "status", "status TEXT");
   ensureColumn(db, "paid_calls", "attribution", "attribution TEXT");
   ensureColumn(db, "paid_calls", "attribution_note", "attribution_note TEXT");
+  ensureColumn(db, "paid_calls", "receipt_id", "receipt_id TEXT");
   rebuildPaidCallsRouteCheck(db);
+  // Delete receipt copies before the unique indexes. Prod row 107 duplicates
+  // row 105; the indexes are created only after that row is gone.
+  removeDuplicateReceiptBackfillRows(db);
+  db.exec(`
+    UPDATE paid_calls SET tx = NULL WHERE tx IS NOT NULL AND trim(tx) = '';
+    UPDATE paid_calls SET receipt_id = NULL WHERE receipt_id IS NOT NULL AND trim(receipt_id) = '';
+  `);
   db.exec(INDEXES_AFTER_MIGRATE);
+  db.exec(PAID_CALL_UNIQUE_INDEXES);
   markUnattributedNullPayers(db);
 }
 
@@ -435,6 +459,8 @@ export function paidCallEventToRow(event: PaidCallEvent): PaidCallRow | undefine
   const userAgent = sanitizeUserAgent(event.user_agent);
   if (httpStatus !== undefined) row.http_status = httpStatus;
   if (userAgent) row.user_agent = userAgent;
+  const receiptId = sanitizeReceiptId(event.receipt_id);
+  if (receiptId) row.receipt_id = receiptId;
   return row;
 }
 
@@ -560,7 +586,8 @@ export function openPaidCallDb(path: string): DatabaseSync {
   return prepareDatabase(path);
 }
 
-export function insertPaidCallRow(db: DatabaseSync, row: PaidCallRow): void {
+/** Insert one row. A duplicate tx or receipt_id is ignored and returns false. */
+export function insertPaidCallRow(db: DatabaseSync, row: PaidCallRow): boolean {
   const mapped = paidCallEventToRow({
     event: "livecheck.paid_call",
     route: row.route,
@@ -575,6 +602,7 @@ export function insertPaidCallRow(db: DatabaseSync, row: PaidCallRow): void {
     status: row.status,
     http_status: row.http_status,
     user_agent: row.user_agent,
+    receipt_id: row.receipt_id,
   });
   if (!mapped) {
     throw new Error("refusing to insert unsanitized paid_call row");
@@ -584,11 +612,12 @@ export function insertPaidCallRow(db: DatabaseSync, row: PaidCallRow): void {
     attribution: row.attribution,
     attribution_note: row.attribution_note,
   });
-  db.prepare(
+  const result = db.prepare(
     `INSERT INTO paid_calls (
        ts, route, payer, tx, payment_intent, host, url_sha256, intent, verdict, http_status, user_agent, status,
-       attribution, attribution_note
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       attribution, attribution_note, receipt_id
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT DO NOTHING`,
   ).run(
     mapped.ts,
     mapped.route,
@@ -604,7 +633,9 @@ export function insertPaidCallRow(db: DatabaseSync, row: PaidCallRow): void {
     mapped.status ?? null,
     attribution.attribution,
     attribution.note,
+    mapped.receipt_id ?? null,
   );
+  return Number(result.changes) === 1;
 }
 
 /** Best-effort retain. Never throws; stdout JSON is the durable fallback. */
@@ -613,8 +644,7 @@ export function retainPaidCall(event: PaidCallEvent): boolean {
   if (!row) return false;
   if (!state?.ok) return false;
   try {
-    insertPaidCallRow(state.db, row);
-    return true;
+    return insertPaidCallRow(state.db, row);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     console.warn(`[paid_call] retain failed: ${reason}`);
@@ -624,7 +654,7 @@ export function retainPaidCall(event: PaidCallEvent): boolean {
 
 export function listPaidCallRows(db: DatabaseSync, sinceIso?: string): PaidCallRow[] {
   const columns =
-    "ts, route, payer, tx, payment_intent, host, url_sha256, intent, verdict, http_status, user_agent, status, attribution, attribution_note";
+    "ts, route, payer, tx, payment_intent, host, url_sha256, intent, verdict, http_status, user_agent, status, attribution, attribution_note, receipt_id";
   const sql = sinceIso
     ? `SELECT ${columns} FROM paid_calls WHERE ts >= ? ORDER BY ts ASC`
     : `SELECT ${columns} FROM paid_calls ORDER BY ts ASC`;
@@ -644,6 +674,7 @@ export function listPaidCallRows(db: DatabaseSync, sinceIso?: string): PaidCallR
     status: string | null;
     attribution: string | null;
     attribution_note: string | null;
+    receipt_id: string | null;
   }>;
   const rows: PaidCallRow[] = [];
   for (const item of raw) {
@@ -680,6 +711,8 @@ export function listPaidCallRows(db: DatabaseSync, sinceIso?: string): PaidCallR
     if (userAgent) row.user_agent = userAgent;
     if (item.attribution?.trim()) row.attribution = item.attribution.trim();
     if (item.attribution_note?.trim()) row.attribution_note = item.attribution_note.trim();
+    const receiptId = sanitizeReceiptId(item.receipt_id);
+    if (receiptId) row.receipt_id = receiptId;
     rows.push(row);
   }
   return rows;
@@ -1003,61 +1036,177 @@ const RECEIPT_BACKFILL_ROUTE: Record<string, PaidCallRoute> = {
   watch_renew: "watch/renew",
 };
 
+/** Settle can land a couple of seconds after the receipt. Two minutes covers that gap. */
+export const RECEIPT_BACKFILL_WINDOW_MS = 120_000;
+
+const RECEIPT_COPY_ROUTES_SQL = `('check', 'watch', 'watch/renew')`;
+
+export type RemovedReceiptDuplicate = {
+  id: number;
+  route: string;
+  ts: string;
+  url_sha256: string;
+};
+
+function timestampsWithin(a: string, b: string, windowMs = RECEIPT_BACKFILL_WINDOW_MS): boolean {
+  const left = Date.parse(a);
+  const right = Date.parse(b);
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return a.trim() === b.trim();
+  return Math.abs(left - right) <= windowMs;
+}
+
+type PaidCallMatchRow = {
+  id: number | bigint;
+  ts: string;
+  route: string;
+  url_sha256: string;
+};
+
+function matchRows(db: DatabaseSync, where: string): PaidCallMatchRow[] {
+  return db.prepare(`SELECT id, ts, route, url_sha256 FROM paid_calls WHERE ${where}`).all() as PaidCallMatchRow[];
+}
+
+/**
+ * Skip order for the startup copy: receipt id, then tx, then route + url
+ * hash within ±120s. Receipts have no tx, so the tx check applies when the
+ * source row carries one. v83 direct rows have no receipt id; the window
+ * matches them to the receipt a couple of seconds earlier.
+ */
+function receiptAlreadyRepresented(
+  db: DatabaseSync,
+  route: PaidCallRoute,
+  urlSha256: string,
+  ts: string,
+  receiptId: string | undefined,
+  tx: string | undefined,
+): boolean {
+  if (receiptId) {
+    const byId = db.prepare(`SELECT 1 AS ok FROM paid_calls WHERE receipt_id = ? LIMIT 1`).get(receiptId) as
+      | { ok?: number }
+      | undefined;
+    if (byId) return true;
+  }
+  if (tx) {
+    const byTx = db.prepare(`SELECT 1 AS ok FROM paid_calls WHERE lower(tx) = ? LIMIT 1`).get(tx) as
+      | { ok?: number }
+      | undefined;
+    if (byTx) return true;
+  }
+  const nearby = db
+    .prepare(`SELECT ts FROM paid_calls WHERE route = ? AND lower(url_sha256) = ?`)
+    .all(route, urlSha256) as Array<{ ts: string }>;
+  return nearby.some((row) => timestampsWithin(row.ts, ts));
+}
+
 /**
  * Copy check / watch / renew receipts that never landed in paid_calls.
- * Receipts have no payer, tx, user-agent, or detector, so those columns stay
- * null. Host is blank: receipts store only url_hash. Idempotent on
- * (route, url_sha256, ts).
+ * The copied row always stores receipt_id, so the unique index blocks a
+ * second copy even when the row has no tx. Host is blank. Payer, tx, and
+ * user-agent stay null. Safe to run again.
  */
 export function backfillPaidCallsFromReceipts(
   paidDb: DatabaseSync,
   receiptDb: DatabaseSync,
 ): { inserted: number; skipped: number } {
-  let rows: Array<{ intent: string; verdict: string; url_hash: string; created_at: string }> = [];
+  let rows: Array<{ id: string; intent: string; verdict: string; url_hash: string; created_at: string }> = [];
   try {
     rows = receiptDb
       .prepare(
-        `SELECT intent, verdict, url_hash, created_at
+        `SELECT id, intent, verdict, url_hash, created_at
          FROM confirm_receipts
          WHERE intent IN ('check', 'watch', 'watch_renew')`,
       )
-      .all() as Array<{ intent: string; verdict: string; url_hash: string; created_at: string }>;
+      .all() as Array<{ id: string; intent: string; verdict: string; url_hash: string; created_at: string }>;
   } catch {
     return { inserted: 0, skipped: 0 };
   }
-  const exists = paidDb.prepare(
-    `SELECT 1 AS ok FROM paid_calls WHERE route = ? AND url_sha256 = ? AND ts = ? LIMIT 1`,
-  );
   let inserted = 0;
   let skipped = 0;
   for (const item of rows) {
     const route = RECEIPT_BACKFILL_ROUTE[item.intent];
     const url_sha256 = item.url_hash?.trim().toLowerCase() ?? "";
     const ts = item.created_at?.trim() ?? "";
-    if (!route || !isSha256Hex(url_sha256) || !ts) {
+    const receiptId = sanitizeReceiptId(item.id);
+    if (!route || !isSha256Hex(url_sha256) || !ts || !receiptId) {
       skipped += 1;
       continue;
     }
-    const prior = exists.get(route, url_sha256, ts) as { ok?: number } | undefined;
-    if (prior) {
+    // Receipts do not store tx. The tx check still runs first among the
+    // remaining keys when a future source row has one; today it is a no-op
+    // and the ±120s window matches the direct row.
+    if (receiptAlreadyRepresented(paidDb, route, url_sha256, ts, receiptId, undefined)) {
       skipped += 1;
       continue;
     }
     const verdict = sanitizeSentinelVerdict(item.verdict);
-    try {
-      insertPaidCallRow(paidDb, {
-        ts,
-        route,
-        host: "",
-        url_sha256,
-        ...(verdict ? { verdict } : {}),
-      });
-      inserted += 1;
-    } catch {
-      skipped += 1;
-    }
+    const wrote = insertPaidCallRow(paidDb, {
+      ts,
+      route,
+      host: "",
+      url_sha256,
+      receipt_id: receiptId,
+      ...(verdict ? { verdict } : {}),
+    });
+    if (wrote) inserted += 1;
+    else skipped += 1;
   }
   return { inserted, skipped };
+}
+
+/**
+ * Idempotent boot cleanup. Deletes receipt-copied check/watch/renew rows that
+ * have no payer and no tx, a blank host, and a direct row for the same route
+ * and url_sha256 within ±120s. A row with a payer or a tx is never deleted.
+ * Running it again removes nothing.
+ */
+export function removeDuplicateReceiptBackfillRows(db: DatabaseSync): { removed: RemovedReceiptDuplicate[] } {
+  const victims = matchRows(
+    db,
+    `route IN ${RECEIPT_COPY_ROUTES_SQL}
+     AND (payer IS NULL OR trim(payer) = '')
+     AND (tx IS NULL OR trim(tx) = '')
+     AND (host IS NULL OR trim(host) = '')`,
+  );
+  const keepers = matchRows(
+    db,
+    `route IN ${RECEIPT_COPY_ROUTES_SQL}
+     AND (
+       (payer IS NOT NULL AND trim(payer) != '')
+       OR (tx IS NOT NULL AND trim(tx) != '')
+     )`,
+  );
+  const removed: RemovedReceiptDuplicate[] = [];
+  const del = db.prepare(
+    `DELETE FROM paid_calls
+     WHERE id = ?
+       AND (payer IS NULL OR trim(payer) = '')
+       AND (tx IS NULL OR trim(tx) = '')
+       AND (host IS NULL OR trim(host) = '')`,
+  );
+  for (const victim of victims) {
+    const url = victim.url_sha256.trim().toLowerCase();
+    const duplicated = keepers.some(
+      (keeper) =>
+        keeper.route === victim.route &&
+        keeper.url_sha256.trim().toLowerCase() === url &&
+        timestampsWithin(keeper.ts, victim.ts),
+    );
+    if (!duplicated) continue;
+    const result = del.run(victim.id);
+    if (Number(result.changes) !== 1) continue;
+    removed.push({
+      id: Number(victim.id),
+      route: victim.route,
+      ts: victim.ts,
+      url_sha256: url,
+    });
+  }
+  for (const row of removed) {
+    console.log(
+      `paid_call duplicate cleanup: removed id=${row.id} route=${row.route} ts=${row.ts} url_sha256=${row.url_sha256}`,
+    );
+  }
+  return { removed };
 }
 
 export function queryConfirmIntentCounts(db: DatabaseSync, sinceIso: string): ConfirmIntentCounts {
@@ -1164,6 +1313,7 @@ export function parsePaidCallLogLine(line: string): PaidCallEvent | undefined {
         verdict: parsed.verdict,
         http_status: parsed.http_status,
         user_agent: parsed.user_agent,
+        receipt_id: parsed.receipt_id,
       };
     } catch {
       // try next candidate

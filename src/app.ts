@@ -250,6 +250,7 @@ async function handlePaidCheck(c: Context) {
       verdict: checkPaidVerdict(classified.fired),
       http_status: classified.observation.http_status,
       user_agent: c.req.header("user-agent"),
+      receipt_id: linkedReceiptId(result),
     });
     return c.json(result);
   } catch (error) {
@@ -292,6 +293,7 @@ async function handlePaidWatch(c: Context) {
       verdict: "created",
       http_status: created.observation?.http_status,
       user_agent: c.req.header("user-agent"),
+      receipt_id: linkedReceiptId(result),
     });
     return c.json(result, 201);
   } catch (error) {
@@ -325,6 +327,7 @@ async function handlePaidWatchRenew(c: Context) {
       intent: renewed.condition.detector,
       verdict: "renewed",
       user_agent: c.req.header("user-agent"),
+      receipt_id: linkedReceiptId(result),
     });
     return c.json(result);
   } catch (error) {
@@ -333,6 +336,20 @@ async function handlePaidWatchRenew(c: Context) {
     }
     throw error;
   }
+}
+
+/** Receipt id sealed on this response. Prefer the verify URL so watch renew stores wrn_, not the watcher id. */
+function linkedReceiptId(result: { id?: string; receipt?: { verify_url?: string } }): string | undefined {
+  const verifyUrl = result.receipt?.verify_url;
+  if (typeof verifyUrl === "string") {
+    const marker = "/v1/receipt/";
+    const at = verifyUrl.lastIndexOf(marker);
+    if (at >= 0) {
+      const raw = decodeURIComponent(verifyUrl.slice(at + marker.length).split(/[?#]/)[0] ?? "");
+      if (isReceiptId(raw)) return raw;
+    }
+  }
+  return typeof result.id === "string" && isReceiptId(result.id) ? result.id : undefined;
 }
 
 function ownerTokenFrom(c: Context): string | undefined {
@@ -429,6 +446,7 @@ async function handlePaidConfirm(c: Context, parse: typeof parseConfirmRouteRequ
       verdict: result.verdict,
       http_status: result.http_status,
       user_agent: c.req.header("user-agent"),
+      receipt_id: linkedReceiptId(result),
     });
     return c.json(withWatchHint({ ...result, route }));
   } catch (error) {
