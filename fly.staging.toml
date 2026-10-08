@@ -21,6 +21,10 @@ primary_region = "sjc"
   MPP_ENABLED = "1"
   MPP_REALM = "livecheck-mpp-staging.fly.dev"
   MPP_STORE_DB_PATH = "/data/mpp-store.sqlite"
+  # Tempo testnet smoke wallet (scripts/mpp-testnet-smoke.ts) is internal, so
+  # smoke payments land in traffic.internal, not external. Added to the
+  # built-in list (src/internal-wallets.ts), not replacing it.
+  LIVECHECK_INTERNAL_WALLETS = "0x05bcf1ab7fea4374b1a20713d07011298c62051b"
   PAID_CALL_DB_PATH = "/data/paid-calls.sqlite"
   WATCH_DB_PATH = "/data/watchers.sqlite"
   RECEIPT_DB_PATH = "/data/receipts.sqlite"
