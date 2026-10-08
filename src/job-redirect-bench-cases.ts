@@ -21,15 +21,35 @@ export type JobBenchCase = {
  * Recorded 2026-10-07.
  * Live: https://stripe.com/jobs/search?gh_jid=8172508
  *   → https://stripe.com/careers/listing/abuse-investigator/8172508?gh_jid=8172508
- * Closed: https://stripe.com/jobs/search?gh_jid=1
+ * Never existed: https://stripe.com/jobs/search?gh_jid=1
  *   → https://stripe.com/careers/search?gh_jid=1
- *   (HTTP 200 careers search, not a listing)
+ *   (HTTP 200 careers search. Kept as a test. This id was never a role.)
+ * Real closed posting, recorded 2026-10-07:
+ *   https://stripe.com/jobs/search?gh_jid=7569678
+ *   → 307 /careers/search/redirect?gh_jid=7569678
+ *   → 307 https://stripe.com/careers/search?gh_jid=7569678
+ *   → HTTP 200 title "Stripe Careers | Open Roles"
+ *   Direct listing
+ *   https://stripe.com/careers/listing/program-manager-intake-portfolio-management/7569678
+ *   is HTTP 404. Greenhouse
+ *   https://boards-api.greenhouse.io/v1/boards/stripe/jobs/7569678
+ *   is HTTP 404 and the id is absent from the open board (723 jobs).
+ *   A web index still titles that listing
+ *   "Program Manager, Intake & Portfolio Management".
  */
 export const STRIPE_LIVE_SEARCH_URL = "https://stripe.com/jobs/search?gh_jid=8172508";
 export const STRIPE_LIVE_LISTING_URL =
   "https://stripe.com/careers/listing/abuse-investigator/8172508?gh_jid=8172508";
-export const STRIPE_CLOSED_SEARCH_URL = "https://stripe.com/jobs/search?gh_jid=1";
-export const STRIPE_CLOSED_REDIRECT_URL = "https://stripe.com/careers/search?gh_jid=1";
+export const STRIPE_NEVER_EXISTED_SEARCH_URL = "https://stripe.com/jobs/search?gh_jid=1";
+export const STRIPE_NEVER_EXISTED_REDIRECT_URL = "https://stripe.com/careers/search?gh_jid=1";
+/** @deprecated gh_jid=1 never existed. Prefer STRIPE_NEVER_EXISTED_SEARCH_URL. */
+export const STRIPE_CLOSED_SEARCH_URL = STRIPE_NEVER_EXISTED_SEARCH_URL;
+/** @deprecated Prefer STRIPE_NEVER_EXISTED_REDIRECT_URL. */
+export const STRIPE_CLOSED_REDIRECT_URL = STRIPE_NEVER_EXISTED_REDIRECT_URL;
+export const STRIPE_FILLED_SEARCH_URL = "https://stripe.com/jobs/search?gh_jid=7569678";
+export const STRIPE_FILLED_REDIRECT_URL = "https://stripe.com/careers/search?gh_jid=7569678";
+export const STRIPE_FILLED_LISTING_URL =
+  "https://stripe.com/careers/listing/program-manager-intake-portfolio-management/7569678";
 
 const STRIPE_LISTING_HTML = `<!doctype html>
 <html lang="en">
@@ -77,15 +97,26 @@ export function jobRedirectBenchCases(): JobBenchCase[] {
       html: STRIPE_LISTING_HTML,
     },
     {
-      id: "stripe-closed-gh-jid-redirects-to-search",
+      id: "stripe-never-existed-gh-jid-redirects-to-search",
       bucket: "job_to_board",
       expect: "closed",
-      requestedUrl: STRIPE_CLOSED_SEARCH_URL,
-      canonicalUrl: STRIPE_CLOSED_REDIRECT_URL,
+      requestedUrl: STRIPE_NEVER_EXISTED_SEARCH_URL,
+      canonicalUrl: STRIPE_NEVER_EXISTED_REDIRECT_URL,
       redirected: true,
       httpStatus: 200,
       html: STRIPE_SEARCH_HTML,
-      redirect_to: STRIPE_CLOSED_REDIRECT_URL,
+      redirect_to: STRIPE_NEVER_EXISTED_REDIRECT_URL,
+    },
+    {
+      id: "stripe-filled-program-manager-redirects-to-search",
+      bucket: "job_to_board",
+      expect: "closed",
+      requestedUrl: STRIPE_FILLED_SEARCH_URL,
+      canonicalUrl: STRIPE_FILLED_REDIRECT_URL,
+      redirected: true,
+      httpStatus: 200,
+      html: STRIPE_SEARCH_HTML,
+      redirect_to: STRIPE_FILLED_REDIRECT_URL,
     },
     {
       id: "greenhouse-job-redirects-to-board",

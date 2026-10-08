@@ -7,15 +7,14 @@ import { sanitizePayer } from "./paid-call.js";
  *
  * `LIVECHECK_INTERNAL_WALLETS` is additive (comma-separated 0x addresses).
  * `off` drops the list.
- * A paid_calls user_agent that starts with `livecheck-internal/` is internal
- * the same way, even when the payer is not in this list.
+ * External is the payer wallet only. A `livecheck-internal/` user agent is a
+ * label on the log line and on `traffic.internal_label`. It does not drop a call.
  */
+export const INTERNAL_USER_AGENT_PREFIX = "livecheck-internal/";
 export type InternalWallet = {
   address: string;
   label: string;
 };
-
-export const INTERNAL_USER_AGENT_PREFIX = "livecheck-internal/";
 
 export const INTERNAL_WALLETS: readonly InternalWallet[] = [
   { address: "0xb78226fc84f02da1b69f5e10f595067e4f1987d1", label: "purl" },

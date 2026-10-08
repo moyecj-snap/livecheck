@@ -65,7 +65,7 @@ Ignore ethereum RPC errors on balance. Paid calls need **USDC on Base**.
 
 Stable fixture (expected `status=live`, apply form present):
 
-Our own purl runs send `-A 'livecheck-internal/purl-0.2.8'` so `/stats` counts them as internal. A customer agent should not send a user agent that starts with `livecheck-internal/`.
+Our own purl runs send `-A 'livecheck-internal/purl-0.2.8'`. That user agent is a label on the paid-call log and on `/stats` `traffic.internal_label`. It does not decide external. External is the payer wallet.
 
 ```bash
 purl -A 'livecheck-internal/purl-0.2.8' https://livecheck.fly.dev/v1/verify \

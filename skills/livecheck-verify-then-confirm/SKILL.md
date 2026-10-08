@@ -55,7 +55,7 @@ curl -sS -D - -o /tmp/livecheck-confirm.402 https://livecheck.fly.dev/v1/confirm
   -d '{"url":"https://livecheck.fly.dev/demo/thank-you?ref=ABC123","intent":"lead_submit"}'
 ```
 
-Paid Verify (`$0.01`) — expect `status=live`. `-A` marks this skill's own purl runs as internal (`livecheck-internal/`). A customer agent should not send that prefix.
+Paid Verify (`$0.01`) — expect `status=live`. `-A` labels this skill's own purl runs (`livecheck-internal/`) on the log and on `/stats`. The label does not remove the call from external. External is the payer wallet.
 
 ```bash
 purl -A 'livecheck-internal/purl-0.2.8' https://livecheck.fly.dev/v1/verify \

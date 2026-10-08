@@ -17,6 +17,8 @@ import {
   insertPaidCallRow,
   listPaidCallRows,
   paidCallEventToRow,
+  queryIncludedPayerWindows,
+  queryInternalLabelCounts,
   queryRetentionWindows,
   queryUnattributedWindows,
   recoverPaidCallPayers,
@@ -113,7 +115,7 @@ describe("paid_calls attribution", () => {
     assert.equal(queryUnattributedWindows(opened.db, NOW).l7d.verify.calls, 0);
   });
 
-  it("omits a livecheck-internal user agent from external the same way as an internal wallet", () => {
+  it("counts an outside wallet with a livecheck-internal user agent as external", () => {
     closePaidCallStore();
     const opened = initPaidCallStore(":memory:");
     assert.equal(opened.ok, true);
@@ -137,8 +139,22 @@ describe("paid_calls attribution", () => {
     const all = queryRetentionWindows(opened.db, NOW);
     assert.equal(all.l7d.verify.calls, 1);
     assert.equal(all.l7d.verify.unique_payers, 1);
-    assert.equal(external.l7d.verify.calls, 0);
+    assert.equal(external.l7d.verify.calls, 1);
+    assert.equal(external.l7d.verify.unique_payers, 1);
     assert.equal(queryUnattributedWindows(opened.db, NOW).l7d.verify.calls, 0);
+    const event = buildPaidCallEvent(
+      {
+        route: "verify",
+        host: "example.com",
+        url_hash: hashUrl("https://example.com/internal-ua"),
+        status: "live",
+        user_agent: "livecheck-internal/purl-0.2.8",
+      },
+      { payer: OUTSIDE },
+      WHEN,
+    );
+    assert.equal(event.internal_label, true);
+    assert.equal(event.user_agent, "livecheck-internal/purl-0.2.8");
   });
 
   it("recovers the payer from a settlement tx and leaves a miss unattributed", async () => {
@@ -188,6 +204,66 @@ describe("paid_calls attribution", () => {
     assert.equal(missed?.attribution, ATTRIBUTION_UNATTRIBUTED);
   });
 
+  it("puts an internal wallet in traffic.internal and leaves a labeled outside wallet external", () => {
+    closePaidCallStore();
+    const opened = initPaidCallStore(":memory:");
+    assert.equal(opened.ok, true);
+    if (!opened.ok) return;
+    const internalPayer = DEFAULT_INTERNAL_WALLETS[0];
+    assert.equal(
+      retainPaidCall(
+        buildPaidCallEvent(
+          {
+            route: "watch",
+            host: "example.com",
+            url_hash: hashUrl("https://example.com/internal-wallet"),
+            intent: "status_change",
+            verdict: "created",
+            user_agent: "livecheck-internal/purl-0.2.8",
+          },
+          { payer: internalPayer, tx: `0x${"22".repeat(32)}` },
+          WHEN,
+        ),
+      ),
+      true,
+    );
+    assert.equal(
+      retainPaidCall(
+        buildPaidCallEvent(
+          {
+            route: "check",
+            host: "example.com",
+            url_hash: hashUrl("https://example.com/outside-label"),
+            intent: "status_change",
+            verdict: "observed",
+            user_agent: "livecheck-internal/purl-0.2.8",
+          },
+          { payer: OUTSIDE, tx: `0x${"33".repeat(32)}` },
+          WHEN,
+        ),
+      ),
+      true,
+    );
+    const doc = buildStatsDocument(NOW);
+    assert.equal(doc.traffic.internal.calls.l7d, 1);
+    assert.equal(doc.traffic.internal.calls.l30d, 1);
+    assert.equal(doc.traffic.internal.revenue.l7d_usd, 2.5);
+    assert.equal(doc.traffic.internal.revenue.l30d_usd, 2.5);
+    assert.equal(doc.traffic.external.payers.l7d.watch.calls, 0);
+    assert.equal(doc.traffic.external.payers.l7d.check.calls, 1);
+    assert.equal(doc.traffic.external.payers.l7d.check.unique_payers, 1);
+    assert.equal(doc.traffic.unattributed.calls.l7d, 0);
+    assert.equal(doc.traffic.internal_label.calls.l7d, 2);
+    assert.equal(doc.traffic.revenue.all.l7d_usd, 2.52);
+    assert.equal(doc.traffic.revenue.external.l7d_usd, 0.02);
+    const html = statsHtml(doc);
+    assert.match(html, /traffic\.internal|internal wallet list/i);
+    assert.match(html, /\$2\.50/);
+    assert.match(html, /label only/i);
+    assert.equal(queryIncludedPayerWindows(opened.db, NOW, [internalPayer]).l7d.watch.calls, 1);
+    assert.equal(queryInternalLabelCounts(opened.db, NOW).l7d, 2);
+  });
+
   it("publishes unattributed calls and revenue on /stats and keeps them out of external", () => {
     closePaidCallStore();
     initPaidCallStore(":memory:");
@@ -233,6 +309,9 @@ describe("paid_calls attribution", () => {
     assert.equal(doc.traffic.unattributed.calls.l30d, 1);
     assert.equal(doc.traffic.unattributed.revenue.l7d_usd, 2.5);
     assert.equal(doc.traffic.unattributed.revenue.l30d_usd, 2.5);
+    assert.equal(doc.traffic.internal.available, true);
+    assert.equal(doc.traffic.internal.calls.l7d, 0);
+    assert.equal(doc.traffic.internal.revenue.l7d_usd, 0);
     assert.equal(doc.traffic.revenue.all.l7d_usd, 2.51);
     assert.equal(doc.traffic.revenue.external.l7d_usd, 0.01);
     const html = statsHtml(doc);

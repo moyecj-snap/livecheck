@@ -687,8 +687,8 @@ export function listPaidCallRows(db: DatabaseSync, sinceIso?: string): PaidCallR
 
 export type RetentionQueryOptions = {
   /**
-   * Known payer only. Omits blank payers, `livecheck-internal/` user agents,
-   * listed wallets, and listed url hashes.
+   * Known payer only. Omits blank payers, listed wallets, and listed url hashes.
+   * User-Agent is not part of this decision.
    */
   external?: boolean;
 };
@@ -715,6 +715,33 @@ export function queryUnattributedWindows(db: DatabaseSync, now = new Date()): Re
   };
 }
 
+/** Rows whose payer is in `payers`. Used for traffic.internal. */
+export function queryIncludedPayerWindows(
+  db: DatabaseSync,
+  now = new Date(),
+  payers: readonly string[] = [],
+): RetentionWindows {
+  return {
+    l7d: queryWindow(db, isoCutoff(now, 7), payers, [], "included"),
+    l30d: queryWindow(db, isoCutoff(now, 30), payers, [], "included"),
+  };
+}
+
+/** Calls whose user_agent starts with livecheck-internal/. A label count, not an audience. */
+export function queryInternalLabelCounts(db: DatabaseSync, now = new Date()): { l7d: number; l30d: number } {
+  const countSince = (sinceIso: string) => {
+    const row = db
+      .prepare(
+        `SELECT COUNT(*) AS calls
+         FROM paid_calls
+         WHERE ts >= ? AND lower(user_agent) LIKE ?`,
+      )
+      .get(sinceIso, `${INTERNAL_USER_AGENT_PREFIX}%`) as { calls: number | bigint };
+    return Number(row.calls);
+  };
+  return { l7d: countSince(isoCutoff(now, 7)), l30d: countSince(isoCutoff(now, 30)) };
+}
+
 const VERIFY_FAMILY_SQL = `('verify', 'verify/job', 'verify/listing')`;
 const CONFIRM_FAMILY_SQL = `('confirm', 'confirm/order')`;
 const CHECK_FAMILY_SQL = `('check')`;
@@ -724,13 +751,14 @@ function normalizeSha256List(hashes: readonly string[]): string[] {
   return [...new Set(hashes.map((hash) => hash.trim().toLowerCase()).filter((hash) => isSha256Hex(hash)))];
 }
 
-type AudienceMode = "all" | "external" | "unattributed";
+type AudienceMode = "all" | "external" | "unattributed" | "included";
 
 /**
  * `all` keeps every row, then drops listed wallets only when a payer is set.
- * `external` requires a known payer and drops internal user-agents, listed
- * wallets, and docs-example hashes. A blank payer is never external.
+ * `external` requires a known payer and drops listed wallets and docs-example
+ * hashes. A blank payer is never external. User-Agent is not a filter.
  * `unattributed` is blank payer only.
+ * `included` is rows whose payer is in the list (traffic.internal).
  */
 function audienceFilter(
   excludePayers: readonly string[],
@@ -743,13 +771,20 @@ function audienceFilter(
   const params: string[] = [];
   if (mode === "unattributed") {
     clauses.push(`(payer IS NULL OR trim(payer) = '')`);
+    return { sql: ` AND ${clauses.join(" AND ")}`, params };
+  }
+  if (mode === "included") {
+    if (payers.length === 0) clauses.push("0");
+    else {
+      clauses.push(`lower(payer) IN (${payers.map(() => "?").join(", ")})`);
+      params.push(...payers);
+    }
+    return { sql: ` AND ${clauses.join(" AND ")}`, params };
   }
   if (mode === "external") {
     clauses.push(`payer IS NOT NULL AND trim(payer) != ''`);
-    clauses.push(`(user_agent IS NULL OR lower(user_agent) NOT LIKE ?)`);
-    params.push(`${INTERNAL_USER_AGENT_PREFIX}%`);
   }
-  if (mode !== "unattributed" && payers.length > 0) {
+  if (payers.length > 0) {
     if (mode === "external") {
       clauses.push(`lower(payer) NOT IN (${payers.map(() => "?").join(", ")})`);
     } else {
@@ -757,7 +792,7 @@ function audienceFilter(
     }
     params.push(...payers);
   }
-  if (mode !== "unattributed" && hashes.length > 0) {
+  if (hashes.length > 0) {
     clauses.push(`lower(url_sha256) NOT IN (${hashes.map(() => "?").join(", ")})`);
     params.push(...hashes);
   }
@@ -837,6 +872,19 @@ export function queryRetentionWindowsFromStore(
 export function queryUnattributedWindowsFromStore(now = new Date()): RetentionWindows | undefined {
   if (!state?.ok) return undefined;
   return queryUnattributedWindows(state.db, now);
+}
+
+export function queryIncludedPayerWindowsFromStore(
+  now = new Date(),
+  payers: readonly string[] = [],
+): RetentionWindows | undefined {
+  if (!state?.ok) return undefined;
+  return queryIncludedPayerWindows(state.db, now, payers);
+}
+
+export function queryInternalLabelCountsFromStore(now = new Date()): { l7d: number; l30d: number } | undefined {
+  if (!state?.ok) return undefined;
+  return queryInternalLabelCounts(state.db, now);
 }
 
 /**
