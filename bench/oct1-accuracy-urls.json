@@ -1,0 +1,155 @@
+{
+  "created_pt": "2026-10-01 11:04 PT",
+  "endpoint": "https://livecheck.fly.dev/v1/verify/job",
+  "fly_release": 74,
+  "paid_cap": 20,
+  "price_usd_each": 0.01,
+  "bar": {
+    "closed_live_fp": 0,
+    "unknown_overall_max": 0.2,
+    "challenge_page_unknowns_report_separate": true,
+    "balance": "half open / half closed; 4 each Ashby, Workday, Lever, Greenhouse, careers"
+  },
+  "items": [
+    {
+      "id": "closed-greenhouse-1",
+      "ats": "greenhouse",
+      "expected": "closed",
+      "url": "https://boards.greenhouse.io/cloudflare/jobs/1",
+      "ground_truth": "Free precheck HTTP 200 redirects to cloudflare.com/careers; boards-api Discord/Airbnb-style nonexistent id pattern; prior plate closed correct. Confirmed redirect-to-board / job gone."
+    },
+    {
+      "id": "closed-greenhouse-2",
+      "ats": "greenhouse",
+      "expected": "closed",
+      "url": "https://job-boards.greenhouse.io/airbnb/jobs/1",
+      "ground_truth": "Free precheck HTTP 200 \u2192 careers.airbnb.com/positions/ (Positions Archive). Greenhouse boards-api airbnb: job id 1 NOT_LISTED among 157 jobs."
+    },
+    {
+      "id": "live-greenhouse-1",
+      "ats": "greenhouse",
+      "expected": "live",
+      "url": "https://job-boards.greenhouse.io/discord/jobs/8806482002",
+      "ground_truth": "boards-api.greenhouse.io/v1/boards/discord/jobs lists id 8806482002 Commercial Policy Lead; HTML has apply for this."
+    },
+    {
+      "id": "live-greenhouse-2",
+      "ats": "greenhouse",
+      "expected": "live",
+      "url": "https://job-boards.greenhouse.io/discord/jobs/8840756002",
+      "ground_truth": "boards-api lists id 8840756002 Data Scientist - Client Platform; HTML apply for this present."
+    },
+    {
+      "id": "closed-lever-1",
+      "ats": "lever",
+      "expected": "closed",
+      "url": "https://jobs.lever.co/palantir/00000000-0000-0000-0000-000000000000",
+      "ground_truth": "HTTP 404 Not found; Lever API palantir postings: UUID NOT_LISTED."
+    },
+    {
+      "id": "closed-lever-2",
+      "ats": "lever",
+      "expected": "closed",
+      "url": "https://jobs.lever.co/palantir/ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "ground_truth": "HTTP 404 Not found; Lever API: ffffffff UUID NOT_LISTED."
+    },
+    {
+      "id": "live-lever-1",
+      "ats": "lever",
+      "expected": "live",
+      "url": "https://jobs.lever.co/palantir/16a1b500-13fe-4c22-ad89-372093b462da",
+      "ground_truth": "Lever API lists Deal Team - Business Affairs; HTML 200 large body (g-recaptcha present)."
+    },
+    {
+      "id": "live-lever-2",
+      "ats": "lever",
+      "expected": "live",
+      "url": "https://jobs.lever.co/palantir/10dfc8bc-99ad-4ca2-ab76-853cb90a92c2",
+      "ground_truth": "Lever API lists Backend Software Engineer - Application Development; HTML 200."
+    },
+    {
+      "id": "closed-workday-1",
+      "ats": "workday",
+      "expected": "closed",
+      "url": "https://adobe.wd5.myworkdayjobs.com/en-US/external_experienced/job/Nowhere/Does-Not-Exist_R000000",
+      "ground_truth": "Adobe CXS searchText R000000 total=0; HTML empty shell ~6.5KB no JobPosting."
+    },
+    {
+      "id": "closed-workday-2",
+      "ats": "workday",
+      "expected": "closed",
+      "url": "https://adobe.wd5.myworkdayjobs.com/en-US/external_experienced/job/Faketown/Fake-Role_R99999999",
+      "ground_truth": "Adobe CXS searchText R99999999 total=0; HTML empty shell ~6.5KB no JobPosting."
+    },
+    {
+      "id": "live-workday-1",
+      "ats": "workday",
+      "expected": "live",
+      "url": "https://adobe.wd5.myworkdayjobs.com/en-US/external_experienced/job/San-Jose/Sr-Technology-Compliance-Product-Owner_R172124",
+      "ground_truth": "Adobe CXS search R172124 total=1 Sr Technology Compliance Product Owner; HTML JobPosting present."
+    },
+    {
+      "id": "live-workday-2",
+      "ats": "workday",
+      "expected": "live",
+      "url": "https://adobe.wd5.myworkdayjobs.com/en-US/external_experienced/job/San-Jose/Staff-Security-Data-Engineer_R171875-1",
+      "ground_truth": "Adobe CXS search R171875 total=1 Staff Security Data Engineer; HTML JobPosting present."
+    },
+    {
+      "id": "closed-ashby-1",
+      "ats": "ashby",
+      "expected": "closed",
+      "url": "https://jobs.ashbyhq.com/linear/deadbeef-dead-beef-dead-beefdeadbeef",
+      "ground_truth": "Ashby board API linear: deadbeef NOT_LISTED; HTML title Jobs only, no JobPosting (~9KB shell)."
+    },
+    {
+      "id": "closed-ashby-2",
+      "ats": "ashby",
+      "expected": "closed",
+      "url": "https://jobs.ashbyhq.com/notion/deadbeef-dead-beef-dead-beefdeadbeef",
+      "ground_truth": "Ashby board API notion: deadbeef NOT_LISTED among 133 jobs; HTML title Jobs only, no JobPosting."
+    },
+    {
+      "id": "live-ashby-1",
+      "ats": "ashby",
+      "expected": "live",
+      "url": "https://jobs.ashbyhq.com/linear/d3bc1ced-3ce4-4086-a050-555055dbb1ff",
+      "ground_truth": "Ashby API linear LISTED Senior / Staff Fullstack Engineer Europe; HTML JobPosting+directApply."
+    },
+    {
+      "id": "live-ashby-2",
+      "ats": "ashby",
+      "expected": "live",
+      "url": "https://jobs.ashbyhq.com/linear/cd5ae036-0223-427a-b038-ba16ef9dcb32",
+      "ground_truth": "Ashby API linear LISTED Senior / Staff Fullstack Engineer North America; HTML JobPosting+directApply."
+    },
+    {
+      "id": "closed-careers-1",
+      "ats": "careers",
+      "expected": "closed",
+      "url": "https://www.teamworkonline.com/baseball-jobs/colorado-rockies/colorado-rockies-jobs/staff-accountant-2170000",
+      "ground_truth": "Free HTML shows 'This job is closed to new applications.' + JobPosting; Cloudflare challenge-platform markers present (challenge_page testable). Prior plate: Livecheck returned challenge_page unknown."
+    },
+    {
+      "id": "closed-careers-2",
+      "ats": "careers",
+      "expected": "closed",
+      "url": "https://careers-fhp.icims.com/jobs/18915/registered-nurse-%28rn%29---temporary-assignment-september-2026/job",
+      "ground_truth": "Free precheck HTTP 410 Gone; no JobPosting; 'sorry' copy \u2014 clear closed/gone."
+    },
+    {
+      "id": "live-careers-1",
+      "ats": "careers",
+      "expected": "live",
+      "url": "https://careers.ethena.fi/jobs/7982323-enterprise-fintech-partnership-manager",
+      "ground_truth": "HTTP 200 JobPosting + apply for this; title Enterprise/Fintech Partnership Manager - Ethena Labs."
+    },
+    {
+      "id": "live-careers-2",
+      "ats": "careers",
+      "expected": "live",
+      "url": "https://culinaryagents.com/jobs/677183-Dining-Room-Leadership-Opportunities-for-Upcoming-Projects",
+      "ground_truth": "HTTP 200 JobPosting + apply now + directApply; Thomas Keller / Culinary Agents."
+    }
+  ]
+}

@@ -19,6 +19,7 @@
     "bench:lead-submit": "tsx scripts/lead-submit-bench.ts",
     "attribute:payers": "tsx scripts/attribute-payers.ts",
     "bench:job-redirect": "tsx scripts/job-redirect-bench.ts",
+    "bench:oct1-accuracy": "tsx scripts/oct1-accuracy.ts",
     "bench:listing-published": "tsx scripts/listing-published-bench.ts",
     "bench:order-placed": "tsx scripts/order-placed-bench.ts",
     "bench:sentinel": "tsx scripts/sentinel-bench.ts",
