@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { newCheckId } from "../src/confirm-id.js";
+import { isReceiptId, newCheckId } from "../src/confirm-id.js";
 import { buildPaidCallEvent, hashUrl } from "../src/paid-call.js";
 import {
   backfillPaidCallsFromReceipts,
@@ -14,12 +15,14 @@ import {
   insertPaidCallRow,
   listPaidCallRows,
   listPaidCallRowsFromStore,
+  migratePaidCallStore,
   openPaidCallDb,
   queryRetentionWindows,
   queryUnattributedWindows,
   removeDuplicateReceiptBackfillRows,
   retainPaidCall,
 } from "../src/paid-call-store.js";
+import { paidCallRevenueUsd } from "../src/stats.js";
 import { ATTRIBUTION_UNATTRIBUTED, NO_TX_ATTRIBUTION_NOTE } from "../src/settlement-payer.js";
 import {
   RECEIPT_RECONSTRUCTION_IMPOSSIBLE,
@@ -119,10 +122,11 @@ describe("receipt backfill", () => {
     const receiptPath = join(dir, "receipts.sqlite");
     openPaidCallDb(paidPath).close();
     const url_hash = hashUrl("https://boards.greenhouse.io/example/jobs/1842");
+    const receiptId = newCheckId(Date.parse("2026-09-10T18:00:00Z"));
     const receipts = initReceiptStore(receiptPath);
     assert.equal(receipts.ok, true);
     rememberConfirmReceipt({
-      id: "chk_01BACKFILLCHECK0000000001",
+      id: receiptId,
       intent: "check",
       verdict: "observed",
       confidence: 0.5,
@@ -154,6 +158,7 @@ describe("receipt backfill", () => {
     assert.equal(rows[0].attribution, ATTRIBUTION_UNATTRIBUTED);
     assert.equal(rows[0].attribution_note, NO_TX_ATTRIBUTION_NOTE);
     assert.equal(rows[0].tx, undefined);
+    assert.equal(rows[0].receipt_id, receiptId);
     const nowWindow = new Date("2026-09-11T19:00:00.000Z");
     const external = queryRetentionWindows(db, nowWindow, [], [], { external: true });
     const unattributed = queryUnattributedWindows(db, nowWindow);
@@ -429,6 +434,189 @@ describe("receipt backfill", () => {
     assert.equal(retainPaidCall(event), true);
     assert.equal(listPaidCallRowsFromStore()[0]?.receipt_id, receiptId);
     closePaidCallStore();
+  });
+
+  it("ignores a direct insert that reuses an existing tx and creates the unique indexes", () => {
+    const db = openPaidCallDb(":memory:");
+    const tx = `0x${"11".repeat(32)}`;
+    const payer = "0x1111111111111111111111111111111111111111";
+    const receiptId = newCheckId(Date.parse("2026-10-07T23:33:05Z"));
+    assert.equal(
+      insertPaidCallRow(db, {
+        ts: "2026-10-07T23:33:05Z",
+        route: "check",
+        host: "example.com",
+        url_sha256: hashUrl("https://example.com/first"),
+        payer,
+        tx,
+        receipt_id: receiptId,
+        verdict: "observed",
+      }),
+      true,
+    );
+    assert.equal(
+      insertPaidCallRow(db, {
+        ts: "2026-10-07T23:40:00Z",
+        route: "check",
+        host: "example.com",
+        url_sha256: hashUrl("https://example.com/second"),
+        payer,
+        tx,
+        verdict: "observed",
+      }),
+      false,
+    );
+    assert.equal(
+      insertPaidCallRow(db, {
+        ts: "2026-10-07T23:50:00Z",
+        route: "watch",
+        host: "example.com",
+        url_sha256: hashUrl("https://example.com/third"),
+        payer,
+        tx: `0x${"22".repeat(32)}`,
+        receipt_id: receiptId,
+        verdict: "created",
+      }),
+      false,
+    );
+    assert.equal(listPaidCallRows(db).length, 1);
+    const indexes = db
+      .prepare(`SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'paid_calls'`)
+      .all() as Array<{ name: string; sql: string }>;
+    const byName = new Map(indexes.map((row) => [row.name, row.sql]));
+    assert.match(byName.get("idx_paid_calls_tx") ?? "", /UNIQUE INDEX idx_paid_calls_tx ON paid_calls\(tx\) WHERE tx IS NOT NULL/);
+    assert.match(
+      byName.get("idx_paid_calls_receipt_id") ?? "",
+      /UNIQUE INDEX idx_paid_calls_receipt_id ON paid_calls\(receipt_id\) WHERE receipt_id IS NOT NULL/,
+    );
+    db.close();
+  });
+
+  it("boots twice on a prod-shaped rows 100-107 snapshot and removes only 107", () => {
+    const dir = mkdtempSync(join(tmpdir(), "receipt-backfill-prod-"));
+    const paidPath = join(dir, "paid-calls.sqlite");
+    const receiptPath = join(dir, "receipts.sqlite");
+    const now = new Date("2026-10-08T12:00:00Z");
+    const purlUrl = hashUrl("https://example.com/purl-check");
+    const urls = {
+      watchSep10: hashUrl("https://example.com/watch-2026-09-10"),
+      checkSep10: hashUrl("https://example.com/check-2026-09-10"),
+      watchSep24: hashUrl("https://example.com/watch-2026-09-24"),
+      verifyA: hashUrl("https://example.com/verify-a"),
+      confirmA: hashUrl("https://example.com/confirm-a"),
+      verifyB: hashUrl("https://example.com/verify-b"),
+    };
+    const payer = "0x2222222222222222222222222222222222222222";
+    const tx = (n: string) => `0x${n.repeat(32)}`;
+    const paid = new DatabaseSync(paidPath);
+    paid.exec(`
+      CREATE TABLE paid_calls (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL,
+        route TEXT NOT NULL CHECK (route IN ('verify', 'verify/job', 'verify/listing', 'confirm', 'confirm/order', 'check', 'watch', 'watch/renew')),
+        payer TEXT,
+        tx TEXT,
+        payment_intent TEXT,
+        host TEXT NOT NULL,
+        url_sha256 TEXT NOT NULL,
+        intent TEXT,
+        verdict TEXT,
+        http_status INTEGER,
+        user_agent TEXT,
+        status TEXT,
+        attribution TEXT,
+        attribution_note TEXT
+      );
+    `);
+    const insert = paid.prepare(
+      `INSERT INTO paid_calls (id, ts, route, payer, tx, host, url_sha256, verdict)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insert.run(100, "2026-09-10T18:00:00Z", "watch", null, null, "", urls.watchSep10, "created");
+    insert.run(101, "2026-09-10T18:05:00Z", "check", null, null, "", urls.checkSep10, "observed");
+    insert.run(102, "2026-09-24T18:00:00Z", "watch", null, null, "", urls.watchSep24, "created");
+    insert.run(103, "2026-10-01T18:00:00Z", "verify", payer, tx("a1"), "example.com", urls.verifyA, null);
+    insert.run(104, "2026-10-02T18:00:00Z", "confirm", payer, tx("b2"), "example.com", urls.confirmA, "confirmed");
+    insert.run(105, "2026-10-07T23:33:05Z", "check", payer, tx("c3"), "example.com", purlUrl, "observed");
+    insert.run(106, "2026-10-07T22:00:00Z", "verify", payer, tx("d4"), "example.com", urls.verifyB, null);
+    insert.run(107, "2026-10-07T23:33:03Z", "check", null, null, "", purlUrl, "observed");
+
+    const receipts = initReceiptStore(receiptPath);
+    assert.equal(receipts.ok, true);
+    rememberConfirmReceipt({
+      id: "chk_01M4CBD86KK8N4R8ATVGM5ZBX7",
+      intent: "check",
+      verdict: "observed",
+      confidence: 0.5,
+      evidence_level: 0,
+      canonical_json: "{}",
+      payload_hash: "ab".repeat(32),
+      signature: null,
+      signer: null,
+      observed_at: "2026-10-07T23:33:03Z",
+      url_hash: purlUrl,
+      claim_hash: "ef".repeat(32),
+      created_at: "2026-10-07T23:33:03Z",
+    });
+    const receiptDb = receipts.ok ? receipts.db : undefined;
+    assert.ok(receiptDb);
+
+    const lines: string[] = [];
+    const original = console.log;
+    console.log = (message?: unknown) => {
+      lines.push(String(message));
+    };
+    try {
+      migratePaidCallStore(paid);
+    } finally {
+      console.log = original;
+    }
+    assert.deepEqual(
+      lines.filter((line) => line.includes("removed id=")),
+      [`paid_call duplicate cleanup: removed id=107 route=check ts=2026-10-07T23:33:03Z url_sha256=${purlUrl}`],
+    );
+    const indexes = paid
+      .prepare(`SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'paid_calls'`)
+      .all() as Array<{ name: string; sql: string }>;
+    const byName = new Map(indexes.map((row) => [row.name, row.sql]));
+    assert.match(byName.get("idx_paid_calls_tx") ?? "", /WHERE tx IS NOT NULL/);
+    assert.match(byName.get("idx_paid_calls_receipt_id") ?? "", /WHERE receipt_id IS NOT NULL/);
+
+    assert.equal(isReceiptId("chk_01M4CBD86KK8N4R8ATVGM5ZBX7"), true);
+    const copied = backfillPaidCallsFromReceipts(paid, receiptDb);
+    assert.equal(copied.inserted, 0);
+    assert.equal(copied.skipped, 1);
+    const count = () => Number((paid.prepare(`SELECT COUNT(*) AS n FROM paid_calls`).get() as { n: number }).n);
+    const ids = () =>
+      (paid.prepare(`SELECT id FROM paid_calls ORDER BY id`).all() as Array<{ id: number }>).map((row) => row.id);
+    const revenue = () => paidCallRevenueUsd(queryRetentionWindows(paid, now).l30d.routes);
+    const afterFirst = { count: count(), ids: ids(), revenue: revenue() };
+    assert.deepEqual(afterFirst.ids, [100, 101, 102, 103, 104, 105, 106]);
+    assert.equal(afterFirst.revenue, 5.16);
+    const kept = paid.prepare(`SELECT payer, tx FROM paid_calls WHERE id = 105`).get() as { payer: string; tx: string };
+    assert.equal(kept.payer, payer);
+    assert.equal(kept.tx, tx("c3"));
+
+    const secondLines: string[] = [];
+    console.log = (message?: unknown) => {
+      secondLines.push(String(message));
+    };
+    try {
+      migratePaidCallStore(paid);
+      assert.equal(removeDuplicateReceiptBackfillRows(paid).removed.length, 0);
+    } finally {
+      console.log = original;
+    }
+    assert.equal(backfillPaidCallsFromReceipts(paid, receiptDb).inserted, 0);
+    assert.equal(
+      secondLines.some((line) => line.includes("removed id=")),
+      false,
+    );
+    assert.equal(count(), afterFirst.count);
+    assert.deepEqual(ids(), afterFirst.ids);
+    assert.equal(revenue(), afterFirst.revenue);
+    paid.close();
+    closeReceiptStore();
   });
 
   it("CLI --json reports reconstruction.possible=false", async () => {
