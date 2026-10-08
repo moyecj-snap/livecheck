@@ -19,6 +19,9 @@ import {
 import { buildStatsDocument, statsHtml } from "../src/stats.js";
 import { buildProtocolTraffic, protocolTableHtml } from "../src/stats-protocols.js";
 import { decodeMppValue, encodeMppValue, openMppStore } from "../src/mpp-store.js";
+import { openMppResultCache } from "../src/mpp-idempotency.js";
+import { createApp } from "../src/app.js";
+import { queryRefundCandidateDaily } from "../src/paid-call-store.js";
 
 const INTERNAL = DEFAULT_INTERNAL_WALLETS[0]!;
 const OUTSIDE = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -233,5 +236,84 @@ describe("mppx store (SQLite)", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("refund candidates on the private stats view only", () => {
+  afterEach(() => closePaidCallStore());
+
+  it("counts per UTC day, zero-filled, by reason; no ids, payers or routes", () => {
+    const db = openStore();
+    const base = { protocol: "mpp_tempo" as const, route: "verify" as const, payer: OUTSIDE };
+    insertRefundCandidate(db.db, { ...base, ts: "2026-10-08T01:00:00Z", payment_id: `0x${"01".repeat(32)}`, reason: "handler_status_502" });
+    insertRefundCandidate(db.db, { ...base, ts: "2026-10-08T23:59:00Z", payment_id: `0x${"02".repeat(32)}`, reason: "charge_outcome_unknown" });
+    insertRefundCandidate(db.db, { ...base, ts: "2026-10-06T12:00:00Z", reason: "charge_outcome_unknown" });
+    insertRefundCandidate(db.db, { ...base, ts: "2026-08-01T12:00:00Z", reason: "handler_threw" }); // outside 30 days
+    const daily = queryRefundCandidateDaily(db.db, new Date("2026-10-08T23:59:59Z"));
+    assert.equal(daily.days.length, 30);
+    assert.equal(daily.days.at(-1)?.day, "2026-10-08");
+    assert.equal(daily.days.at(-1)?.count, 2);
+    assert.equal(daily.days.at(-2)?.count, 0);
+    assert.equal(daily.days.at(-3)?.count, 1);
+    assert.equal(daily.total, 3);
+    assert.deepEqual(daily.by_reason, { handler_status_502: 1, charge_outcome_unknown: 2 });
+    assert.equal(JSON.stringify(daily).includes(OUTSIDE), false);
+  });
+
+  it("/job/stats (token) shows the daily count; public /stats never mentions refunds", async () => {
+    const db = openStore();
+    insertRefundCandidate(db.db, {
+      ts: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+      protocol: "mpp_tempo",
+      payment_id: `0x${"03".repeat(32)}`,
+      route: "verify/job",
+      reason: "handler_status_502",
+    });
+    const prev = process.env.FREE_PAGE_STATS_TOKEN;
+    const token = "private-stats-token-for-tests";
+    process.env.FREE_PAGE_STATS_TOKEN = token;
+    try {
+      const app = createApp();
+      const priv = await app.request("/job/stats", { headers: { "x-livecheck-stats-token": token } });
+      assert.equal(priv.status, 200);
+      const doc = (await priv.json()) as { mpp_refund_candidates: { total: number; days: Array<{ count: number }> } };
+      assert.equal(doc.mpp_refund_candidates.total, 1);
+      assert.equal(doc.mpp_refund_candidates.days.at(-1)?.count, 1);
+      assert.equal((await app.request("/job/stats")).status, 404, "no token: plain 404");
+      for (const path of ["/stats", "/stats?format=json"]) {
+        const text = await (await app.request(path)).text();
+        assert.equal(/refund/i.test(text), false, path);
+      }
+    } finally {
+      if (prev === undefined) delete process.env.FREE_PAGE_STATS_TOKEN;
+      else process.env.FREE_PAGE_STATS_TOKEN = prev;
+    }
+  });
+});
+
+describe("MPP retry rows", () => {
+  it("claim is first-wins per credential and per tx; release, unconfirmed retry, and TTL prune", async () => {
+    const cache = openMppResultCache(":memory:", 1);
+    const base = { route: "verify", request_sha256: "r1", ts: "2026-10-08T18:00:00Z" };
+    assert.equal(cache.claim({ ...base, credential_sha256: "c1", tx: "0xaa" }).kind, "claimed");
+    const dup = cache.claim({ ...base, credential_sha256: "c1" });
+    assert.equal(dup.kind, "existing");
+    const byTx = cache.claim({ ...base, credential_sha256: "c2", tx: "0xaa" });
+    assert.equal(byTx.kind, "existing");
+    cache.release("c1");
+    assert.equal(cache.claim({ ...base, credential_sha256: "c1" }).kind, "claimed");
+    const response = { status: 503, headers: { "content-type": "application/json" }, body: "{}" };
+    cache.complete("c1", { state: "unconfirmed", response });
+    assert.equal(cache.claim({ ...base, credential_sha256: "c1" }).kind, "retry_unconfirmed");
+    assert.equal(cache.get("c1")?.state, "pending");
+    cache.restoreUnconfirmed("c1");
+    assert.equal(cache.claim({ ...base, credential_sha256: "c1", request_sha256: "other" }).kind, "existing");
+    cache.complete("c1", { state: "done", tx: "0xbb", response: { ...response, status: 200 } });
+    assert.equal(cache.get("c1")?.tx, "0xbb");
+    await new Promise((r) => setTimeout(r, 5));
+    // ttl 1 ms: the next claim pass prunes finished rows (every 100th claim; force by claiming 100 times).
+    for (let i = 0; i < 100; i++) cache.claim({ ...base, credential_sha256: `x${i}` });
+    assert.equal(cache.get("c1"), undefined);
+    cache.close();
   });
 });
