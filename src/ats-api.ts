@@ -50,6 +50,8 @@ export type AtsLookup =
       outcome: "listed";
       httpStatus: number;
       title?: string;
+      /** Employer display name when the board API gives one (Greenhouse company_name). */
+      company?: string;
       canonicalUrl?: string;
       /** ISO-8601 from the board payload (Greenhouse first_published / updated_at, etc.). */
       postedAt?: string;
@@ -232,6 +234,7 @@ function looksLikeBotChallenge(text: string): boolean {
 function listed(input: {
   httpStatus: number;
   title?: string;
+  company?: string;
   canonicalUrl?: string;
   postedAt?: string;
 }): AtsLookup {
@@ -239,6 +242,7 @@ function listed(input: {
     outcome: "listed",
     httpStatus: input.httpStatus,
     ...(input.title ? { title: input.title } : {}),
+    ...(input.company ? { company: input.company } : {}),
     ...(input.canonicalUrl ? { canonicalUrl: input.canonicalUrl } : {}),
     ...(input.postedAt ? { postedAt: input.postedAt } : {}),
   };
@@ -304,6 +308,7 @@ function interpretGreenhouse(status: number, text: string, jobId: string): AtsLo
   return listed({
     httpStatus: status,
     title: typeof row.title === "string" ? row.title : undefined,
+    company: typeof row.company_name === "string" ? row.company_name : undefined,
     canonicalUrl: httpUrl(typeof row.absolute_url === "string" ? row.absolute_url : undefined),
     postedAt: firstPostedAt([row.first_published, row.published_at, row.updated_at]),
   });

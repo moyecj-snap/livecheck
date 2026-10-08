@@ -1,4 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Context, Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import { ATS_API_LISTED, ATS_API_MISSING, parseAtsJobUrl } from "./ats-api.js";
@@ -11,6 +14,9 @@ import {
   readFreePageStats,
   type FreePageSettings,
 } from "./free-job-store.js";
+import { EXAMPLE_TTL_MS, ExampleCache, FREE_JOB_EXAMPLES, isExampleKey, type ExampleKey } from "./free-job-examples.js";
+import { lookupRole, roleLine, type RoleInfo } from "./free-job-role.js";
+import { publicOrigin } from "./public-url.js";
 import type { VerifyVerdict } from "./types.js";
 import { VerifyError, parseTargetUrl, verifyUrl } from "./verify.js";
 
@@ -38,6 +44,17 @@ export const FREE_JOB_PATH = "/job";
 export const FREE_JOB_COOKIE = "lc_free";
 export const DOCS_URL = "/llms.txt";
 export const SKILL_URL = "https://github.com/moyecj-snap/livecheck-skills";
+/** Same contact as the OpenAPI document (`info.contact.email` in src/discovery.ts). */
+export const CONTACT_EMAIL = "moyecj@gmail.com";
+export const OG_IMAGE_PATH = `${FREE_JOB_PATH}/og.png`;
+export const OG_TITLE = "Is this job still open?";
+/** Product Hunt description (LAUNCH-KIT-2026-10-27.md §2). */
+export const OG_DESCRIPTION =
+  "Paste a job link and Livecheck tells you if it's still open, closed, or can't tell, read from the posting and the hiring platform right now. Free for people. Building an AI agent? Same check by API for $0.01, no account or API key.";
+export const HOW_IT_WORKS = "We read the posting and the hiring platform's own data at the moment you ask.";
+
+/** 1200×630 share image (gallery image #1 from the launch kit). Read once at boot. */
+export const OG_IMAGE_PNG: Buffer = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../public/og-job.png"));
 
 export type FreeJobConfig = {
   perVisitorDaily: number;
@@ -183,12 +200,39 @@ let limiter = new FreeJobLimiter();
 let policy: FetchPolicy = DEFAULT_FETCH_POLICY;
 let totalTimeoutMs = FREE_JOB_TOTAL_TIMEOUT_MS;
 let clock: () => Date = () => new Date();
+let exampleUrls: Record<ExampleKey, string> = { open: FREE_JOB_EXAMPLES.open.url, filled: FREE_JOB_EXAMPLES.filled.url };
+let roleLookup: typeof lookupRole = lookupRole;
+let examples = newExampleCache();
+
+function newExampleCache(): ExampleCache<FreeJobView> {
+  return new ExampleCache<FreeJobView>(
+    async (key) => {
+      const { view, ok } = await runCheck(exampleUrls[key], {});
+      return { value: { ...view, example: key } as FreeJobView, ok };
+    },
+    () => clock().getTime(),
+  );
+}
 
 export function resetFreeJobForTests(): void {
   limiter = new FreeJobLimiter();
   policy = DEFAULT_FETCH_POLICY;
   totalTimeoutMs = FREE_JOB_TOTAL_TIMEOUT_MS;
   clock = () => new Date();
+  exampleUrls = { open: FREE_JOB_EXAMPLES.open.url, filled: FREE_JOB_EXAMPLES.filled.url };
+  roleLookup = lookupRole;
+  examples = newExampleCache();
+}
+/** Tests point the two examples at a local server. Production URLs are fixed. */
+export function setFreeJobExampleUrlsForTests(urls: Record<ExampleKey, string>): void {
+  exampleUrls = { ...urls };
+  examples = newExampleCache();
+}
+export function setFreeJobRoleLookupForTests(fn: typeof lookupRole): void {
+  roleLookup = fn;
+}
+export function freeJobExampleCacheForTests(): ExampleCache<FreeJobView> {
+  return examples;
 }
 /** Tests point the fetch policy at a local server (e.g. allow 127.0.0.2 and its port). */
 export function setFreeJobPolicyForTests(overrides: Partial<FetchPolicy>): void {
@@ -320,9 +364,12 @@ export type FreeJobView =
       url: string;
       label: FreeVerdictLabel;
       title?: string;
+      /** The title line is the "no longer available" placeholder, not a role. */
+      titleUnavailable?: boolean;
       platform: string;
       evidence: string[];
       explanation?: string;
+      example?: ExampleKey;
     };
 
 function priceLabel(): string {
@@ -346,56 +393,110 @@ function resultHtml(view: FreeJobView, remaining: number | undefined): string {
     : "";
   return `<section class="result ${cls}" aria-live="polite">
     <p class="verdict">${esc(view.label)}</p>
-    ${view.title ? `<p class="title">${esc(view.title)}</p>` : ""}
+    ${view.title ? `<p class="title${view.titleUnavailable ? " gone" : ""}">${esc(view.title)}</p>` : ""}
     <p class="platform">${esc(view.platform)}</p>
     ${view.explanation ? `<p class="explain">${esc(view.explanation)}</p>` : ""}
     ${evidence}
+    ${
+      view.example
+        ? `<p class="muted small">Example: a real check of a Stripe posting, refreshed every ${Math.round(EXAMPLE_TTL_MS / 60_000)} minutes. It doesn't use your free checks.</p>`
+        : ""
+    }
     ${remaining !== undefined ? `<p class="muted small">${remaining} free check${remaining === 1 ? "" : "s"} left today.</p>` : ""}
   </section>`;
 }
 
-export function freeJobHtml(view: FreeJobView, options: { remaining?: number; perDay: number }): string {
+export function freeJobHtml(view: FreeJobView, options: { remaining?: number; perDay: number; origin?: string }): string {
   const value = view.kind === "result" || view.kind === "invalid" ? (view.url ?? "") : "";
+  const origin = (options.origin ?? "https://livecheck.fly.dev").replace(/\/+$/, "");
+  const pageUrl = `${origin}${FREE_JOB_PATH}`;
+  const imageUrl = `${origin}${OG_IMAGE_PATH}`;
+  const examplesForm = `<form class="examples" method="post" action="${FREE_JOB_PATH}">
+    <span>Try one:</span>
+    <button type="submit" name="example" value="open">${esc(FREE_JOB_EXAMPLES.open.label)}</button>
+    <span aria-hidden="true">&middot;</span>
+    <button type="submit" name="example" value="filled">${esc(FREE_JOB_EXAMPLES.filled.label)}</button>
+  </form>`;
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Is this job still open? — Livecheck</title>
-  <meta name="description" content="Paste a job posting link and Livecheck tells you if it's still open, closed, or can't tell. Free, no signup." />
+  <meta name="description" content="${esc(OG_DESCRIPTION)}" />
+  <link rel="canonical" href="${esc(pageUrl)}" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Livecheck" />
+  <meta property="og:title" content="${esc(OG_TITLE)}" />
+  <meta property="og:description" content="${esc(OG_DESCRIPTION)}" />
+  <meta property="og:url" content="${esc(pageUrl)}" />
+  <meta property="og:image" content="${esc(imageUrl)}" />
+  <meta property="og:image:secure_url" content="${esc(imageUrl)}" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Livecheck showing Open for a real job posting: Is that job still open? Find out in one click." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="${esc(OG_TITLE)}" />
+  <meta name="twitter:description" content="${esc(OG_DESCRIPTION)}" />
+  <meta name="twitter:image" content="${esc(imageUrl)}" />
+  <meta name="twitter:image:alt" content="Livecheck showing Open for a real job posting." />
   <style>
-    :root { --ink:#14211a; --paper:#f4efe4; --rule:#c9c0ae; --open:#1f7a46; --closed:#9b2c2c; --cant:#8a6d1b; }
+    :root { --ink:#14211a; --paper:#f4efe4; --rule:#c9c0ae; --open:#1f7a46; --closed:#9b2c2c; --cant:#8a6d1b; --soft:#5c5346; }
     * { box-sizing: border-box; }
-    body { margin:0; color:var(--ink); background:var(--paper); font-family:"Iowan Old Style","Palatino Linotype",Palatino,serif; line-height:1.5; }
-    main { max-width:42rem; margin:0 auto; padding:2.5rem 1.25rem 4rem; }
-    h1 { font-size:2.2rem; letter-spacing:-0.02em; margin:0 0 0.3rem; }
+    html { -webkit-text-size-adjust:100%; text-size-adjust:100%; }
+    body { margin:0; color:var(--ink); background:var(--paper); font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif; font-size:17px; line-height:1.5; overflow-wrap:anywhere; }
+    .wrap { max-width:42rem; margin:0 auto; padding-left:1.25rem; padding-right:1.25rem; }
+    header.site { border-bottom:1px solid var(--rule); }
+    header.site .wrap { padding-top:0.8rem; padding-bottom:0.8rem; }
+    .brand { font-weight:700; font-size:1.05rem; letter-spacing:0.01em; text-decoration:none; color:var(--ink); }
+    main.wrap { padding-top:2rem; padding-bottom:2.5rem; }
+    h1 { font-size:2.2rem; line-height:1.15; letter-spacing:-0.02em; margin:0 0 0.4rem; }
     .lede { font-size:1.1rem; margin:0 0 1.4rem; }
-    form { display:flex; gap:0.5rem; flex-wrap:wrap; }
+    form.check { display:flex; gap:0.5rem; flex-wrap:wrap; }
     label { position:absolute; left:-9999px; }
-    input[type=url] { flex:1 1 20rem; font-size:1.05rem; padding:0.75rem 0.85rem; border:2px solid var(--ink); border-radius:4px; background:#fffdf8; }
-    button { font-size:1.05rem; padding:0.75rem 1.4rem; border:2px solid var(--ink); border-radius:4px; background:var(--ink); color:var(--paper); cursor:pointer; }
+    input[type=url] { flex:1 1 20rem; min-width:0; font-size:1.05rem; padding:0.75rem 0.85rem; border:2px solid var(--ink); border-radius:4px; background:#fffdf8; color:var(--ink); }
+    form.check button { font-family:inherit; font-size:1.05rem; padding:0.75rem 1.4rem; border:2px solid var(--ink); border-radius:4px; background:var(--ink); color:var(--paper); cursor:pointer; }
+    form.examples { margin:0.7rem 0 0; display:flex; flex-wrap:wrap; align-items:baseline; gap:0.35rem; font-size:1rem; color:var(--soft); }
+    form.examples button { font:inherit; color:var(--ink); background:none; border:0; padding:0.35rem 0.1rem; text-decoration:underline; text-underline-offset:0.15em; cursor:pointer; }
     .result { margin:1.6rem 0; padding:1.2rem 1.3rem; border-left:8px solid var(--rule); background:#fffdf8; }
     .result.open { border-color:var(--open); } .result.closed { border-color:var(--closed); } .result.cant { border-color:var(--cant); }
     .verdict { font-size:2.6rem; font-weight:700; margin:0; line-height:1.1; }
     .open .verdict { color:var(--open); } .closed .verdict { color:var(--closed); } .cant .verdict { color:var(--cant); }
-    .title { font-size:1.15rem; margin:0.5rem 0 0; } .platform { margin:0.1rem 0 0.6rem; color:#5c5346; }
+    .title { font-size:1.15rem; margin:0.5rem 0 0; } .title.gone { font-style:italic; color:var(--soft); }
+    .platform { margin:0.1rem 0 0.6rem; color:var(--soft); }
     .evidence { margin:0.4rem 0 0; padding-left:1.2rem; }
     .note { margin:1.4rem 0; padding:0.9rem 1rem; border:1px solid var(--cant); background:#f8e7c7; }
-    .muted { color:#5c5346; } .small { font-size:0.9rem; }
-    .cta { margin-top:2.2rem; padding-top:1.2rem; border-top:1px solid var(--rule); }
+    .muted { color:var(--soft); } .small { font-size:0.94rem; }
+    .cta { margin-top:2rem; padding-top:1.2rem; border-top:1px solid var(--rule); }
+    footer.site { border-top:1px solid var(--rule); padding:1.1rem 0 2rem; color:var(--soft); font-size:0.94rem; }
+    footer.site p { margin:0 0 0.4rem; }
+    footer.site nav a { margin-right:0.9rem; }
     code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:0.92em; }
     a { color:var(--ink); }
+    @media (max-width: 480px) {
+      .wrap { padding-left:1rem; padding-right:1rem; }
+      main.wrap { padding-top:1.4rem; }
+      h1 { font-size:1.85rem; }
+      .lede { font-size:1.05rem; }
+      form.check { flex-direction:column; }
+      input[type=url], form.check button { width:100%; flex:none; font-size:17px; }
+      .verdict { font-size:2.3rem; }
+      .result { padding:1rem 1rem; border-left-width:6px; }
+    }
   </style>
 </head>
 <body>
-<main>
+<header class="site"><div class="wrap"><a class="brand" href="/">Livecheck</a></div></header>
+<main class="wrap">
   <h1>Is this job still open?</h1>
   <p class="lede">Paste a job link. Livecheck checks the posting and the hiring platform right now and tells you Open, Closed, or Can't tell.</p>
-  <form method="post" action="${FREE_JOB_PATH}">
+  <form class="check" method="post" action="${FREE_JOB_PATH}">
     <label for="url">Paste a job posting link</label>
-    <input id="url" name="url" type="url" required maxlength="2048" placeholder="Paste a job posting link" value="${esc(value)}" autocomplete="off" />
+    <input id="url" name="url" type="url" required maxlength="2048" placeholder="Paste a job posting link" value="${esc(value)}" autocomplete="off" inputmode="url" />
     <button type="submit">Check</button>
   </form>
+  ${examplesForm}
   ${resultHtml(view, options.remaining)}
   <p class="muted small">Free: ${options.perDay} checks per day, no wallet, no signup. We don't store the links you check.</p>
   <section class="cta">
@@ -403,6 +504,10 @@ export function freeJobHtml(view: FreeJobView, options: { remaining?: number; pe
     &rarr; <a href="${FREE_JOB_PATH}/go/docs">Docs</a> &middot; <a href="${FREE_JOB_PATH}/go/skill">Agent skill</a></p>
   </section>
 </main>
+<footer class="site"><div class="wrap">
+  <p>${esc(HOW_IT_WORKS)}</p>
+  <nav><a href="${FREE_JOB_PATH}/go/docs">Docs</a><a href="${FREE_JOB_PATH}/go/skill">Agent skill</a><a href="mailto:${CONTACT_EMAIL}">Contact</a></nav>
+</div></footer>
 </body>
 </html>`;
 }
@@ -442,16 +547,84 @@ function ensureVisitor(c: Context): string {
 function page(c: Context, view: FreeJobView, status: number, config: FreeJobConfig, remaining?: number) {
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) c.header(name, value);
   if (view.kind === "busy") c.header("retry-after", "180");
-  return c.html(freeJobHtml(view, { perDay: config.perVisitorDaily, remaining }), status as 200);
+  const origin = publicOrigin(c.req.url, c.req.header("host"));
+  return c.html(freeJobHtml(view, { perDay: config.perVisitorDaily, remaining, origin }), status as 200);
 }
 
-async function readSubmittedUrl(c: Context): Promise<unknown> {
+async function readSubmitted(c: Context): Promise<{ url?: unknown; example?: unknown }> {
   const type = c.req.header("content-type") ?? "";
   if (type.includes("application/x-www-form-urlencoded") || type.includes("multipart/form-data")) {
     const body = await c.req.parseBody();
-    return body.url;
+    return { url: body.url, example: body.example };
   }
-  return undefined;
+  return {};
+}
+
+/**
+ * One check, start to finish, through the guarded fetcher (SSRF rules on
+ * every hop). Returns the card and whether the check got a verdict. Never
+ * logs the link.
+ */
+async function runCheck(target: string, opts: { signal?: AbortSignal }): Promise<{ view: FreeJobView; ok: boolean }> {
+  let platform = platformFor(target);
+  const fetcher = guardedFetch(policy);
+  let verdict: VerifyVerdict | undefined;
+  try {
+    verdict = await verifyUrl(target, fetcher, clock(), {
+      atsApi: true,
+      ...(opts.signal ? { signal: opts.signal } : {}),
+      deadlineMs: totalTimeoutMs,
+    });
+  } catch (error) {
+    // Never log the message: VerifyError text can contain the link.
+    if (!(error instanceof VerifyError)) {
+      console.warn(`[free_page] check failed (${error instanceof Error ? error.name : "error"})`);
+    }
+  }
+  if (!verdict) {
+    return { view: { kind: "result", url: target, label: "Can't tell", platform, evidence: [], explanation: UNREACHABLE_COPY }, ok: false };
+  }
+  const label = verdictLabel(verdict.status);
+  let role: RoleInfo | undefined;
+  if (label !== "Can't tell") {
+    role = await roleLookup(target, fetcher, { timeoutMs: 5_000, ...(opts.signal ? { signal: opts.signal } : {}) });
+    if (role?.platform && platform === "Company careers page") platform = role.platform;
+  }
+  const line = roleLine(target, verdict, role);
+  return {
+    view: {
+      kind: "result",
+      url: target,
+      label,
+      ...(line.text ? { title: line.text } : {}),
+      ...(line.unavailable ? { titleUnavailable: true } : {}),
+      platform,
+      evidence: evidenceForVerdict(verdict.signals, platform, label),
+      ...(label === "Can't tell" ? { explanation: cantTellCopy(verdict.signals) } : {}),
+    },
+    ok: true,
+  };
+}
+
+async function handleExample(c: Context, key: ExampleKey, config: FreeJobConfig, ip: string, visitor: string) {
+  const now = clock();
+  bumpFreePageMetric(key === "open" ? "example_open" : "example_filled", now);
+  let view: FreeJobView;
+  try {
+    view = (await examples.get(key)).value;
+  } catch {
+    view = {
+      kind: "result",
+      url: exampleUrls[key],
+      label: "Can't tell",
+      platform: platformFor(exampleUrls[key]),
+      evidence: [],
+      explanation: UNREACHABLE_COPY,
+      example: key,
+    };
+  }
+  // Examples never touch the limiter: no cookie or IP count, no hourly cap.
+  return page(c, view, 200, config, limiter.remaining(ip, visitor, config, now));
 }
 
 async function handleFreeCheck(c: Context) {
@@ -461,12 +634,14 @@ async function handleFreeCheck(c: Context) {
   const visitor = ensureVisitor(c);
   const ip = clientIp(c);
 
-  let raw: unknown;
+  let submitted: { url?: unknown; example?: unknown } = {};
   try {
-    raw = await readSubmittedUrl(c);
+    submitted = await readSubmitted(c);
   } catch {
-    raw = undefined;
+    submitted = {};
   }
+  if (isExampleKey(submitted.example)) return handleExample(c, submitted.example, config, ip, visitor);
+  const raw = submitted.url;
   const typed = typeof raw === "string" ? raw.trim().slice(0, 2048) : "";
   let target: string;
   try {
@@ -493,37 +668,11 @@ async function handleFreeCheck(c: Context) {
 
   let view: FreeJobView;
   try {
-    const platform = platformFor(target);
-    let verdict: VerifyVerdict | undefined;
-    try {
-      verdict = await verifyUrl(target, guardedFetch(policy), now, {
-        atsApi: true,
-        signal: c.req.raw.signal,
-        deadlineMs: totalTimeoutMs,
-      });
-    } catch (error) {
-      // Never log the message: VerifyError text can contain the link.
-      if (!(error instanceof VerifyError)) {
-        console.warn(`[free_page] check failed (${error instanceof Error ? error.name : "error"})`);
-      }
-    }
-    if (verdict) {
-      const label = verdictLabel(verdict.status);
-      view = {
-        kind: "result",
-        url: target,
-        label,
-        ...(verdict.title ? { title: verdict.title } : {}),
-        platform,
-        evidence: evidenceForVerdict(verdict.signals, platform, label),
-        ...(label === "Can't tell" ? { explanation: cantTellCopy(verdict.signals) } : {}),
-      };
-    } else {
-      view = { kind: "result", url: target, label: "Can't tell", platform, evidence: [], explanation: UNREACHABLE_COPY };
-    }
+    view = (await runCheck(target, { signal: c.req.raw.signal })).view;
   } finally {
     admit.release();
   }
+  if (view.kind !== "result") throw new Error("unexpected view");
   bumpFreePageMetric("checks", now);
   bumpFreePageMetric(
     view.label === "Open" ? "verdict_open" : view.label === "Closed" ? "verdict_closed" : "verdict_cant_tell",
@@ -566,6 +715,12 @@ export function registerFreeJobRoutes(app: Hono): void {
       return c.text("Something went wrong. Please try again.", 500);
     }
   });
+  app.get(OG_IMAGE_PATH, (c) => {
+    c.header("content-type", "image/png");
+    c.header("cache-control", "public, max-age=86400");
+    c.header("x-content-type-options", "nosniff");
+    return c.body(new Uint8Array(OG_IMAGE_PNG), 200);
+  });
   app.get(`${FREE_JOB_PATH}/go/docs`, (c) => {
     bumpFreePageMetric("cta_docs", clock());
     c.header("cache-control", "no-store");
@@ -594,6 +749,7 @@ export function registerFreeJobRoutes(app: Hono): void {
       },
       this_hour_checks: limiter.checksThisHour(now),
       in_flight: limiter.inFlightNow(),
+      example_cache: { cached: examples.keys(), refreshes: examples.refreshes, ttl_minutes: EXAMPLE_TTL_MS / 60_000 },
     });
   });
   // /check alias from the launch kit ("livecheck.fly.dev/job (or /check)").

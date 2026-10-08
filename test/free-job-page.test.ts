@@ -219,7 +219,7 @@ describe("free /job page", () => {
     const res = await app.request("/job");
     assert.equal(res.status, 200);
     const page = await res.text();
-    assert.match(page, /<form method="post" action="\/job">/);
+    assert.match(page, /<form class="check" method="post" action="\/job">/);
     assert.match(page, /placeholder="Paste a job posting link"/);
     assert.match(page, /We don't store the links you check\./);
     assert.match(page, /Same check by API: <code>POST \/v1\/verify\/job<\/code>, \$0\.01 per call, no account or API key\./);
