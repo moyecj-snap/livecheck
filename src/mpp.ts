@@ -408,7 +408,7 @@ export function withMppDispatch(
 ): MiddlewareHandler {
   const writer = options.writer ?? ((line: string) => console.log(line));
   const now = options.now ?? (() => new Date());
-  const results = options.results ?? openMppResultCache(":memory:");
+  const results = options.results ?? openMppResultCache(":memory:", { timer: false });
 
   return async (c: Context, next: Next) => {
     const route = c.req.method === "POST" ? mppRouteForPath(c.req.path) : undefined;

@@ -19,7 +19,7 @@ import {
 import { buildStatsDocument, statsHtml } from "../src/stats.js";
 import { buildProtocolTraffic, protocolTableHtml } from "../src/stats-protocols.js";
 import { decodeMppValue, encodeMppValue, openMppStore } from "../src/mpp-store.js";
-import { openMppResultCache } from "../src/mpp-idempotency.js";
+import { MPP_RESULT_MAX_TTL_HOURS, mppResultTtlMs, openMppResultCache } from "../src/mpp-idempotency.js";
 import { createApp } from "../src/app.js";
 import { queryRefundCandidateDaily } from "../src/paid-call-store.js";
 
@@ -292,14 +292,25 @@ describe("refund candidates on the private stats view only", () => {
 });
 
 describe("MPP retry rows", () => {
-  it("claim is first-wins per credential and per tx; release, unconfirmed retry, and TTL prune", async () => {
-    const cache = openMppResultCache(":memory:", 1);
+  const HOUR = 3_600_000;
+  const T0 = Date.parse("2026-10-08T18:00:00Z");
+
+  it("retention is 24 hours; MPP_RESULT_TTL_HOURS can only shorten it", () => {
+    assert.equal(MPP_RESULT_MAX_TTL_HOURS, 24);
+    assert.equal(mppResultTtlMs({}), 24 * HOUR);
+    assert.equal(mppResultTtlMs({ MPP_RESULT_TTL_HOURS: "12" }), 12 * HOUR);
+    assert.equal(mppResultTtlMs({ MPP_RESULT_TTL_HOURS: "48" }), 24 * HOUR);
+    assert.equal(mppResultTtlMs({ MPP_RESULT_TTL_HOURS: "nope" }), 24 * HOUR);
+    assert.equal(mppResultTtlMs({ MPP_RESULT_TTL_HOURS: "0" }), 24 * HOUR);
+  });
+
+  it("claim is first-wins per credential and per tx; release and unconfirmed retry", () => {
+    let now = T0;
+    const cache = openMppResultCache(":memory:", { now: () => now, timer: false });
     const base = { route: "verify", request_sha256: "r1", ts: "2026-10-08T18:00:00Z" };
     assert.equal(cache.claim({ ...base, credential_sha256: "c1", tx: "0xaa" }).kind, "claimed");
-    const dup = cache.claim({ ...base, credential_sha256: "c1" });
-    assert.equal(dup.kind, "existing");
-    const byTx = cache.claim({ ...base, credential_sha256: "c2", tx: "0xaa" });
-    assert.equal(byTx.kind, "existing");
+    assert.equal(cache.claim({ ...base, credential_sha256: "c1" }).kind, "existing");
+    assert.equal(cache.claim({ ...base, credential_sha256: "c2", tx: "0xaa" }).kind, "existing");
     cache.release("c1");
     assert.equal(cache.claim({ ...base, credential_sha256: "c1" }).kind, "claimed");
     const response = { status: 503, headers: { "content-type": "application/json" }, body: "{}" };
@@ -310,10 +321,64 @@ describe("MPP retry rows", () => {
     assert.equal(cache.claim({ ...base, credential_sha256: "c1", request_sha256: "other" }).kind, "existing");
     cache.complete("c1", { state: "done", tx: "0xbb", response: { ...response, status: 200 } });
     assert.equal(cache.get("c1")?.tx, "0xbb");
-    await new Promise((r) => setTimeout(r, 5));
-    // ttl 1 ms: the next claim pass prunes finished rows (every 100th claim; force by claiming 100 times).
-    for (let i = 0; i < 100; i++) cache.claim({ ...base, credential_sha256: `x${i}` });
-    assert.equal(cache.get("c1"), undefined);
+    now += HOUR;
+    assert.equal(cache.claim({ ...base, credential_sha256: "c1" }).kind, "existing", "still replayable after 1h");
     cache.close();
+  });
+
+  it("answers are replayed up to 24h and deleted after; stale pending rows go after 10 minutes", () => {
+    let now = T0;
+    const cache = openMppResultCache(":memory:", { now: () => now, timer: false });
+    const base = { route: "verify", request_sha256: "r1", ts: "2026-10-08T18:00:00Z" };
+    const ok = { status: 200, headers: { "content-type": "application/json" }, body: "{\"status\":\"live\"}" };
+    cache.claim({ ...base, credential_sha256: "done1", tx: "0x01" });
+    cache.complete("done1", { state: "done", response: ok });
+    cache.claim({ ...base, credential_sha256: "unconf1" });
+    cache.complete("unconf1", { state: "unconfirmed", response: { ...ok, status: 503 } });
+    cache.claim({ ...base, credential_sha256: "pending1" });
+
+    now = T0 + 9 * 60_000;
+    assert.equal(cache.prune(), 0);
+    assert.equal(cache.get("pending1")?.state, "pending");
+
+    now = T0 + 11 * 60_000;
+    assert.equal(cache.prune(), 1, "crashed pending row removed");
+    assert.equal(cache.get("pending1"), undefined);
+
+    now = T0 + 24 * HOUR - 1;
+    const replay = cache.claim({ ...base, credential_sha256: "done1" });
+    assert.equal(replay.kind, "existing");
+    assert.equal(replay.kind === "existing" && replay.existing.response?.body, ok.body);
+
+    now = T0 + 24 * HOUR + 1;
+    assert.equal(cache.claim({ ...base, credential_sha256: "done1" }).kind, "claimed", "expired before lookup: not replayed");
+    assert.equal(cache.get("unconf1"), undefined, "unconfirmed rows expire too");
+    assert.equal(cache.claim({ ...base, credential_sha256: "other", tx: "0x01" }).kind, "claimed", "tx index row gone too");
+    cache.close();
+  });
+
+  it("a longer ttlMs is capped at 24h, and a reopened file drops rows older than 24h on open", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lc-mppresults-"));
+    const path = join(dir, "mpp-results.sqlite");
+    try {
+      let now = T0;
+      const first = openMppResultCache(path, { now: () => now, ttlMs: 48 * HOUR, timer: false });
+      first.claim({ route: "verify", request_sha256: "r", ts: "x", credential_sha256: "old" });
+      first.complete("old", { state: "done", response: { status: 200, headers: {}, body: "{}" } });
+      now = T0 + 23 * HOUR;
+      first.claim({ route: "verify", request_sha256: "r", ts: "x", credential_sha256: "newer" });
+      first.complete("newer", { state: "done", response: { status: 200, headers: {}, body: "{}" } });
+      first.close();
+      now = T0 + 25 * HOUR;
+      const reopened = openMppResultCache(path, { now: () => now, ttlMs: 48 * HOUR, timer: false });
+      assert.equal(reopened.get("old"), undefined, "48h request capped to 24h; removed on open");
+      assert.equal(reopened.get("newer")?.state, "done");
+      reopened.close();
+      const raw = new DatabaseSync(path);
+      assert.equal((raw.prepare("SELECT COUNT(*) AS n FROM mpp_results").get() as { n: number }).n, 1, "deleted from disk");
+      raw.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

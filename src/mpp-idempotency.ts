@@ -14,10 +14,12 @@ import { DatabaseSync } from "node:sqlite";
  *   if mppx refuses it, the caller gets the original 503 again, never a fresh
  *   402 that would invite a second payment.
  *
- * Rows hold the answer (which names the checked URL), so they are kept only
- * MPP_RESULT_TTL_HOURS (default 48) in the operational mpp-store file, never in
- * the privacy-safe paid_calls store. After that, mppx replay protection still
- * refuses the credential (no charge), it just cannot replay the answer.
+ * Rows hold the answer (which names the checked URL), so they are kept at most
+ * 24 hours (Craig, Oct 8) in their own operational file, never in the
+ * privacy-safe paid_calls store. MPP_RESULT_TTL_HOURS can only shorten that.
+ * Cleanup runs on open, on every claim, and hourly, and deletes every row whose
+ * last update is older than the retention. After that, mppx replay protection
+ * still refuses the credential (no charge); it just cannot replay the answer.
  */
 
 export type MppResultState = "pending" | "done" | "unconfirmed";
@@ -59,6 +61,8 @@ export type MppResultCache = {
     update: { state: "done" | "unconfirmed"; tx?: string; response: StoredResponse },
   ): void;
   get(credential_sha256: string): MppResultEntry | undefined;
+  /** Delete rows past retention (and pending rows older than 10 minutes). Returns rows deleted. */
+  prune(): number;
   close(): void;
 };
 
@@ -117,12 +121,31 @@ export function defaultMppResultsDbPath(storePath: string): string {
   return storePath === ":memory:" ? ":memory:" : join(dirname(storePath), "mpp-results.sqlite");
 }
 
+/** Retention ceiling for retry answers. */
+export const MPP_RESULT_MAX_TTL_HOURS = 24;
+/** A `pending` row this old is a crashed request. */
+export const MPP_PENDING_STALE_MS = 600_000;
+const PRUNE_INTERVAL_MS = 3_600_000;
+
+/** 24h by default. MPP_RESULT_TTL_HOURS may shorten it, never lengthen it. */
 export function mppResultTtlMs(env: NodeJS.ProcessEnv = process.env): number {
   const hours = Number(env.MPP_RESULT_TTL_HOURS);
-  return (Number.isFinite(hours) && hours > 0 ? Math.min(hours, 24 * 30) : 48) * 3_600_000;
+  const chosen =
+    Number.isFinite(hours) && hours > 0 ? Math.min(hours, MPP_RESULT_MAX_TTL_HOURS) : MPP_RESULT_MAX_TTL_HOURS;
+  return chosen * 3_600_000;
 }
 
-export function openMppResultCache(path: string, ttlMs = mppResultTtlMs()): MppResultCache {
+export type MppResultCacheOptions = {
+  ttlMs?: number;
+  /** Clock (ms). Tests move it forward. */
+  now?: () => number;
+  /** Hourly background cleanup. Default true; tests turn it off. */
+  timer?: boolean;
+};
+
+export function openMppResultCache(path: string, options: MppResultCacheOptions = {}): MppResultCache {
+  const ttlMs = Math.min(options.ttlMs ?? mppResultTtlMs(), MPP_RESULT_MAX_TTL_HOURS * 3_600_000);
+  const clockMs = options.now ?? (() => Date.now());
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   if (path !== ":memory:") {
@@ -144,18 +167,33 @@ export function openMppResultCache(path: string, ttlMs = mppResultTtlMs()): MppR
   );
   const prune = db.prepare("DELETE FROM mpp_results WHERE updated_at < ? AND state != 'pending'");
   const prunePending = db.prepare("DELETE FROM mpp_results WHERE updated_at < ? AND state = 'pending'");
-  const nowIso = () => new Date().toISOString();
-  let claims = 0;
+  const nowIso = () => new Date(clockMs()).toISOString();
+  const pruneNow = (): number => {
+    const t = clockMs();
+    const done = Number(prune.run(new Date(t - ttlMs).toISOString()).changes);
+    const stale = Number(prunePending.run(new Date(t - MPP_PENDING_STALE_MS).toISOString()).changes);
+    return done + stale;
+  };
+  pruneNow();
+  const interval =
+    options.timer === false
+      ? undefined
+      : setInterval(() => {
+          try {
+            pruneNow();
+          } catch (error) {
+            console.warn(`[mpp] retry-row cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }, PRUNE_INTERVAL_MS);
+  interval?.unref();
 
   return {
     claim(input) {
       db.exec("BEGIN IMMEDIATE");
       try {
-        if (++claims % 100 === 1) {
-          prune.run(new Date(Date.now() - ttlMs).toISOString());
-          // A pending row older than 10 minutes is a crashed request.
-          prunePending.run(new Date(Date.now() - 600_000).toISOString());
-        }
+        // Expired rows are gone before any lookup, so nothing older than the
+        // retention is ever replayed.
+        pruneNow();
         const found =
           (byCredential.get(input.credential_sha256) as Row | undefined) ??
           (input.tx ? (byTx.get(input.tx) as Row | undefined) : undefined);
@@ -206,7 +244,11 @@ export function openMppResultCache(path: string, ttlMs = mppResultTtlMs()): MppR
       const row = byCredential.get(credential) as Row | undefined;
       return row ? toEntry(row) : undefined;
     },
+    prune() {
+      return pruneNow();
+    },
     close() {
+      if (interval) clearInterval(interval);
       try {
         db.close();
       } catch {
