@@ -549,6 +549,18 @@ The outage bench gate `outage_no_content_change` (2xx → 5xx → 2xx, zero cont
 
 Headline `sentinel` counts and confirm windows **include internal test traffic**. `notes[0]` and the HTML banner say so. `traffic.external` omits the built-in team wallets in `src/internal-wallets.ts` plus any `LIVECHECK_INTERNAL_WALLETS` addresses (`off` disables the wallet split). Test wallets and test URLs are one list in [`src/test-traffic.ts`](src/test-traffic.ts), with a label on each entry: Lumière and vet402 (`grader`), the docs-example tester `0x9cd5b9a8341dcaf7825348d70792ad9903f2c5a7` (`tester`), the Greenhouse docs job, `https://example.com/thank-you?ref=ABC123`, and `https://livecheck.fly.dev/demo/thank-you?ref=ABC123`. Add a grader by appending one object. `LIVECHECK_TEST_WALLETS` appends `0xaddr:grader:Label` or `0xaddr:tester:Label` (`off` drops the built-in test list). `LIVECHECK_GRADER_WALLETS=off` drops graders only. Those calls stay in `traffic.all`. `traffic.docs_example`, `traffic.graders`, and `traffic.testers` count them. `traffic.all` matches the headlines. One-shot `chk_` receipts have no payer, so they stay in both `checks_run` totals. Verify/confirm `traffic.*.payers` is calls and distinct payers. On the default one-machine document, `unique_payers` is `COUNT(DISTINCT payer)`. On an emergency fleet sum, `unique_payers` is null (withheld), not a sum of per-volume distincts. A peer that predates `traffic` still contributes its sentinel headlines to the fleet sum, and `traffic.external_complete` is false.
 
+**Buckets.** Every paid call lands in exactly one bucket ([`src/traffic-buckets.ts`](src/traffic-buckets.ts)). The rules run in order and the first match wins:
+
+| Order | Rule | Bucket |
+|---|---|---|
+| 1 | Payer is one of our wallets (`src/internal-wallets.ts`) | `traffic.internal` |
+| 2 | Payer is on the grader/tester list (`src/test-traffic.ts`) | `traffic.graders` / `traffic.testers` |
+| 3 | No payer recorded | `traffic.unattributed` |
+| 4 | Unknown payer, but the target is a docs-example URL | `traffic.testers_probable` (own line, never dropped) |
+| 5 | Everything else | `traffic.external` |
+
+Internal is decided by payer wallet only; the `livecheck-internal/` user agent is a label. `traffic.reconciliation` checks that internal + graders + testers + unattributed + testers_probable + external equals `traffic.all` for calls and revenue in L7d and L30d (whole cents). If it does not, `reconciliation.ok` is false, `reconciliation.gap` shows the difference, and `/stats` shows a red warning at the top of the page. `traffic.docs_example` and `traffic.internal_label` are overlap counts, not buckets, and are not part of the sum.
+
 ### Signed receipts
 
 Set `CONFIRM_RECEIPT_PRIVATE_KEY` to an Ed25519 **PKCS#8 PEM** (recommended) or a **32-byte seed** as hex (64 chars) or base64. Generate PEM:

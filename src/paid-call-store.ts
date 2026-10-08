@@ -25,6 +25,7 @@ import {
   type VerifyPaidStatus,
 } from "./paid-call.js";
 import { INTERNAL_USER_AGENT_PREFIX } from "./internal-wallets.js";
+import { bucketPaidCallRows, type BucketWindows, type TrafficBucketLists } from "./traffic-buckets.js";
 import {
   ATTRIBUTION_TX_TRANSFER,
   ATTRIBUTION_UNATTRIBUTED,
@@ -913,6 +914,32 @@ export function queryIncludedPayerWindowsFromStore(
 ): RetentionWindows | undefined {
   if (!state?.ok) return undefined;
   return queryIncludedPayerWindows(state.db, now, payers);
+}
+
+/**
+ * Every paid call in the L30d window, placed in exactly one bucket
+ * (`src/traffic-buckets.ts`). Same `ts >= cutoff` windows as traffic.all.
+ */
+export function queryTrafficBucketWindows(
+  db: DatabaseSync,
+  now = new Date(),
+  lists: TrafficBucketLists,
+): BucketWindows {
+  const l7d = isoCutoff(now, 7);
+  const l30d = isoCutoff(now, 30);
+  const since = l7d < l30d ? l7d : l30d;
+  const rows = db
+    .prepare(`SELECT ts, route, payer, url_sha256 FROM paid_calls WHERE ts >= ?`)
+    .all(since) as Array<{ ts: string; route: string; payer: string | null; url_sha256: string | null }>;
+  return bucketPaidCallRows(rows, { l7d, l30d }, lists);
+}
+
+export function queryTrafficBucketWindowsFromStore(
+  now = new Date(),
+  lists: TrafficBucketLists,
+): BucketWindows | undefined {
+  if (!state?.ok) return undefined;
+  return queryTrafficBucketWindows(state.db, now, lists);
 }
 
 export function queryInternalLabelCountsFromStore(now = new Date()): { l7d: number; l30d: number } | undefined {
