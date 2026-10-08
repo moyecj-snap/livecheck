@@ -39,6 +39,8 @@ import { isInternalTestMode, withBurstProtection } from "./check-capacity.js";
 import { recordSuccessfulPaidCheck, responseRouteFromPath, withPaidCallContext } from "./paid-call.js";
 import { checkPaidVerdict } from "./receipt.js";
 import { applyPaymentGate, settlementMode } from "./payments.js";
+import { MPP_ROUTES, currentMppStatus } from "./mpp.js";
+import { mppEnabled } from "./mpp-flags.js";
 import { withSettleAbortContext } from "./settle-abort.js";
 import { publicCheckUrl, publicConfirmOrderUrl, publicConfirmUrl, publicVerifyUrl, publicWatchChainTopupUrl, publicWatchRenewUrl, publicWatchUrl } from "./public-url.js";
 import { isReceiptId } from "./confirm-id.js";
@@ -154,6 +156,8 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
       watch_renew_description: WATCH_RENEW_DESCRIPTION,
       chain_topup_description: CHAIN_TOPUP_DESCRIPTION,
       user_agent: USER_AGENT,
+      // Only with MPP_ENABLED=1, so /health is unchanged while MPP is off.
+      ...(mppEnabled() ? { mpp: { ...currentMppStatus(), routes: [...MPP_ROUTES] } } : {}),
     });
   });
 

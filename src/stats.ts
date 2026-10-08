@@ -31,6 +31,7 @@ import {
   type WindowCounts,
 } from "./paid-call-store.js";
 import { countReceiptsSince, emptyReceiptVerdictCounts, receiptStoreStatus } from "./receipt-store.js";
+import { protocolTableHtml, protocolTrafficFromStore, type TrafficProtocols } from "./stats-protocols.js";
 import {
   ROUTE_PRICE_CENTS,
   TRAFFIC_BUCKET_ORDER,
@@ -283,6 +284,11 @@ export type TrafficHonesty = {
   testers_probable: ProbableTesterTraffic;
   /** Buckets (internal, graders, testers, unattributed, testers_probable, external) vs traffic.all. */
   reconciliation: TrafficReconciliation;
+  /**
+   * Per route, x402 vs MPP calls and revenue, checked against traffic.all.
+   * Missing on documents from builds before MPP.
+   */
+  protocols?: TrafficProtocols;
   /** Label count for livecheck-internal/ user agents. Does not change external. */
   internal_label: InternalLabelAnnotation;
   /** Route-priced sum of paid_calls. external uses the same omissions as traffic.external. */
@@ -1810,25 +1816,32 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
     : emptyDocsExampleTraffic();
   const graderTraffic = testWalletTrafficFromBuckets(buckets, "graders", graders.length);
   const testerTraffic = testWalletTrafficFromBuckets(buckets, "testers", testers.length);
+  const traffic = buildTrafficHonesty(
+    watchAll,
+    watchExternal,
+    oneShotChecks,
+    payersAll,
+    payersExternal,
+    wallets.length,
+    docsExample,
+    graderTraffic,
+    testerTraffic,
+    unattributed,
+    internal,
+    internalLabel,
+    testersProbable,
+  );
+  // x402 vs MPP per route, checked against the same traffic.all totals the buckets use.
+  const rec = traffic.reconciliation;
+  traffic.protocols = protocolTrafficFromStore(
+    now,
+    rec?.checked ? { l7d: { ...rec.l7d.total }, l30d: { ...rec.l30d.total } } : null,
+  );
   return {
     ok: true,
     service: "livecheck",
     generated_at: now.toISOString().replace(/\.\d{3}Z$/, "Z"),
-    traffic: buildTrafficHonesty(
-      watchAll,
-      watchExternal,
-      oneShotChecks,
-      payersAll,
-      payersExternal,
-      wallets.length,
-      docsExample,
-      graderTraffic,
-      testerTraffic,
-      unattributed,
-      internal,
-      internalLabel,
-      testersProbable,
-    ),
+    traffic,
     intents: {
       lead_submit: {
         payable: true,
@@ -1910,6 +1923,7 @@ function payerTable(doc: StatsDocument): string {
   <p class="muted">${escHtml(doc.traffic.label)} Every paid route in paid_calls. Family totals: verify includes verify/job and verify/listing; confirm includes confirm/order; watch includes watch/renew. Unique payers in a family are distinct across that family, not the sum of the route rows. All includes internal and grader test traffic. External is bucket 5: a known payer that is not an internal, grader, or tester wallet, on a URL that is not a docs-example URL. Blank payers are Unattributed. External is decided by wallet only. A blank payer is unattributed and is not a unique payer. On this machine, unique payers are COUNT(DISTINCT payer). A fleet document shows withheld instead of adding per-volume distincts. Revenue is calls times the route price.</p>
   <p class="muted">Revenue from paid_calls: all L7d $${doc.traffic.revenue.all.l7d_usd.toFixed(2)} / L30d $${doc.traffic.revenue.all.l30d_usd.toFixed(2)}; external L7d $${doc.traffic.revenue.external.l7d_usd.toFixed(2)} / L30d $${doc.traffic.revenue.external.l30d_usd.toFixed(2)}; internal L7d $${doc.traffic.internal.revenue.l7d_usd.toFixed(2)} / L30d $${doc.traffic.internal.revenue.l30d_usd.toFixed(2)} (${doc.traffic.internal.calls.l7d} / ${doc.traffic.internal.calls.l30d} calls); ${bucketRevenueText("graders", doc.traffic.graders)}; ${bucketRevenueText("testers", doc.traffic.testers)}; unattributed L7d $${doc.traffic.unattributed.revenue.l7d_usd.toFixed(2)} / L30d $${doc.traffic.unattributed.revenue.l30d_usd.toFixed(2)} (${doc.traffic.unattributed.calls.l7d} / ${doc.traffic.unattributed.calls.l30d} calls); ${bucketRevenueText("testers (probable)", doc.traffic.testers_probable)}.${doc.traffic.revenue.available ? "" : " Revenue is not a measurement on this response."}</p>
   ${bucketTable(doc)}
+  ${protocolTableHtml(doc.traffic.protocols)}
   <table>
     <thead>
       <tr><th>Audience</th><th>Window</th><th>Verify calls</th><th>Verify unique payers</th><th>Confirm calls</th><th>Confirm unique payers</th><th>Check calls</th><th>Check unique payers</th><th>Watch calls</th><th>Watch unique payers</th></tr>

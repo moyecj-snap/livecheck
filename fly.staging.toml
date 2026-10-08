@@ -1,0 +1,53 @@
+# MPP (Tempo) staging. NOT deployed. Craig must OK creating this app first:
+#   fly apps create livecheck-mpp-staging
+#   fly volumes create livecheck_mpp_staging_data --app livecheck-mpp-staging --region sjc --size 1
+#   fly secrets set --app livecheck-mpp-staging \
+#     MPP_STRIPE_SECRET_KEY=rk_test_... STRIPE_PROFILE_ID=profile_test_... \
+#     TEMPO_DEPOSIT_ADDRESS=0x... MPP_SECRET_KEY="$(openssl rand -hex 32)"
+#   fly deploy --config fly.staging.toml
+#
+# Sandbox only: test-mode Stripe key + profile, Tempo testnet deposit address.
+# No CDP keys here, so x402 runs in mock mode (x-livecheck-mock: 1 or
+# payment-signature: livecheck-dev is a free call). Staging is for the MPP
+# path; x402 live behavior stays on the prod app.
+
+app = "livecheck-mpp-staging"
+primary_region = "sjc"
+
+[build]
+
+[env]
+  LIVECHECK_PUBLIC_URL = "https://livecheck-mpp-staging.fly.dev"
+  MPP_ENABLED = "1"
+  MPP_REALM = "livecheck-mpp-staging.fly.dev"
+  MPP_STORE_DB_PATH = "/data/mpp-store.sqlite"
+  PAID_CALL_DB_PATH = "/data/paid-calls.sqlite"
+  WATCH_DB_PATH = "/data/watchers.sqlite"
+  RECEIPT_DB_PATH = "/data/receipts.sqlite"
+
+# Own volume. Never attach livecheck_data (prod) here.
+[[mounts]]
+  source = "livecheck_mpp_staging_data"
+  destination = "/data"
+
+# One machine: the mppx replay/charge store is a single SQLite file.
+# Can sleep when idle (unlike prod, nothing depends on Sentinel here).
+[http_service]
+  internal_port = 43127
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "30s"
+  timeout = "5s"
+  method = "GET"
+  path = "/health"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

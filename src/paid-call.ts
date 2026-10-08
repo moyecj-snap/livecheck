@@ -78,10 +78,25 @@ export function responseRouteFromPath(pathname: string): PaidCallRoute | undefin
 
 export type VerifyPaidStatus = "live" | "closed" | "unknown";
 
+/**
+ * Payment rail that collected the money for a paid call.
+ * `x402` is Base USDC through the CDP facilitator (the only rail before MPP).
+ * `mpp_tempo` is MPP (Machine Payments Protocol) on Tempo, recorded by Stripe.
+ * A paid_calls row with a NULL protocol predates the column and is x402.
+ */
+export const PAYMENT_PROTOCOLS = ["x402", "mpp_tempo"] as const;
+export type PaymentProtocol = (typeof PAYMENT_PROTOCOLS)[number];
+
+export function sanitizePaymentProtocol(value: unknown): PaymentProtocol | undefined {
+  return PAYMENT_PROTOCOLS.includes(value as PaymentProtocol) ? (value as PaymentProtocol) : undefined;
+}
+
 export type PaidCallSettlement = {
   payer?: string;
   tx?: string;
   payment_intent?: string;
+  /** Set by the MPP dispatcher. The x402 settle hook leaves it unset (row stores x402). */
+  protocol?: PaymentProtocol;
 };
 
 export type PaidCallRemembered = {
@@ -124,6 +139,8 @@ export type PaidCallEvent = {
   internal_label?: true;
   /** Receipt id sealed for this call. Links the direct row to confirm_receipts. */
   receipt_id?: string;
+  /** Present on MPP calls only. Absent means x402, so the x402 log line is unchanged. */
+  protocol?: PaymentProtocol;
   ts: string;
 };
 
@@ -136,6 +153,12 @@ export const USER_AGENT_MAX = 256;
 type PaidCallStore = {
   remembered?: PaidCallRemembered;
   emitted: boolean;
+  /**
+   * Set by the MPP dispatcher before the paid handler runs. The handler's
+   * mock-mode immediate emit is skipped so the dispatcher can emit once with
+   * payer / tx / protocol after the response is known.
+   */
+  deferEmit?: boolean;
 };
 
 const paidCallAls = new AsyncLocalStorage<PaidCallStore>();
@@ -313,6 +336,8 @@ export function buildPaidCallEvent(
   if (payer) event.payer = payer;
   if (tx) event.tx = tx;
   if (paymentIntent) event.payment_intent = paymentIntent;
+  const protocol = sanitizePaymentProtocol(settlement.protocol);
+  if (protocol) event.protocol = protocol;
   return event;
 }
 
@@ -418,9 +443,20 @@ export function recordSuccessfulPaidCheck(input: {
   receipt_id?: string;
 }): void {
   rememberPaidCall(input);
-  if (!isLiveSettlement()) {
+  if (!isLiveSettlement() && !paidCallAls.getStore()?.deferEmit) {
     emitPaidCall();
   }
+}
+
+/** MPP dispatcher only: hold the handler's emit until the dispatcher has the payment fields. */
+export function deferPaidCallEmit(): void {
+  const store = paidCallAls.getStore();
+  if (store) store.deferEmit = true;
+}
+
+/** True when the paid handler remembered a call in this request. */
+export function hasRememberedPaidCall(): boolean {
+  return Boolean(paidCallAls.getStore()?.remembered);
 }
 
 /**

@@ -49,6 +49,8 @@ import { wrapFacilitatorForWatchPayer } from "./watch-payer.js";
 import { wrapFacilitatorForCatalog } from "./facilitator-catalog.js";
 import { emitPaidCallAfterSettle, extractPayer } from "./paid-call.js";
 import { createStripeClient, recordSettledPayment } from "./stripe-record.js";
+import { MPP_ROUTES, createLiveMppGateway, missingMppKeyNames, readMppKeys, setMppStatus, withMppDispatch } from "./mpp.js";
+import { mppEnabled } from "./mpp-flags.js";
 
 export function settlementMode(): "live" | "mock" {
   return isLiveSettlement() ? "live" : "mock";
@@ -240,10 +242,41 @@ export function withAdvertised402(inner: MiddlewareHandler): MiddlewareHandler {
 }
 
 export function applyPaymentGate(): MiddlewareHandler {
-  if (isLiveSettlement()) {
-    return livePaymentMiddleware();
+  const x402Gate = isLiveSettlement() ? livePaymentMiddleware() : mockPaymentMiddleware();
+  return withOptionalMpp(x402Gate);
+}
+
+/**
+ * MPP_ENABLED unset or 0: returns the x402 gate itself (same object, so
+ * behavior is byte-identical). MPP_ENABLED=1 with every MPP key: the MPP
+ * dispatcher wraps the x402 gate on the three verify routes. MPP_ENABLED=1
+ * with a key missing: x402 only, plus a boot warning naming the missing keys.
+ */
+export function withOptionalMpp(x402Gate: MiddlewareHandler, env: NodeJS.ProcessEnv = process.env): MiddlewareHandler {
+  if (!mppEnabled(env)) {
+    setMppStatus({ enabled: false, active: false });
+    return x402Gate;
   }
-  return mockPaymentMiddleware();
+  const keys = readMppKeys(env);
+  if (!keys) {
+    const missing = missingMppKeyNames(env);
+    console.warn(`[mpp] MPP_ENABLED=1 but not configured (missing or invalid: ${missing.join(", ")}). Serving x402 only.`);
+    setMppStatus({ enabled: true, active: false, missing_keys: missing });
+    return x402Gate;
+  }
+  try {
+    const gateway = createLiveMppGateway(keys);
+    console.log(
+      `[mpp] enabled on ${MPP_ROUTES.join(", ")}: ${gateway.methods.join(", ")} livemode=${keys.livemode} hosted_fee_payer=${keys.hostedFeePayer} stripe_key=${keys.stripeKeySource}`,
+    );
+    setMppStatus({ enabled: true, active: true, livemode: keys.livemode, methods: [...gateway.methods] });
+    return withMppDispatch(x402Gate, gateway);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(`[mpp] setup failed, serving x402 only: ${reason}`);
+    setMppStatus({ enabled: true, active: false, error: "setup_failed" });
+    return x402Gate;
+  }
 }
 
 /**
