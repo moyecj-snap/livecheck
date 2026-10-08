@@ -2,7 +2,11 @@ import { createApp } from "./app.js";
 import { DEFAULT_PORT, isLiveSettlement, missingLiveKeyNames, port } from "./config.js";
 import { isEbayAdapterEnabled, logEbayAdapterDisabled } from "./ebay.js";
 import { loadDotEnvIfPresent } from "./env.js";
-import { backfillPaidCallsFromReceipts, initPaidCallStore } from "./paid-call-store.js";
+import {
+  backfillPaidCallsFromReceipts,
+  initPaidCallStore,
+  removeDuplicateReceiptBackfillRows,
+} from "./paid-call-store.js";
 import { rescueMisplacedReceipts } from "./receipt-rescue.js";
 import { initReceiptStore } from "./receipt-store.js";
 import { startWatchScheduler } from "./watch-scheduler.js";
@@ -29,6 +33,10 @@ if (receiptStore.ok) {
   console.warn(
     `receipt persistence failed (${receiptStore.reason}). GET /v1/receipt/{id} will 404 after this process exits. Live Confirm returns 503 receipt_persist_failed so x402 does not settle without a durable receipt.`,
   );
+}
+
+if (store.ok) {
+  removeDuplicateReceiptBackfillRows(store.db);
 }
 
 if (store.ok && receiptStore.ok) {

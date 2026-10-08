@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
+import { isReceiptId } from "./confirm-id.js";
 import { isLiveSettlement } from "./config.js";
 import { retainPaidCall } from "./paid-call-store.js";
 
@@ -96,6 +97,8 @@ export type PaidCallRemembered = {
   http_status?: number;
   /** Caller User-Agent. Sanitized before it is logged or stored. */
   user_agent?: string;
+  /** chk_ / wtc_ / wrn_ / cfm_ / evt_ id of the receipt this call sealed. */
+  receipt_id?: string;
 };
 
 export type PaidCallEvent = {
@@ -119,6 +122,8 @@ export type PaidCallEvent = {
    * A label on the log line only. The payer wallet decides external.
    */
   internal_label?: true;
+  /** Receipt id sealed for this call. Links the direct row to confirm_receipts. */
+  receipt_id?: string;
   ts: string;
 };
 
@@ -211,6 +216,13 @@ export function sanitizeHttpStatus(value: unknown): number | undefined {
  * Drops emails. Strips query strings and fragments so a UA cannot carry
  * the target URL's secrets. Truncates to USER_AGENT_MAX.
  */
+/** Receipt id only. chk_, wtc_, wrn_, cfm_, or evt_ plus a Crockford ULID. */
+export function sanitizeReceiptId(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const id = value.trim();
+  return isReceiptId(id) ? id : undefined;
+}
+
 export function sanitizeUserAgent(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   let cleaned = value.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim();
@@ -293,6 +305,8 @@ export function buildPaidCallEvent(
     event.user_agent = userAgent;
     if (userAgent.toLowerCase().startsWith(INTERNAL_LABEL_USER_AGENT_PREFIX)) event.internal_label = true;
   }
+  const receiptId = sanitizeReceiptId(remembered.receipt_id);
+  if (receiptId) event.receipt_id = receiptId;
   const payer = sanitizePayer(settlement.payer);
   const tx = sanitizeTx(settlement.tx);
   const paymentIntent = sanitizePaymentIntent(settlement.payment_intent);
@@ -347,6 +361,7 @@ export function rememberPaidCall(input: {
   verdict?: string;
   http_status?: number;
   user_agent?: string;
+  receipt_id?: string;
 }): PaidCallRemembered {
   const remembered: PaidCallRemembered = {
     route: input.route,
@@ -362,6 +377,8 @@ export function rememberPaidCall(input: {
   }
   if (input.http_status !== undefined) remembered.http_status = input.http_status;
   if (input.user_agent) remembered.user_agent = input.user_agent;
+  const receiptId = sanitizeReceiptId(input.receipt_id);
+  if (receiptId) remembered.receipt_id = receiptId;
   const store = paidCallAls.getStore();
   if (store) store.remembered = remembered;
   return remembered;
@@ -398,6 +415,7 @@ export function recordSuccessfulPaidCheck(input: {
   verdict?: string;
   http_status?: number;
   user_agent?: string;
+  receipt_id?: string;
 }): void {
   rememberPaidCall(input);
   if (!isLiveSettlement()) {
