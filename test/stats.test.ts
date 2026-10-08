@@ -1108,7 +1108,8 @@ describe("internal wallet list and external payers", () => {
     assert.equal(doc.traffic.external.payers.l7d.confirm.calls, 1);
     assert.equal(doc.traffic.external.payers.l7d.confirm.unique_payers, 1);
     assert.equal(doc.traffic.testers.available, true);
-    assert.equal(doc.traffic.testers.wallets_configured, 1);
+    // docs-example tester + the Sep 14 docs-example payer (0xe3ba…3fb3).
+    assert.equal(doc.traffic.testers.wallets_configured, 2);
     assert.equal(doc.traffic.testers.calls.l7d, 1);
     assert.equal(doc.traffic.testers.calls.l30d, 1);
     assert.equal(doc.traffic.testers.unique_payers.l7d, 1);
