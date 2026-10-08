@@ -18,6 +18,7 @@ import {
 import { referrerSource, registrableDomain, uaClass, utmSource } from "./free-job-sources.js";
 import { EXAMPLE_TTL_MS, ExampleCache, FREE_JOB_EXAMPLES, isExampleKey, type ExampleKey } from "./free-job-examples.js";
 import { lookupRole, roleLine, type RoleInfo } from "./free-job-role.js";
+import { queryRefundCandidateDailyFromStore } from "./paid-call-store.js";
 import { publicOrigin } from "./public-url.js";
 import type { VerifyVerdict } from "./types.js";
 import { VerifyError, parseTargetUrl, verifyUrl } from "./verify.js";
@@ -798,6 +799,9 @@ export function registerFreeJobRoutes(app: Hono): void {
       this_hour_checks: limiter.checksThisHour(now),
       in_flight: limiter.inFlightNow(),
       example_cache: { cached: examples.keys(), refreshes: examples.refreshes, ttl_minutes: EXAMPLE_TTL_MS / 60_000 },
+      // MPP paid calls that could not return a real answer (review for refund).
+      // Counts per UTC day only; this view is token-gated, never public /stats.
+      mpp_refund_candidates: queryRefundCandidateDailyFromStore(now) ?? { available: false },
     });
   });
   // /check alias from the launch kit ("livecheck.fly.dev/job (or /check)").

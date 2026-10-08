@@ -1541,3 +1541,45 @@ export function listRefundCandidatesFromStore(): RefundCandidate[] {
   if (!state?.ok) return [];
   return listRefundCandidates(state.db);
 }
+
+export type RefundCandidateDaily = {
+  /** UTC days, oldest first, zero-filled. */
+  days: Array<{ day: string; count: number }>;
+  total: number;
+  by_reason: Record<string, number>;
+};
+
+/**
+ * Daily refund-candidate counts for the private (token-gated) stats view.
+ * Counts only: no payer, payment id, or route. Never on public /stats.
+ */
+export function queryRefundCandidateDaily(db: DatabaseSync, now = new Date(), days = 30): RefundCandidateDaily {
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - (days - 1)));
+  const sinceIso = start.toISOString();
+  const rows = db
+    .prepare(
+      `SELECT substr(ts, 1, 10) AS day, reason, COUNT(*) AS n FROM refund_candidates
+       WHERE ts >= ? GROUP BY substr(ts, 1, 10), reason`,
+    )
+    .all(sinceIso) as Array<{ day: string; reason: string; n: number | bigint }>;
+  const perDay = new Map<string, number>();
+  const byReason: Record<string, number> = {};
+  let total = 0;
+  for (const row of rows) {
+    const n = Number(row.n);
+    perDay.set(row.day, (perDay.get(row.day) ?? 0) + n);
+    byReason[row.reason] = (byReason[row.reason] ?? 0) + n;
+    total += n;
+  }
+  const out: RefundCandidateDaily["days"] = [];
+  for (let i = 0; i < days; i++) {
+    const day = new Date(start.getTime() + i * 86_400_000).toISOString().slice(0, 10);
+    out.push({ day, count: perDay.get(day) ?? 0 });
+  }
+  return { days: out, total, by_reason: byReason };
+}
+
+export function queryRefundCandidateDailyFromStore(now = new Date(), days = 30): RefundCandidateDaily | undefined {
+  if (!state?.ok) return undefined;
+  return queryRefundCandidateDaily(state.db, now, days);
+}
