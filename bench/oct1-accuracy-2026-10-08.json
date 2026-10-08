@@ -1,0 +1,384 @@
+{
+  "plate": "bench/oct1-accuracy-urls.json",
+  "fetched_at": "2026-10-08",
+  "method": "verifyUrl(url, fetch, now, { atsApi: true, deadlineMs: 20000 })",
+  "before": {
+    "commit": "4dca3b2",
+    "n": 20,
+    "live": 7,
+    "closed": 10,
+    "unknown": 3,
+    "closed_to_live": 0,
+    "false_live": 0
+  },
+  "after": {
+    "commit": "7575a8c",
+    "n": 20,
+    "live": 7,
+    "closed": 10,
+    "unknown": 3,
+    "closed_to_live": 0,
+    "false_live": 0
+  },
+  "verdict_changes": [],
+  "signal_only_changes": [
+    {
+      "id": "closed-greenhouse-1",
+      "url": "https://www.cloudflare.com/careers/",
+      "before_status": "closed",
+      "after_status": "closed",
+      "before_signals": [
+        "ats_api_missing",
+        "redirected_to_board",
+        "ats_empty_state"
+      ],
+      "after_signals": [
+        "ats_api_missing",
+        "redirected_to_board",
+        "ats_empty_state",
+        "not_a_specific_posting",
+        "careers_homepage"
+      ]
+    },
+    {
+      "id": "closed-greenhouse-2",
+      "url": "https://careers.airbnb.com/positions/",
+      "before_status": "closed",
+      "after_status": "closed",
+      "before_signals": [
+        "ats_api_missing",
+        "apply form present",
+        "no closure banner"
+      ],
+      "after_signals": [
+        "ats_api_missing",
+        "redirected_away_from_job",
+        "apply form present",
+        "no closure banner",
+        "not_a_specific_posting"
+      ]
+    }
+  ],
+  "live_to_closed_vs_oct1_expected": [
+    {
+      "id": "live-workday-1",
+      "url": "https://adobe.wd5.myworkdayjobs.com/en-US/external_experienced/job/San-Jose/Sr-Technology-Compliance-Product-Owner_R172124",
+      "oct1_expected": "live",
+      "before": "closed",
+      "after": "closed",
+      "hand_check": "2026-10-08 Adobe CXS job endpoint returned HTTP 403 errorCode S22 (permission denied), which this classifier treats as a gone requisition. CXS searchText R172124 returned total 0. Control requisition R171875 (live-workday-2) returned HTTP 200 with title Staff Security Data Engineer. The role is no longer posted. Same closed verdict on both commits, so this is not a regression of the redirect rule."
+    }
+  ],
+  "rows": [
+    {
+      "id": "closed-greenhouse-1",
+      "ats": "greenhouse",
+      "expected_oct1": "closed",
+      "before": "closed",
+      "after": "closed",
+      "changed": false,
+      "after_signals": [
+        "ats_api_missing",
+        "redirected_to_board",
+        "ats_empty_state",
+        "not_a_specific_posting",
+        "careers_homepage"
+      ],
+      "after_confidence": 0.95,
+      "after_http_status": 200,
+      "after_canonical_url": "https://www.cloudflare.com/careers/"
+    },
+    {
+      "id": "closed-greenhouse-2",
+      "ats": "greenhouse",
+      "expected_oct1": "closed",
+      "before": "closed",
+      "after": "closed",
+      "changed": false,
+      "after_signals": [
+        "ats_api_missing",
+        "redirected_away_from_job",
+        "apply form present",
+        "no closure banner",
+        "not_a_specific_posting"
+      ],
+      "after_confidence": 0.95,
+      "after_http_status": 200,
+      "after_canonical_url": "https://careers.airbnb.com/positions/"
+    },
+    {
+      "id": "live-greenhouse-1",
+      "ats": "greenhouse",
+      "expected_oct1": "live",
+      "before": "live",
+      "after": "live",
+      "changed": false,
+      "after_signals": [
+        "ats_api_listed",
+        "ats_posted_at:2026-09-15T16:52:11Z",
+        "apply form present",
+        "no closure banner"
+      ],
+      "after_confidence": 0.97,
+      "after_http_status": 200,
+      "after_canonical_url": "https://job-boards.greenhouse.io/discord/jobs/8806482002"
+    },
+    {
+      "id": "live-greenhouse-2",
+      "ats": "greenhouse",
+      "expected_oct1": "live",
+      "before": "live",
+      "after": "live",
+      "changed": false,
+      "after_signals": [
+        "ats_api_listed",
+        "ats_posted_at:2026-09-24T21:26:49Z",
+        "apply form present",
+        "no closure banner"
+      ],
+      "after_confidence": 0.97,
+      "after_http_status": 200,
+      "after_canonical_url": "https://job-boards.greenhouse.io/discord/jobs/8840756002"
+    },
+    {
+      "id": "closed-lever-1",
+      "ats": "lever",
+      "expected_oct1": "closed",
+      "before": "closed",
+      "after": "closed",
+      "changed": false,
+      "after_signals": [
+        "ats_api_missing",
+        "http_404",
+        "challenge_page"
+      ],
+      "after_confidence": 0.95,
+      "after_http_status": 404,
+      "after_canonical_url": "https://jobs.lever.co/palantir/00000000-0000-0000-0000-000000000000"
+    },
+    {
+      "id": "closed-lever-2",
+      "ats": "lever",
+      "expected_oct1": "closed",
+      "before": "closed",
+      "after": "closed",
+      "changed": false,
+      "after_signals": [
+        "ats_api_missing",
+        "http_404",
+        "challenge_page"
+      ],
+      "after_confidence": 0.95,
+      "after_http_status": 404,
+      "after_canonical_url": "https://jobs.lever.co/palantir/ffffffff-ffff-ffff-ffff-ffffffffffff"
+    },
+    {
+      "id": "live-lever-1",
+      "ats": "lever",
+      "expected_oct1": "live",
+      "before": "unknown",
+      "after": "unknown",
+      "changed": false,
+      "after_signals": [
+        "challenge_page"
+      ],
+      "after_confidence": 0.55,
+      "after_http_status": 200,
+      "after_canonical_url": "https://jobs.lever.co/palantir/16a1b500-13fe-4c22-ad89-372093b462da"
+    },
+    {
+      "id": "live-lever-2",
+      "ats": "lever",
+      "expected_oct1": "live",
+      "before": "unknown",
+      "after": "unknown",
+      "changed": false,
+      "after_signals": [
+        "challenge_page"
+      ],
+      "after_confidence": 0.55,
+      "after_http_status": 200,
+      "after_canonical_url": "https://jobs.lever.co/palantir/10dfc8bc-99ad-4ca2-ab76-853cb90a92c2"
+    },
+    {
+      "id": "closed-workday-1",
+      "ats": "workday",
+      "expected_oct1": "closed",
+      "before": "closed",
+      "after": "closed",
+      "changed": false,
+      "after_signals": [
+        "ats_api_missing",
+        "js_shell"
+      ],
+      "after_confidence": 0.95,
+      "after_http_status": 200,
+      "after_canonical_url": "https://adobe.wd5.myworkdayjobs.com/en-US/external_experienced/job/Nowhere/Does-Not-Exist_R000000"
+    },
+    {
+      "id": "closed-workday-2",
+      "ats": "workday",
+      "expected_oct1": "closed",
+      "before": "closed",
+      "after": "closed",
+      "changed": false,
+      "after_signals": [
+        "ats_api_missing",
+        "js_shell"
+      ],
+      "after_confidence": 0.95,
+      "after_http_status": 200,
+      "after_canonical_url": "https://adobe.wd5.myworkdayjobs.com/en-US/external_experienced/job/Faketown/Fake-Role_R99999999"
+    },
+    {
+      "id": "live-workday-1",
+      "ats": "workday",
+      "expected_oct1": "live",
+      "before": "closed",
+      "after": "closed",
+      "changed": false,
+      "after_signals": [
+        "ats_api_missing",
+        "js_shell"
+      ],
+      "after_confidence": 0.95,
+      "after_http_status": 200,
+      "after_canonical_url": "https://adobe.wd5.myworkdayjobs.com/en-US/external_experienced/job/San-Jose/Sr-Technology-Compliance-Product-Owner_R172124"
+    },
+    {
+      "id": "live-workday-2",
+      "ats": "workday",
+      "expected_oct1": "live",
+      "before": "live",
+      "after": "live",
+      "changed": false,
+      "after_signals": [
+        "ats_api_listed",
+        "js_shell"
+      ],
+      "after_confidence": 0.96,
+      "after_http_status": 200,
+      "after_canonical_url": "https://adobe.wd5.myworkdayjobs.com/en-US/external_experienced/job/San-Jose/Staff-Security-Data-Engineer_R171875-1"
+    },
+    {
+      "id": "closed-ashby-1",
+      "ats": "ashby",
+      "expected_oct1": "closed",
+      "before": "closed",
+      "after": "closed",
+      "changed": false,
+      "after_signals": [
+        "ats_api_missing",
+        "ambiguous_html"
+      ],
+      "after_confidence": 0.95,
+      "after_http_status": 200,
+      "after_canonical_url": "https://jobs.ashbyhq.com/linear/deadbeef-dead-beef-dead-beefdeadbeef"
+    },
+    {
+      "id": "closed-ashby-2",
+      "ats": "ashby",
+      "expected_oct1": "closed",
+      "before": "unknown",
+      "after": "unknown",
+      "changed": false,
+      "after_signals": [
+        "ambiguous_html"
+      ],
+      "after_confidence": 0.35,
+      "after_http_status": 200,
+      "after_canonical_url": "https://jobs.ashbyhq.com/notion/deadbeef-dead-beef-dead-beefdeadbeef"
+    },
+    {
+      "id": "live-ashby-1",
+      "ats": "ashby",
+      "expected_oct1": "live",
+      "before": "live",
+      "after": "live",
+      "changed": false,
+      "after_signals": [
+        "ats_api_listed",
+        "ats_posted_at:2021-04-27T20:13:45Z",
+        "ambiguous_html"
+      ],
+      "after_confidence": 0.97,
+      "after_http_status": 200,
+      "after_canonical_url": "https://jobs.ashbyhq.com/linear/d3bc1ced-3ce4-4086-a050-555055dbb1ff"
+    },
+    {
+      "id": "live-ashby-2",
+      "ats": "ashby",
+      "expected_oct1": "live",
+      "before": "live",
+      "after": "live",
+      "changed": false,
+      "after_signals": [
+        "ats_api_listed",
+        "ats_posted_at:2021-08-18T20:48:26Z",
+        "ambiguous_html"
+      ],
+      "after_confidence": 0.97,
+      "after_http_status": 200,
+      "after_canonical_url": "https://jobs.ashbyhq.com/linear/cd5ae036-0223-427a-b038-ba16ef9dcb32"
+    },
+    {
+      "id": "closed-careers-1",
+      "ats": "careers",
+      "expected_oct1": "closed",
+      "before": "closed",
+      "after": "closed",
+      "changed": false,
+      "after_signals": [
+        "close_language:this job is closed to new applications",
+        "challenge_page"
+      ],
+      "after_confidence": 0.9,
+      "after_http_status": 200,
+      "after_canonical_url": "https://www.teamworkonline.com/baseball-jobs/colorado-rockies/colorado-rockies-jobs/staff-accountant-2170000"
+    },
+    {
+      "id": "closed-careers-2",
+      "ats": "careers",
+      "expected_oct1": "closed",
+      "before": "closed",
+      "after": "closed",
+      "changed": false,
+      "after_signals": [
+        "http_410"
+      ],
+      "after_confidence": 0.95,
+      "after_http_status": 410,
+      "after_canonical_url": "https://careers-fhp.icims.com/jobs/18915/registered-nurse-%28rn%29---temporary-assignment-september-2026/job"
+    },
+    {
+      "id": "live-careers-1",
+      "ats": "careers",
+      "expected_oct1": "live",
+      "before": "live",
+      "after": "live",
+      "changed": false,
+      "after_signals": [
+        "apply form present",
+        "no closure banner"
+      ],
+      "after_confidence": 0.92,
+      "after_http_status": 200,
+      "after_canonical_url": "https://careers.ethena.fi/jobs/7982323-enterprise-fintech-partnership-manager"
+    },
+    {
+      "id": "live-careers-2",
+      "ats": "careers",
+      "expected_oct1": "live",
+      "before": "live",
+      "after": "live",
+      "changed": false,
+      "after_signals": [
+        "apply form present",
+        "no closure banner"
+      ],
+      "after_confidence": 0.92,
+      "after_http_status": 200,
+      "after_canonical_url": "https://culinaryagents.com/jobs/677183-Dining-Room-Leadership-Opportunities-for-Upcoming-Projects"
+    }
+  ]
+}

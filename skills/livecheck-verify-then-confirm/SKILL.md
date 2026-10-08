@@ -55,10 +55,10 @@ curl -sS -D - -o /tmp/livecheck-confirm.402 https://livecheck.fly.dev/v1/confirm
   -d '{"url":"https://livecheck.fly.dev/demo/thank-you?ref=ABC123","intent":"lead_submit"}'
 ```
 
-Paid Verify (`$0.01`) — expect `status=live`:
+Paid Verify (`$0.01`) — expect `status=live`. `-A` labels this skill's own purl runs (`livecheck-internal/`) on the log and on `/stats`. The label does not remove the call from external. External is the payer wallet.
 
 ```bash
-purl https://livecheck.fly.dev/v1/verify \
+purl -A 'livecheck-internal/purl-0.2.8' https://livecheck.fly.dev/v1/verify \
   -H 'content-type: application/json' \
   -d '{"url":"https://livecheck.fly.dev/fixtures/live-apply-now"}'
 ```
@@ -68,7 +68,7 @@ purl https://livecheck.fly.dev/v1/verify \
 Paid Confirm (`$0.10`) — expect `verdict=confirmed`, Level-2 id `ABC123`:
 
 ```bash
-purl https://livecheck.fly.dev/v1/confirm \
+purl -A 'livecheck-internal/purl-0.2.8' https://livecheck.fly.dev/v1/confirm \
   -H 'content-type: application/json' \
   -d '{"url":"https://livecheck.fly.dev/demo/thank-you?ref=ABC123","intent":"lead_submit"}'
 ```
@@ -76,7 +76,7 @@ purl https://livecheck.fly.dev/v1/confirm \
 Honesty contrast (thank-you fluff → `unknown`, never confirmed):
 
 ```bash
-purl https://livecheck.fly.dev/v1/confirm \
+purl -A 'livecheck-internal/purl-0.2.8' https://livecheck.fly.dev/v1/confirm \
   -H 'content-type: application/json' \
   -d '{"url":"https://livecheck.fly.dev/fixtures/confirm/thank-you-only","intent":"lead_submit"}'
 ```

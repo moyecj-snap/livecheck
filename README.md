@@ -65,7 +65,13 @@ purl https://livecheck.fly.dev/v1/verify \
   -d '{"url":"https://job-boards.greenhouse.io/discord/jobs/8806482002"}'
 ```
 
-Prefer a URL from your own workflow.
+Prefer a URL from your own workflow. Our own runs add `-A 'livecheck-internal/purl-0.2.8'` so the paid-call log and `/stats` `traffic.internal_label` can see them. That user agent is a label only. External revenue is the payer wallet. Anyone can send the header, and an outside wallet that sends it still counts as external. The purl binary may still print `0.2.8` when the download is the v0.2.9 asset:
+
+```bash
+purl -A 'livecheck-internal/purl-0.2.8' https://livecheck.fly.dev/v1/verify \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://job-boards.greenhouse.io/discord/jobs/8806482002"}'
+```
 
 ### 5. Limits
 
@@ -650,7 +656,15 @@ purl https://livecheck.fly.dev/v1/verify \
   -d '{"url":"https://job-boards.greenhouse.io/discord/jobs/8806482002"}'
 ```
 
-Local-dev override only when this repo is running (`npm start`): `purl http://127.0.0.1:43127/v1/verify …`
+Internal team run. `-A` is a label on the log and on `traffic.internal_label`. It does not remove the call from `traffic.external`:
+
+```bash
+purl -A 'livecheck-internal/purl-0.2.8' https://livecheck.fly.dev/v1/verify \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://job-boards.greenhouse.io/discord/jobs/8806482002"}'
+```
+
+Local-dev override only when this repo is running (`npm start`): `purl -A 'livecheck-internal/purl-0.2.8' http://127.0.0.1:43127/v1/verify …`
 
 `purl` moves real funds because the deposit address is a live-mode Base address.
 

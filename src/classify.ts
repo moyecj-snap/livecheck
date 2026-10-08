@@ -145,8 +145,13 @@ function isAtsHost(host: string): boolean {
   );
 }
 
+function looksLikeNumericGhJid(url: string): boolean {
+  return /[?&]gh_jid=\d+\b/i.test(extractHostPath(url).search);
+}
+
 function looksLikeSpecificJobUrl(url: string): boolean {
   const { host, path } = extractHostPath(url);
+  if (/\/careers\/listing\/[^/]+\/\d+/i.test(path)) return true;
   if (host.endsWith("greenhouse.io")) {
     return /\/jobs\/\d+/.test(path) || /\/embed\/job_app/.test(path);
   }
@@ -156,7 +161,13 @@ function looksLikeSpecificJobUrl(url: string): boolean {
   if (host.endsWith("ashbyhq.com")) {
     return /\/[^/]+\/[^/]+/.test(path) && !/\/jobs\/?$/.test(path);
   }
-  return /\/(job|jobs|position|posting|requisition)s?\/[^/]+/i.test(path);
+  // A search or board path stays a search page even when it carries gh_jid.
+  if (looksLikeNumericGhJid(url) && !looksLikeBoardOrSearchUrl(url) && !looksLikeCollectionOrCategoryUrl(url)) {
+    return true;
+  }
+  const posting = path.match(/\/(?:job|jobs|position|posting|requisition)s?\/([^/]+)/i);
+  if (!posting) return false;
+  return !/^(search|board|list|index)$/i.test(posting[1]);
 }
 
 function looksLikeBoardOrSearchUrl(url: string): boolean {
@@ -279,12 +290,23 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
     confidence = Math.max(confidence, 0.9);
   }
 
-  const redirectedToBoard =
-    page.redirected &&
-    looksLikeSpecificJobUrl(page.requestedUrl) &&
-    looksLikeBoardOrSearchUrl(page.canonicalUrl);
-
-  if (redirectedToBoard) {
+  const loginwall = includesPhrase(text, LOGINWALL_PHRASES);
+  // After a redirect, page type comes from the final URL only.
+  const redirected = Boolean(page.redirected);
+  const specificPosting =
+    looksLikeSpecificJobUrl(page.canonicalUrl) || (!redirected && looksLikeSpecificJobUrl(page.requestedUrl));
+  const boardOrSearch =
+    looksLikeBoardOrSearchUrl(page.canonicalUrl) || (!redirected && looksLikeBoardOrSearchUrl(page.requestedUrl));
+  const apply = hasApplyAffordance(page.html, text);
+  const manyCards = countJobCards(page.html, page.text) >= 3;
+  let collectionOrCategory =
+    looksLikeCollectionOrCategoryUrl(page.canonicalUrl) ||
+    (!redirected && looksLikeCollectionOrCategoryUrl(page.requestedUrl));
+  // A single job with an apply form is not a search or category page.
+  if (specificPosting && apply && !manyCards) collectionOrCategory = false;
+  const requestedJobRef = looksLikeSpecificJobUrl(page.requestedUrl) || looksLikeNumericGhJid(page.requestedUrl);
+  const redirectedAwayFromJob = redirected && requestedJobRef && !looksLikeSpecificJobUrl(page.canonicalUrl);
+  if (redirectedAwayFromJob && (boardOrSearch || collectionOrCategory || closedPhrase)) {
     signals.push("redirected_to_board");
     if (isAtsHost(extractHostPath(page.canonicalUrl).host) || isAtsHost(extractHostPath(page.requestedUrl).host)) {
       signals.push("ats_empty_state");
@@ -293,23 +315,21 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
       status = "closed";
       confidence = Math.max(confidence, 0.86);
     }
+  } else if (redirectedAwayFromJob && status !== "closed") {
+    signals.push("redirected_away_from_job");
+    status = "unknown";
+    confidence = Math.max(confidence, 0.55);
   }
-
-  const loginwall = includesPhrase(text, LOGINWALL_PHRASES);
-  const specificPosting = looksLikeSpecificJobUrl(page.canonicalUrl) || looksLikeSpecificJobUrl(page.requestedUrl);
-  const boardOrSearch = looksLikeBoardOrSearchUrl(page.canonicalUrl);
-  const apply = hasApplyAffordance(page.html, text);
-  const manyCards = countJobCards(page.html, page.text) >= 3;
-  const collectionOrCategory =
-    looksLikeCollectionOrCategoryUrl(page.canonicalUrl) || looksLikeCollectionOrCategoryUrl(page.requestedUrl);
   const specificProduct =
-    looksLikeSpecificProductUrl(page.canonicalUrl) || looksLikeSpecificProductUrl(page.requestedUrl);
+    looksLikeSpecificProductUrl(page.canonicalUrl) ||
+    (!redirected && looksLikeSpecificProductUrl(page.requestedUrl));
   const buy = hasBuyAffordance(html, text);
   const soldOutPhrase = hasVisibleSoldOut(html, text);
   const manyProductCards = countProductCards(html) >= 3;
   const productPage = specificProduct || (buy && !collectionOrCategory && !manyProductCards && !specificPosting);
   const jsShell =
-    looksLikeJsShell(html, text, page.canonicalUrl) || looksLikeJsShell(html, text, page.requestedUrl);
+    looksLikeJsShell(html, text, page.canonicalUrl) ||
+    (!redirected && looksLikeJsShell(html, text, page.requestedUrl));
   const challenge = isChallengeInterstitial(html, text, specificProduct || buy);
   if (challenge) {
     signals.push("challenge_page");
@@ -351,6 +371,7 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
 
   if (
     status !== "closed" &&
+    !redirectedAwayFromJob &&
     !challenge &&
     !loginwall &&
     !jsShell &&

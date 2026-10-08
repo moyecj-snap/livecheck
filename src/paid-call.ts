@@ -114,8 +114,16 @@ export type PaidCallEvent = {
   http_status?: number;
   /** Sanitized caller User-Agent. Omitted when missing or rejected. */
   user_agent?: string;
+  /**
+   * Set when user_agent starts with `livecheck-internal/`.
+   * A label on the log line only. The payer wallet decides external.
+   */
+  internal_label?: true;
   ts: string;
 };
+
+/** Log and /stats annotation. Anyone can send this prefix; it is not an audience filter. */
+export const INTERNAL_LABEL_USER_AGENT_PREFIX = "livecheck-internal/";
 
 /** Cap caller User-Agent length. Longer values are truncated, not rejected. */
 export const USER_AGENT_MAX = 256;
@@ -281,7 +289,10 @@ export function buildPaidCallEvent(
   const httpStatus = sanitizeHttpStatus(remembered.http_status);
   const userAgent = sanitizeUserAgent(remembered.user_agent);
   if (httpStatus !== undefined) event.http_status = httpStatus;
-  if (userAgent) event.user_agent = userAgent;
+  if (userAgent) {
+    event.user_agent = userAgent;
+    if (userAgent.toLowerCase().startsWith(INTERNAL_LABEL_USER_AGENT_PREFIX)) event.internal_label = true;
+  }
   const payer = sanitizePayer(settlement.payer);
   const tx = sanitizeTx(settlement.tx);
   const paymentIntent = sanitizePaymentIntent(settlement.payment_intent);

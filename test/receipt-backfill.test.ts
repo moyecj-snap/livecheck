@@ -6,7 +6,14 @@ import { describe, it } from "node:test";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { buildPaidCallEvent, hashUrl } from "../src/paid-call.js";
-import { insertPaidCallRow, listPaidCallRows, openPaidCallDb } from "../src/paid-call-store.js";
+import {
+  insertPaidCallRow,
+  listPaidCallRows,
+  openPaidCallDb,
+  queryRetentionWindows,
+  queryUnattributedWindows,
+} from "../src/paid-call-store.js";
+import { ATTRIBUTION_UNATTRIBUTED, NO_TX_ATTRIBUTION_NOTE } from "../src/settlement-payer.js";
 import {
   RECEIPT_RECONSTRUCTION_IMPOSSIBLE,
   runReceiptBackfill,
@@ -130,7 +137,6 @@ describe("receipt backfill", () => {
     assert.equal(second.sentinel_rows_inserted, 0);
     const db = openPaidCallDb(paidPath);
     const rows = listPaidCallRows(db);
-    db.close();
     assert.equal(rows.length, 1);
     assert.equal(rows[0].route, "check");
     assert.equal(rows[0].host, "");
@@ -138,6 +144,15 @@ describe("receipt backfill", () => {
     assert.equal(rows[0].verdict, "observed");
     assert.equal(rows[0].payer, undefined);
     assert.equal(rows[0].user_agent, undefined);
+    assert.equal(rows[0].attribution, ATTRIBUTION_UNATTRIBUTED);
+    assert.equal(rows[0].attribution_note, NO_TX_ATTRIBUTION_NOTE);
+    assert.equal(rows[0].tx, undefined);
+    const nowWindow = new Date("2026-09-11T19:00:00.000Z");
+    const external = queryRetentionWindows(db, nowWindow, [], [], { external: true });
+    const unattributed = queryUnattributedWindows(db, nowWindow);
+    assert.equal(external.l30d.check.calls, 0);
+    assert.equal(unattributed.l30d.check.calls, 1);
+    db.close();
     closeReceiptStore();
   });
 

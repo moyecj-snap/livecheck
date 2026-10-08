@@ -23,6 +23,9 @@ import {
   queryPaidCallCountsForPayersFromStore,
   queryPaidCallCountsForUrlHashesFromStore,
   queryRetentionWindowsFromStore,
+  queryIncludedPayerWindowsFromStore,
+  queryInternalLabelCountsFromStore,
+  queryUnattributedWindowsFromStore,
   type ConfirmIntentCounts,
   type PaidRouteCounts,
   type RouteCounts,
@@ -128,6 +131,15 @@ export const GRADER_TEST_TRAFFIC_LABEL =
 export const TESTER_TEST_TRAFFIC_LABEL =
   "Docs and manual tester wallets are test traffic and are omitted from traffic.external.";
 
+export const UNATTRIBUTED_TRAFFIC_LABEL =
+  "Paid calls with no known payer. Counted in traffic.all and traffic.unattributed. Omitted from traffic.external and from unique payers.";
+
+export const INTERNAL_WALLET_TRAFFIC_LABEL =
+  "Paid calls whose payer is on the internal wallet list. Counted in traffic.all and traffic.internal. Omitted from traffic.external.";
+
+export const INTERNAL_LABEL_NOTE =
+  "user_agent prefix livecheck-internal/ is a label only. It does not remove a call from traffic.external. External is decided by wallet.";
+
 /** Paid calls to the public docs examples. Still inside traffic.all. */
 export type DocsExampleTraffic = {
   label: typeof DOCS_EXAMPLE_TEST_TRAFFIC_LABEL;
@@ -166,6 +178,37 @@ export type TrafficRevenue = {
   external: TrafficRevenueWindow;
 };
 
+/** Internal-wallet paid_calls. Still inside traffic.all. Never external. Blank payers stay unattributed. */
+export type InternalWalletTraffic = {
+  label: typeof INTERNAL_WALLET_TRAFFIC_LABEL;
+  /**
+   * False when this volume's paid-call store is closed, or a fleet peer
+   * did not publish the split. Zeros are not a measurement in that case.
+   */
+  available: boolean;
+  calls: { l7d: number; l30d: number };
+  revenue: TrafficRevenueWindow;
+};
+
+/** Count of paid_calls whose user_agent starts with livecheck-internal/. Not an audience filter. */
+export type InternalLabelAnnotation = {
+  label: typeof INTERNAL_LABEL_NOTE;
+  available: boolean;
+  calls: { l7d: number; l30d: number };
+};
+
+/** Blank-payer paid_calls. Still inside traffic.all revenue. Never external. */
+export type UnattributedTraffic = {
+  label: typeof UNATTRIBUTED_TRAFFIC_LABEL;
+  /**
+   * False when this volume's paid-call store is closed, or a fleet peer
+   * did not publish the split. Zeros are not a measurement in that case.
+   */
+  available: boolean;
+  calls: { l7d: number; l30d: number };
+  revenue: TrafficRevenueWindow;
+};
+
 export type TrafficHonesty = {
   includes_internal_test_traffic: true;
   label: typeof INTERNAL_TEST_TRAFFIC_LABEL;
@@ -178,6 +221,12 @@ export type TrafficHonesty = {
   graders: GraderTraffic;
   /** Manual tester wallets counted in `all` and omitted from `external`. */
   testers: GraderTraffic;
+  /** Internal-wallet rows counted in `all` and omitted from `external`. */
+  internal: InternalWalletTraffic;
+  /** Blank-payer rows counted in `all` and omitted from `external`. */
+  unattributed: UnattributedTraffic;
+  /** Label count for livecheck-internal/ user agents. Does not change external. */
+  internal_label: InternalLabelAnnotation;
   /** Route-priced sum of paid_calls. external uses the same omissions as traffic.external. */
   revenue: TrafficRevenue;
   /**
@@ -293,6 +342,23 @@ export function trafficHonestyNote(input: {
     calls: { l7d: number; l30d: number };
     complete: boolean;
   };
+  unattributed: {
+    available: boolean;
+    calls: { l7d: number; l30d: number };
+    revenue: TrafficRevenueWindow;
+    complete: boolean;
+  };
+  internal: {
+    available: boolean;
+    calls: { l7d: number; l30d: number };
+    revenue: TrafficRevenueWindow;
+    complete: boolean;
+  };
+  internalLabel: {
+    available: boolean;
+    calls: { l7d: number; l30d: number };
+    complete: boolean;
+  };
 }): string {
   const parts = [
     INTERNAL_TEST_TRAFFIC_LABEL,
@@ -312,9 +378,17 @@ export function trafficHonestyNote(input: {
     DOCS_EXAMPLE_TEST_TRAFFIC_LABEL,
     `The stored paid_calls column is url_sha256 (SHA-256 of the full URL). traffic.external omits ${DOCS_EXAMPLE_URLS.join(", ")}. Those calls stay in traffic.all.`,
     docsExampleNote(input.docsExample, input.fleet),
-    "One-shot check receipts have no payer and stay in both sentinel checks_run totals. Check, watch, and renew payers are on traffic.payers when the paid_call row stored one. paid_calls with a null payer stay in external unless the URL is a docs example.",
+    "One-shot check receipts have no payer and stay in both sentinel checks_run totals. Check, watch, and renew payers are on traffic.payers when the paid_call row stored one.",
+    "A paid_calls row with a null or blank payer is traffic.unattributed. It stays in traffic.all and in all revenue. It is omitted from traffic.external, external revenue, and unique payers.",
+    `traffic.unattributed is ${input.unattributed.calls.l7d} L7d / ${input.unattributed.calls.l30d} L30d calls ($${input.unattributed.revenue.l7d_usd.toFixed(2)} / $${input.unattributed.revenue.l30d_usd.toFixed(2)}).`,
+    unattributedNote(input.unattributed, input.fleet),
+    `traffic.internal is ${input.internal.calls.l7d} L7d / ${input.internal.calls.l30d} L30d calls ($${input.internal.revenue.l7d_usd.toFixed(2)} / $${input.internal.revenue.l30d_usd.toFixed(2)}).`,
+    internalWalletNote(input.internal, input.fleet),
+    "A user_agent that starts with livecheck-internal/ is an internal-label annotation on the paid-call log and on traffic.internal_label. It does not remove the call from traffic.external. External is decided by wallet only.",
+    `traffic.internal_label is ${input.internalLabel.calls.l7d} L7d / ${input.internalLabel.calls.l30d} L30d calls.`,
+    internalLabelNote(input.internalLabel, input.fleet),
     "traffic.payers counts every paid route in paid_calls: verify, confirm, check, watch, and watch/renew.",
-    "traffic.revenue is calls times the route price (verify $0.01, check $0.02, confirm $0.10, confirm/order $0.25, watch and watch/renew $2.50), from paid_calls. external revenue uses the same wallet and docs-example omissions.",
+    "traffic.revenue is calls times the route price (verify $0.01, check $0.02, confirm $0.10, confirm/order $0.25, watch and watch/renew $2.50), from paid_calls. All revenue includes unattributed and internal-wallet rows. External revenue omits blank payers, internal wallets, grader and tester wallets, and docs-example URLs.",
     "traffic.payers windows include routes for verify, verify/job, verify/listing, confirm, confirm/order, check, watch, and watch/renew (calls and distinct payers). verify, confirm, and watch remain family totals: calls are the sum, unique payers are distinct across that family on one SQLite file. Rows written before a route was stored keep the older route value.",
     input.fleet
       ? "unique_payers is withheld on this fleet document. Adding per-volume distinct payers is not a fleet-wide distinct."
@@ -372,6 +446,51 @@ function testerNote(
   return `${who} ${testers.calls.l7d} L7d / ${testers.calls.l30d} L30d tester paid_calls.`;
 }
 
+function internalWalletNote(
+  internal: { available: boolean; complete: boolean },
+  fleet: boolean,
+): string {
+  if (!internal.complete) {
+    return "traffic.internal is incomplete: at least one included machine did not publish the split. Do not read internal calls or revenue as the full fleet, and do not treat the gap as zero.";
+  }
+  if (!internal.available) {
+    return fleet
+      ? "Internal-wallet counts are not a measurement on this fleet response."
+      : "Internal-wallet counts are not a measurement on this response (paid-call store closed).";
+  }
+  return "When a blank-payer row later gets an internal wallet, that revenue moves from traffic.unattributed to traffic.internal.";
+}
+
+function internalLabelNote(
+  label: { available: boolean; complete: boolean },
+  fleet: boolean,
+): string {
+  if (!label.complete) {
+    return "traffic.internal_label is incomplete: at least one included machine did not publish the annotation. Do not treat the missing count as zero.";
+  }
+  if (!label.available) {
+    return fleet
+      ? "The internal-label count is not a measurement on this fleet response."
+      : "The internal-label count is not a measurement on this response (paid-call store closed).";
+  }
+  return "The label is a user_agent prefix. An outside wallet that sends it still counts as external.";
+}
+
+function unattributedNote(
+  unattributed: { available: boolean; complete: boolean },
+  fleet: boolean,
+): string {
+  if (!unattributed.complete) {
+    return "traffic.unattributed is incomplete: at least one included machine did not publish the split. Do not read unattributed calls or revenue as the full fleet, and do not treat the gap as zero.";
+  }
+  if (!unattributed.available) {
+    return fleet
+      ? "Unattributed counts are not a measurement on this fleet response."
+      : "Unattributed counts are not a measurement on this response (paid-call store closed).";
+  }
+  return "Unattributed rows are visible so the gap between all revenue and external revenue stays on the document.";
+}
+
 function docsExampleNote(
   docsExample: {
     available: boolean;
@@ -397,6 +516,81 @@ export function emptyDocsExampleTraffic(): DocsExampleTraffic {
     url: DOCS_EXAMPLE_URL,
     urls: DOCS_EXAMPLE_URLS,
     calls: { l7d: 0, l30d: 0 },
+  };
+}
+
+export function emptyUnattributedTraffic(): UnattributedTraffic {
+  return {
+    label: UNATTRIBUTED_TRAFFIC_LABEL,
+    available: false,
+    calls: { l7d: 0, l30d: 0 },
+    revenue: { l7d_usd: 0, l30d_usd: 0 },
+  };
+}
+
+function routeCallTotal(routes: PaidRouteCounts | undefined): number {
+  let calls = 0;
+  for (const route of PAID_CALL_ROUTES) calls += routes?.[route]?.calls ?? 0;
+  return calls;
+}
+
+export function emptyInternalWalletTraffic(): InternalWalletTraffic {
+  return {
+    label: INTERNAL_WALLET_TRAFFIC_LABEL,
+    available: false,
+    calls: { l7d: 0, l30d: 0 },
+    revenue: { l7d_usd: 0, l30d_usd: 0 },
+  };
+}
+
+export function emptyInternalLabelAnnotation(): InternalLabelAnnotation {
+  return {
+    label: INTERNAL_LABEL_NOTE,
+    available: false,
+    calls: { l7d: 0, l30d: 0 },
+  };
+}
+
+export function internalFromWindows(
+  windows: ReturnType<typeof queryIncludedPayerWindowsFromStore>,
+): InternalWalletTraffic {
+  if (!windows) return emptyInternalWalletTraffic();
+  return {
+    label: INTERNAL_WALLET_TRAFFIC_LABEL,
+    available: true,
+    calls: {
+      l7d: routeCallTotal(windows.l7d.routes),
+      l30d: routeCallTotal(windows.l30d.routes),
+    },
+    revenue: {
+      l7d_usd: paidCallRevenueUsd(windows.l7d.routes),
+      l30d_usd: paidCallRevenueUsd(windows.l30d.routes),
+    },
+  };
+}
+
+export function internalLabelFromCounts(
+  counts: { l7d: number; l30d: number } | undefined,
+): InternalLabelAnnotation {
+  if (!counts) return emptyInternalLabelAnnotation();
+  return { label: INTERNAL_LABEL_NOTE, available: true, calls: counts };
+}
+
+export function unattributedFromWindows(
+  windows: ReturnType<typeof queryUnattributedWindowsFromStore>,
+): UnattributedTraffic {
+  if (!windows) return emptyUnattributedTraffic();
+  return {
+    label: UNATTRIBUTED_TRAFFIC_LABEL,
+    available: true,
+    calls: {
+      l7d: routeCallTotal(windows.l7d.routes),
+      l30d: routeCallTotal(windows.l30d.routes),
+    },
+    revenue: {
+      l7d_usd: paidCallRevenueUsd(windows.l7d.routes),
+      l30d_usd: paidCallRevenueUsd(windows.l30d.routes),
+    },
   };
 }
 
@@ -809,6 +1003,140 @@ function mergeTesterTraffic(
   };
 }
 
+function readInternal(traffic: TrafficHonesty | undefined): InternalWalletTraffic | undefined {
+  const row = traffic?.internal;
+  if (!row || row.label !== INTERNAL_WALLET_TRAFFIC_LABEL) return undefined;
+  if (typeof row.available !== "boolean") return undefined;
+  if (typeof row.calls?.l7d !== "number" || typeof row.calls?.l30d !== "number") return undefined;
+  if (typeof row.revenue?.l7d_usd !== "number" || typeof row.revenue?.l30d_usd !== "number") return undefined;
+  return row;
+}
+
+function mergeInternalTraffic(
+  localTraffic: TrafficHonesty | undefined,
+  peers: readonly { included: boolean; doc?: StatsDocument }[],
+): { traffic: InternalWalletTraffic; complete: boolean } {
+  let calls = { l7d: 0, l30d: 0 };
+  let revenue = { l7d_usd: 0, l30d_usd: 0 };
+  let available = true;
+  let complete = true;
+  const absorb = (traffic: TrafficHonesty | undefined) => {
+    const row = readInternal(traffic);
+    if (!row) {
+      complete = false;
+      available = false;
+      return;
+    }
+    if (!row.available) available = false;
+    calls = { l7d: calls.l7d + row.calls.l7d, l30d: calls.l30d + row.calls.l30d };
+    revenue = {
+      l7d_usd: revenue.l7d_usd + row.revenue.l7d_usd,
+      l30d_usd: revenue.l30d_usd + row.revenue.l30d_usd,
+    };
+  };
+  absorb(localTraffic);
+  for (const peer of peers) {
+    if (!peer.included || !peer.doc) continue;
+    absorb(publishedTraffic(peer.doc));
+  }
+  return {
+    complete,
+    traffic: {
+      label: INTERNAL_WALLET_TRAFFIC_LABEL,
+      available: complete && available,
+      calls,
+      revenue,
+    },
+  };
+}
+
+function readInternalLabel(traffic: TrafficHonesty | undefined): InternalLabelAnnotation | undefined {
+  const row = traffic?.internal_label;
+  if (!row || row.label !== INTERNAL_LABEL_NOTE) return undefined;
+  if (typeof row.available !== "boolean") return undefined;
+  if (typeof row.calls?.l7d !== "number" || typeof row.calls?.l30d !== "number") return undefined;
+  return row;
+}
+
+function mergeInternalLabel(
+  localTraffic: TrafficHonesty | undefined,
+  peers: readonly { included: boolean; doc?: StatsDocument }[],
+): { traffic: InternalLabelAnnotation; complete: boolean } {
+  let calls = { l7d: 0, l30d: 0 };
+  let available = true;
+  let complete = true;
+  const absorb = (traffic: TrafficHonesty | undefined) => {
+    const row = readInternalLabel(traffic);
+    if (!row) {
+      complete = false;
+      available = false;
+      return;
+    }
+    if (!row.available) available = false;
+    calls = { l7d: calls.l7d + row.calls.l7d, l30d: calls.l30d + row.calls.l30d };
+  };
+  absorb(localTraffic);
+  for (const peer of peers) {
+    if (!peer.included || !peer.doc) continue;
+    absorb(publishedTraffic(peer.doc));
+  }
+  return {
+    complete,
+    traffic: {
+      label: INTERNAL_LABEL_NOTE,
+      available: complete && available,
+      calls,
+    },
+  };
+}
+
+function readUnattributed(traffic: TrafficHonesty | undefined): UnattributedTraffic | undefined {
+  const row = traffic?.unattributed;
+  if (!row || row.label !== UNATTRIBUTED_TRAFFIC_LABEL) return undefined;
+  if (typeof row.available !== "boolean") return undefined;
+  if (typeof row.calls?.l7d !== "number" || typeof row.calls?.l30d !== "number") return undefined;
+  if (typeof row.revenue?.l7d_usd !== "number" || typeof row.revenue?.l30d_usd !== "number") return undefined;
+  return row;
+}
+
+function mergeUnattributedTraffic(
+  localTraffic: TrafficHonesty | undefined,
+  peers: readonly { included: boolean; doc?: StatsDocument }[],
+): { traffic: UnattributedTraffic; complete: boolean } {
+  let calls = { l7d: 0, l30d: 0 };
+  let revenue = { l7d_usd: 0, l30d_usd: 0 };
+  let available = true;
+  let complete = true;
+  const absorb = (traffic: TrafficHonesty | undefined) => {
+    const row = readUnattributed(traffic);
+    if (!row) {
+      complete = false;
+      available = false;
+      return;
+    }
+    if (!row.available) available = false;
+    calls = { l7d: calls.l7d + row.calls.l7d, l30d: calls.l30d + row.calls.l30d };
+    revenue = {
+      l7d_usd: revenue.l7d_usd + row.revenue.l7d_usd,
+      l30d_usd: revenue.l30d_usd + row.revenue.l30d_usd,
+    };
+  };
+  absorb(localTraffic);
+  for (const peer of peers) {
+    if (!peer.included || !peer.doc) continue;
+    absorb(publishedTraffic(peer.doc));
+  }
+  return {
+    complete,
+    traffic: {
+      label: UNATTRIBUTED_TRAFFIC_LABEL,
+      available: complete && available,
+      calls,
+      revenue,
+    },
+  };
+}
+
 function readRevenue(traffic: TrafficHonesty | undefined): TrafficRevenue | undefined {
   const revenue = traffic?.revenue;
   if (!revenue || revenue.source !== "paid_calls") return undefined;
@@ -890,6 +1218,9 @@ export function mergeTrafficHonesty(
   const walletCount = localTraffic?.internal_wallets_configured ?? 0;
   const graders = mergeGraderTraffic(localTraffic, peers);
   const testers = mergeTesterTraffic(localTraffic, peers);
+  const unattributed = mergeUnattributedTraffic(localTraffic, peers);
+  const internal = mergeInternalTraffic(localTraffic, peers);
+  const internalLabel = mergeInternalLabel(localTraffic, peers);
   const revenue = mergeTrafficRevenue(localTraffic, peers, all.payers, external.payers);
   return {
     includes_internal_test_traffic: true,
@@ -913,6 +1244,23 @@ export function mergeTrafficHonesty(
         calls: testers.traffic.calls,
         complete: testers.complete,
       },
+      unattributed: {
+        available: unattributed.traffic.available,
+        calls: unattributed.traffic.calls,
+        revenue: unattributed.traffic.revenue,
+        complete: unattributed.complete,
+      },
+      internal: {
+        available: internal.traffic.available,
+        calls: internal.traffic.calls,
+        revenue: internal.traffic.revenue,
+        complete: internal.complete,
+      },
+      internalLabel: {
+        available: internalLabel.traffic.available,
+        calls: internalLabel.traffic.calls,
+        complete: internalLabel.complete,
+      },
     }),
     internal_wallets_configured: walletCount,
     docs_example: {
@@ -924,6 +1272,9 @@ export function mergeTrafficHonesty(
     },
     graders: graders.traffic,
     testers: testers.traffic,
+    internal: internal.traffic,
+    unattributed: unattributed.traffic,
+    internal_label: internalLabel.traffic,
     revenue,
     external_complete: externalComplete,
     routes_complete: routesComplete,
@@ -962,6 +1313,9 @@ export function buildTrafficHonesty(
   docsExample: DocsExampleTraffic,
   graders: GraderTraffic,
   testers: GraderTraffic,
+  unattributed: UnattributedTraffic,
+  internal: InternalWalletTraffic,
+  internalLabel: InternalLabelAnnotation,
 ): TrafficHonesty {
   const allPayers = trafficPayersFromStore(payersAll);
   const externalPayers = trafficPayersFromStore(payersExternal);
@@ -992,11 +1346,31 @@ export function buildTrafficHonesty(
         calls: testers.calls,
         complete: true,
       },
+      unattributed: {
+        available: unattributed.available,
+        calls: unattributed.calls,
+        revenue: unattributed.revenue,
+        complete: true,
+      },
+      internal: {
+        available: internal.available,
+        calls: internal.calls,
+        revenue: internal.revenue,
+        complete: true,
+      },
+      internalLabel: {
+        available: internalLabel.available,
+        calls: internalLabel.calls,
+        complete: true,
+      },
     }),
     internal_wallets_configured: walletCount,
     docs_example: docsExample,
     graders,
     testers,
+    internal,
+    unattributed,
+    internal_label: internalLabel,
     revenue,
     external_complete: true,
     routes_complete: true,
@@ -1032,7 +1406,12 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
   const oneShotChecks = countReceiptsSince("1970-01-01T00:00:00Z", "check").receipts;
   const exampleHashes = docsExampleUrlHashes();
   const payersAll = queryRetentionWindowsFromStore(now);
-  const payersExternal = queryRetentionWindowsFromStore(now, externalPayersExcluded, exampleHashes);
+  const payersExternal = queryRetentionWindowsFromStore(now, externalPayersExcluded, exampleHashes, {
+    external: true,
+  });
+  const unattributed = unattributedFromWindows(queryUnattributedWindowsFromStore(now));
+  const internal = internalFromWindows(queryIncludedPayerWindowsFromStore(now, wallets));
+  const internalLabel = internalLabelFromCounts(queryInternalLabelCountsFromStore(now));
   const exampleCounts = queryPaidCallCountsForUrlHashesFromStore(now, exampleHashes);
   const graderCounts = queryPaidCallCountsForPayersFromStore(now, graders);
   const testerCounts = queryPaidCallCountsForPayersFromStore(now, testers);
@@ -1083,6 +1462,9 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
       docsExample,
       graderTraffic,
       testerTraffic,
+      unattributed,
+      internal,
+      internalLabel,
     ),
     intents: {
       lead_submit: {
@@ -1162,8 +1544,8 @@ function payerTable(doc: StatsDocument): string {
     ? ""
     : `<p class="muted">Per-route payer counts are incomplete: at least one included machine did not publish routes. Family totals above still include those calls.</p>`;
   return `<h3>Payers</h3>
-  <p class="muted">${escHtml(doc.traffic.label)} Every paid route in paid_calls. Family totals: verify includes verify/job and verify/listing; confirm includes confirm/order; watch includes watch/renew. Unique payers in a family are distinct across that family, not the sum of the route rows. All includes internal and grader test traffic. External omits configured team wallets, known grader wallets, and docs-example URLs. Null payers stay in external calls unless the URL is a docs example, and are not a unique payer. On this machine, unique payers are COUNT(DISTINCT payer). A fleet document shows withheld instead of adding per-volume distincts. Revenue is calls times the route price.</p>
-  <p class="muted">Revenue from paid_calls: all L7d $${doc.traffic.revenue.all.l7d_usd.toFixed(2)} / L30d $${doc.traffic.revenue.all.l30d_usd.toFixed(2)}; external L7d $${doc.traffic.revenue.external.l7d_usd.toFixed(2)} / L30d $${doc.traffic.revenue.external.l30d_usd.toFixed(2)}.${doc.traffic.revenue.available ? "" : " Revenue is not a measurement on this response."}</p>
+  <p class="muted">${escHtml(doc.traffic.label)} Every paid route in paid_calls. Family totals: verify includes verify/job and verify/listing; confirm includes confirm/order; watch includes watch/renew. Unique payers in a family are distinct across that family, not the sum of the route rows. All includes internal and grader test traffic. External omits configured team wallets, known grader wallets, tester wallets, docs-example URLs, and blank payers. External is decided by wallet only. A blank payer is unattributed and is not a unique payer. On this machine, unique payers are COUNT(DISTINCT payer). A fleet document shows withheld instead of adding per-volume distincts. Revenue is calls times the route price.</p>
+  <p class="muted">Revenue from paid_calls: all L7d $${doc.traffic.revenue.all.l7d_usd.toFixed(2)} / L30d $${doc.traffic.revenue.all.l30d_usd.toFixed(2)}; external L7d $${doc.traffic.revenue.external.l7d_usd.toFixed(2)} / L30d $${doc.traffic.revenue.external.l30d_usd.toFixed(2)}; internal L7d $${doc.traffic.internal.revenue.l7d_usd.toFixed(2)} / L30d $${doc.traffic.internal.revenue.l30d_usd.toFixed(2)} (${doc.traffic.internal.calls.l7d} / ${doc.traffic.internal.calls.l30d} calls); unattributed L7d $${doc.traffic.unattributed.revenue.l7d_usd.toFixed(2)} / L30d $${doc.traffic.unattributed.revenue.l30d_usd.toFixed(2)} (${doc.traffic.unattributed.calls.l7d} / ${doc.traffic.unattributed.calls.l30d} calls).${doc.traffic.revenue.available ? "" : " Revenue is not a measurement on this response."}</p>
   <table>
     <thead>
       <tr><th>Audience</th><th>Window</th><th>Verify calls</th><th>Verify unique payers</th><th>Confirm calls</th><th>Confirm unique payers</th><th>Check calls</th><th>Check unique payers</th><th>Watch calls</th><th>Watch unique payers</th></tr>
@@ -1199,6 +1581,33 @@ function docsExampleHtml(doc: StatsDocument): string {
   }
   const urls = (docs.urls?.length ? docs.urls : [docs.url]).map((url) => `<code>${escHtml(url)}</code>`).join(", ");
   return `${label} ${docs.calls.l7d} L7d / ${docs.calls.l30d} L30d paid calls. These rows stay in All and are omitted from External. URLs: ${urls}.`;
+}
+
+function internalHtml(doc: StatsDocument): string {
+  const row = doc.traffic.internal;
+  const label = escHtml(row?.label ?? INTERNAL_WALLET_TRAFFIC_LABEL);
+  if (!row?.available) {
+    return `${label} Counts are not a measurement on this response (paid-call store closed, or a machine did not publish the split).`;
+  }
+  return `${label} ${row.calls.l7d} L7d / ${row.calls.l30d} L30d paid calls ($${row.revenue.l7d_usd.toFixed(2)} / $${row.revenue.l30d_usd.toFixed(2)}). These rows stay in All and are omitted from External.`;
+}
+
+function internalLabelHtml(doc: StatsDocument): string {
+  const row = doc.traffic.internal_label;
+  const label = escHtml(row?.label ?? INTERNAL_LABEL_NOTE);
+  if (!row?.available) {
+    return `${label} The count is not a measurement on this response.`;
+  }
+  return `${label} ${row.calls.l7d} L7d / ${row.calls.l30d} L30d paid calls carry that user agent.`;
+}
+
+function unattributedHtml(doc: StatsDocument): string {
+  const row = doc.traffic.unattributed;
+  const label = escHtml(row?.label ?? UNATTRIBUTED_TRAFFIC_LABEL);
+  if (!row?.available) {
+    return `${label} Counts are not a measurement on this response (paid-call store closed, or a machine did not publish the split).`;
+  }
+  return `${label} ${row.calls.l7d} L7d / ${row.calls.l30d} L30d paid calls ($${row.revenue.l7d_usd.toFixed(2)} / $${row.revenue.l30d_usd.toFixed(2)}). These rows stay in All and are omitted from External.`;
 }
 
 function testerHtml(doc: StatsDocument): string {
@@ -1260,6 +1669,9 @@ export function statsHtml(doc: StatsDocument): string {
   <p class="muted">${docsExampleHtml(doc)}</p>
   <p class="muted">${graderHtml(doc)}</p>
   <p class="muted">${testerHtml(doc)}</p>
+  <p class="muted">${internalHtml(doc)}</p>
+  <p class="muted">${unattributedHtml(doc)}</p>
+  <p class="muted">${internalLabelHtml(doc)}</p>
   <p>Generated ${doc.generated_at}. Payable Confirm intents: <code>lead_submit</code> (GA) and <code>listing_published</code> at $${lead.price_usd.toFixed(2)} USDC; <code>order_placed</code> at $${order.price_usd.toFixed(2)} USDC.</p>
   <p class="muted">Volume scope: ${doc.store.scope}${doc.store.fly_machine_id ? ` · serving machine <code>${doc.store.fly_machine_id}</code>` : ""}. Unscoped confirm paid_calls (no stored intent): L7d ${doc.store.confirm_unscoped_paid_calls.l7d} / L30d ${doc.store.confirm_unscoped_paid_calls.l30d}.${statsMachineSummary(doc)}</p>
   <table>
@@ -1309,7 +1721,7 @@ export function statsHtml(doc: StatsDocument): string {
       </tr>
     </tbody>
   </table>
-  <p class="muted">Both check totals include ${doc.traffic.all.sentinel.checks_run_unattributed} one-shot check receipts with no stored payer. Those receipts stay in external. False-positive rate and latency below are CI benches, not live usage.</p>
+  <p class="muted">Both sentinel check totals include ${doc.traffic.all.sentinel.checks_run_unattributed} one-shot check receipts with no stored payer. Those receipt counters stay in both sentinel totals. paid_calls rows with no payer are traffic.unattributed and are omitted from external revenue. False-positive rate and latency below are CI benches, not live usage.</p>
   <table>
     <thead>
       <tr><th>False-positive rate</th><th>Median latency</th></tr>

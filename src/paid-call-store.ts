@@ -23,6 +23,14 @@ import {
   type SentinelPaidVerdict,
   type VerifyPaidStatus,
 } from "./paid-call.js";
+import { INTERNAL_USER_AGENT_PREFIX } from "./internal-wallets.js";
+import {
+  ATTRIBUTION_TX_TRANSFER,
+  ATTRIBUTION_UNATTRIBUTED,
+  NO_TX_ATTRIBUTION_NOTE,
+  TX_NOT_RECOVERED_NOTE,
+  TX_TRANSFER_NOTE,
+} from "./settlement-payer.js";
 
 export const PAID_CALLS_TABLE = "paid_calls" as const;
 
@@ -64,6 +72,9 @@ export type PaidCallRow = {
   http_status?: number;
   /** Caller User-Agent, truncated, with emails and query strings removed. */
   user_agent?: string;
+  /** `unattributed` when the payer could not be recovered. `tx_transfer` when it was. */
+  attribution?: string;
+  attribution_note?: string;
 };
 
 export type RouteCounts = {
@@ -130,7 +141,9 @@ const PAID_CALLS_COLUMNS = `
   verdict TEXT,
   http_status INTEGER,
   user_agent TEXT,
-  status TEXT
+  status TEXT,
+  attribution TEXT,
+  attribution_note TEXT
 `;
 
 const TABLE_SQL = `
@@ -265,6 +278,8 @@ function rebuildPaidCallsRouteCheck(db: DatabaseSync): void {
     "http_status",
     "user_agent",
     "status",
+    "attribution",
+    "attribution_note",
   ].filter((name) => paidCallStoreTableColumns(db, "paid_calls").has(name));
   const columnList = copyColumns.join(", ");
   try {
@@ -316,8 +331,41 @@ export function migratePaidCallStore(db: DatabaseSync): void {
   ensureColumn(db, "paid_calls", "http_status", "http_status INTEGER");
   ensureColumn(db, "paid_calls", "user_agent", "user_agent TEXT");
   ensureColumn(db, "paid_calls", "status", "status TEXT");
+  ensureColumn(db, "paid_calls", "attribution", "attribution TEXT");
+  ensureColumn(db, "paid_calls", "attribution_note", "attribution_note TEXT");
   rebuildPaidCallsRouteCheck(db);
   db.exec(INDEXES_AFTER_MIGRATE);
+  markUnattributedNullPayers(db);
+}
+
+/**
+ * A row with no payer is unattributed. It must not fall through to external.
+ * Rows that already have an attribution note are left alone.
+ */
+function markUnattributedNullPayers(db: DatabaseSync): void {
+  db.prepare(
+    `UPDATE paid_calls
+     SET attribution = ?,
+         attribution_note = CASE
+           WHEN tx IS NULL OR trim(tx) = '' THEN ?
+           ELSE ?
+         END
+     WHERE (payer IS NULL OR trim(payer) = '')
+       AND (attribution IS NULL OR trim(attribution) = '')`,
+  ).run(ATTRIBUTION_UNATTRIBUTED, NO_TX_ATTRIBUTION_NOTE, TX_NOT_RECOVERED_NOTE);
+}
+
+function attributionForRow(row: PaidCallRow): { attribution: string | null; note: string | null } {
+  const explicit = row.attribution?.trim();
+  if (explicit) {
+    return { attribution: explicit, note: row.attribution_note?.trim() || null };
+  }
+  if (row.payer?.trim()) return { attribution: null, note: null };
+  const hasTx = Boolean(row.tx?.trim());
+  return {
+    attribution: ATTRIBUTION_UNATTRIBUTED,
+    note: hasTx ? TX_NOT_RECOVERED_NOTE : NO_TX_ATTRIBUTION_NOTE,
+  };
 }
 
 export function isConfirmPaidIntent(value: unknown): value is ConfirmPaidIntent {
@@ -531,10 +579,16 @@ export function insertPaidCallRow(db: DatabaseSync, row: PaidCallRow): void {
   if (!mapped) {
     throw new Error("refusing to insert unsanitized paid_call row");
   }
+  const attribution = attributionForRow({
+    ...mapped,
+    attribution: row.attribution,
+    attribution_note: row.attribution_note,
+  });
   db.prepare(
     `INSERT INTO paid_calls (
-       ts, route, payer, tx, payment_intent, host, url_sha256, intent, verdict, http_status, user_agent, status
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ts, route, payer, tx, payment_intent, host, url_sha256, intent, verdict, http_status, user_agent, status,
+       attribution, attribution_note
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     mapped.ts,
     mapped.route,
@@ -548,6 +602,8 @@ export function insertPaidCallRow(db: DatabaseSync, row: PaidCallRow): void {
     mapped.http_status ?? null,
     mapped.user_agent ?? null,
     mapped.status ?? null,
+    attribution.attribution,
+    attribution.note,
   );
 }
 
@@ -568,7 +624,7 @@ export function retainPaidCall(event: PaidCallEvent): boolean {
 
 export function listPaidCallRows(db: DatabaseSync, sinceIso?: string): PaidCallRow[] {
   const columns =
-    "ts, route, payer, tx, payment_intent, host, url_sha256, intent, verdict, http_status, user_agent, status";
+    "ts, route, payer, tx, payment_intent, host, url_sha256, intent, verdict, http_status, user_agent, status, attribution, attribution_note";
   const sql = sinceIso
     ? `SELECT ${columns} FROM paid_calls WHERE ts >= ? ORDER BY ts ASC`
     : `SELECT ${columns} FROM paid_calls ORDER BY ts ASC`;
@@ -586,6 +642,8 @@ export function listPaidCallRows(db: DatabaseSync, sinceIso?: string): PaidCallR
     http_status: number | bigint | null;
     user_agent: string | null;
     status: string | null;
+    attribution: string | null;
+    attribution_note: string | null;
   }>;
   const rows: PaidCallRow[] = [];
   for (const item of raw) {
@@ -620,21 +678,68 @@ export function listPaidCallRows(db: DatabaseSync, sinceIso?: string): PaidCallR
     const userAgent = sanitizeUserAgent(item.user_agent);
     if (httpStatus !== undefined) row.http_status = httpStatus;
     if (userAgent) row.user_agent = userAgent;
+    if (item.attribution?.trim()) row.attribution = item.attribution.trim();
+    if (item.attribution_note?.trim()) row.attribution_note = item.attribution_note.trim();
     rows.push(row);
   }
   return rows;
 }
+
+export type RetentionQueryOptions = {
+  /**
+   * Known payer only. Omits blank payers, listed wallets, and listed url hashes.
+   * User-Agent is not part of this decision.
+   */
+  external?: boolean;
+};
 
 export function queryRetentionWindows(
   db: DatabaseSync,
   now = new Date(),
   excludePayers: readonly string[] = [],
   excludeUrlSha256: readonly string[] = [],
+  options: RetentionQueryOptions = {},
+): RetentionWindows {
+  const mode: AudienceMode = options.external ? "external" : "all";
+  return {
+    l7d: queryWindow(db, isoCutoff(now, 7), excludePayers, excludeUrlSha256, mode),
+    l30d: queryWindow(db, isoCutoff(now, 30), excludePayers, excludeUrlSha256, mode),
+  };
+}
+
+/** Rows with no payer. Included in all-traffic, omitted from external. */
+export function queryUnattributedWindows(db: DatabaseSync, now = new Date()): RetentionWindows {
+  return {
+    l7d: queryWindow(db, isoCutoff(now, 7), [], [], "unattributed"),
+    l30d: queryWindow(db, isoCutoff(now, 30), [], [], "unattributed"),
+  };
+}
+
+/** Rows whose payer is in `payers`. Used for traffic.internal. */
+export function queryIncludedPayerWindows(
+  db: DatabaseSync,
+  now = new Date(),
+  payers: readonly string[] = [],
 ): RetentionWindows {
   return {
-    l7d: queryWindow(db, isoCutoff(now, 7), excludePayers, excludeUrlSha256),
-    l30d: queryWindow(db, isoCutoff(now, 30), excludePayers, excludeUrlSha256),
+    l7d: queryWindow(db, isoCutoff(now, 7), payers, [], "included"),
+    l30d: queryWindow(db, isoCutoff(now, 30), payers, [], "included"),
   };
+}
+
+/** Calls whose user_agent starts with livecheck-internal/. A label count, not an audience. */
+export function queryInternalLabelCounts(db: DatabaseSync, now = new Date()): { l7d: number; l30d: number } {
+  const countSince = (sinceIso: string) => {
+    const row = db
+      .prepare(
+        `SELECT COUNT(*) AS calls
+         FROM paid_calls
+         WHERE ts >= ? AND lower(user_agent) LIKE ?`,
+      )
+      .get(sinceIso, `${INTERNAL_USER_AGENT_PREFIX}%`) as { calls: number | bigint };
+    return Number(row.calls);
+  };
+  return { l7d: countSince(isoCutoff(now, 7)), l30d: countSince(isoCutoff(now, 30)) };
 }
 
 const VERIFY_FAMILY_SQL = `('verify', 'verify/job', 'verify/listing')`;
@@ -646,20 +751,45 @@ function normalizeSha256List(hashes: readonly string[]): string[] {
   return [...new Set(hashes.map((hash) => hash.trim().toLowerCase()).filter((hash) => isSha256Hex(hash)))];
 }
 
+type AudienceMode = "all" | "external" | "unattributed" | "included";
+
 /**
- * External audience filter. Null payers stay (they are not a team wallet).
- * A docs-example url_sha256 drops the row entirely, payer or not.
+ * `all` keeps every row, then drops listed wallets only when a payer is set.
+ * `external` requires a known payer and drops listed wallets and docs-example
+ * hashes. A blank payer is never external. User-Agent is not a filter.
+ * `unattributed` is blank payer only.
+ * `included` is rows whose payer is in the list (traffic.internal).
  */
 function audienceFilter(
   excludePayers: readonly string[],
   excludeUrlSha256: readonly string[],
+  mode: AudienceMode = "all",
 ): { sql: string; params: string[] } {
   const payers = [...new Set(excludePayers.map((payer) => payer.toLowerCase()))];
   const hashes = normalizeSha256List(excludeUrlSha256);
   const clauses: string[] = [];
   const params: string[] = [];
+  if (mode === "unattributed") {
+    clauses.push(`(payer IS NULL OR trim(payer) = '')`);
+    return { sql: ` AND ${clauses.join(" AND ")}`, params };
+  }
+  if (mode === "included") {
+    if (payers.length === 0) clauses.push("0");
+    else {
+      clauses.push(`lower(payer) IN (${payers.map(() => "?").join(", ")})`);
+      params.push(...payers);
+    }
+    return { sql: ` AND ${clauses.join(" AND ")}`, params };
+  }
+  if (mode === "external") {
+    clauses.push(`payer IS NOT NULL AND trim(payer) != ''`);
+  }
   if (payers.length > 0) {
-    clauses.push(`(payer IS NULL OR lower(payer) NOT IN (${payers.map(() => "?").join(", ")}))`);
+    if (mode === "external") {
+      clauses.push(`lower(payer) NOT IN (${payers.map(() => "?").join(", ")})`);
+    } else {
+      clauses.push(`(payer IS NULL OR lower(payer) NOT IN (${payers.map(() => "?").join(", ")}))`);
+    }
     params.push(...payers);
   }
   if (hashes.length > 0) {
@@ -678,8 +808,9 @@ function queryFamilyCounts(
   familySql: string,
   excludePayers: readonly string[],
   excludeUrlSha256: readonly string[],
+  mode: AudienceMode,
 ): RouteCounts {
-  const filter = audienceFilter(excludePayers, excludeUrlSha256);
+  const filter = audienceFilter(excludePayers, excludeUrlSha256, mode);
   const row = db
     .prepare(
       `SELECT COUNT(*) AS calls,
@@ -696,9 +827,10 @@ function queryWindow(
   sinceIso: string,
   excludePayers: readonly string[] = [],
   excludeUrlSha256: readonly string[] = [],
+  mode: AudienceMode = "all",
 ): WindowCounts {
   const out = emptyWindowCounts();
-  const filter = audienceFilter(excludePayers, excludeUrlSha256);
+  const filter = audienceFilter(excludePayers, excludeUrlSha256, mode);
   const rows = db
     .prepare(
       `SELECT route,
@@ -720,10 +852,10 @@ function queryWindow(
       unique_payers: Number(row.unique_payers),
     };
   }
-  out.verify = queryFamilyCounts(db, sinceIso, VERIFY_FAMILY_SQL, excludePayers, excludeUrlSha256);
-  out.confirm = queryFamilyCounts(db, sinceIso, CONFIRM_FAMILY_SQL, excludePayers, excludeUrlSha256);
-  out.check = queryFamilyCounts(db, sinceIso, CHECK_FAMILY_SQL, excludePayers, excludeUrlSha256);
-  out.watch = queryFamilyCounts(db, sinceIso, WATCH_FAMILY_SQL, excludePayers, excludeUrlSha256);
+  out.verify = queryFamilyCounts(db, sinceIso, VERIFY_FAMILY_SQL, excludePayers, excludeUrlSha256, mode);
+  out.confirm = queryFamilyCounts(db, sinceIso, CONFIRM_FAMILY_SQL, excludePayers, excludeUrlSha256, mode);
+  out.check = queryFamilyCounts(db, sinceIso, CHECK_FAMILY_SQL, excludePayers, excludeUrlSha256, mode);
+  out.watch = queryFamilyCounts(db, sinceIso, WATCH_FAMILY_SQL, excludePayers, excludeUrlSha256, mode);
   return out;
 }
 
@@ -731,9 +863,70 @@ export function queryRetentionWindowsFromStore(
   now = new Date(),
   excludePayers: readonly string[] = [],
   excludeUrlSha256: readonly string[] = [],
+  options: RetentionQueryOptions = {},
 ): RetentionWindows | undefined {
   if (!state?.ok) return undefined;
-  return queryRetentionWindows(state.db, now, excludePayers, excludeUrlSha256);
+  return queryRetentionWindows(state.db, now, excludePayers, excludeUrlSha256, options);
+}
+
+export function queryUnattributedWindowsFromStore(now = new Date()): RetentionWindows | undefined {
+  if (!state?.ok) return undefined;
+  return queryUnattributedWindows(state.db, now);
+}
+
+export function queryIncludedPayerWindowsFromStore(
+  now = new Date(),
+  payers: readonly string[] = [],
+): RetentionWindows | undefined {
+  if (!state?.ok) return undefined;
+  return queryIncludedPayerWindows(state.db, now, payers);
+}
+
+export function queryInternalLabelCountsFromStore(now = new Date()): { l7d: number; l30d: number } | undefined {
+  if (!state?.ok) return undefined;
+  return queryInternalLabelCounts(state.db, now);
+}
+
+/**
+ * Fill a blank payer from a settlement-tx lookup. The lookup's `payer` is the
+ * USDC Transfer `from` into payTo, not the transaction sender. A miss stays
+ * unattributed and records the lookup note. Does not call RPC itself.
+ */
+export async function recoverPaidCallPayers(
+  db: DatabaseSync,
+  lookup: (tx: string) => Promise<{ payer?: string; note: string }>,
+): Promise<{ recovered: number; still_unattributed: number }> {
+  const pending = db
+    .prepare(
+      `SELECT id, tx FROM paid_calls
+       WHERE (payer IS NULL OR trim(payer) = '')
+         AND tx IS NOT NULL AND trim(tx) != ''`,
+    )
+    .all() as Array<{ id: number | bigint; tx: string }>;
+  let recovered = 0;
+  let stillUnattributed = 0;
+  const writePayer = db.prepare(
+    `UPDATE paid_calls
+     SET payer = ?, attribution = ?, attribution_note = ?
+     WHERE id = ?`,
+  );
+  const writeMiss = db.prepare(
+    `UPDATE paid_calls
+     SET attribution = ?, attribution_note = ?
+     WHERE id = ? AND (payer IS NULL OR trim(payer) = '')`,
+  );
+  for (const row of pending) {
+    const found = await lookup(row.tx);
+    const payer = sanitizePayer(found.payer);
+    if (payer) {
+      writePayer.run(payer, ATTRIBUTION_TX_TRANSFER, found.note || TX_TRANSFER_NOTE, row.id);
+      recovered += 1;
+    } else {
+      writeMiss.run(ATTRIBUTION_UNATTRIBUTED, found.note || TX_NOT_RECOVERED_NOTE, row.id);
+      stillUnattributed += 1;
+    }
+  }
+  return { recovered, still_unattributed: stillUnattributed };
 }
 
 /** Row counts for specific url_sha256 values. Used to label docs-example test traffic. */

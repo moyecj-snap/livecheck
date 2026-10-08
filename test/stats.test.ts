@@ -720,8 +720,10 @@ describe("internal wallet list and external payers", () => {
     assert.equal(doc.traffic.all.payers.l7d.confirm.unique_payers, 0);
     assert.equal(doc.traffic.external.payers.l7d.verify.calls, 1);
     assert.equal(doc.traffic.external.payers.l7d.verify.unique_payers, 1);
-    assert.equal(doc.traffic.external.payers.l7d.confirm.calls, 1);
+    assert.equal(doc.traffic.external.payers.l7d.confirm.calls, 0);
     assert.equal(doc.traffic.external.payers.l7d.confirm.unique_payers, 0);
+    assert.equal(doc.traffic.unattributed.calls.l7d, 1);
+    assert.equal(doc.traffic.unattributed.revenue.l7d_usd, 0.1);
     assert.equal(doc.traffic.external.payers.l30d.verify.unique_payers, 1);
     assert.equal(doc.traffic.external.payers.l30d.confirm.unique_payers, 0);
     assert.equal(doc.intents.lead_submit.l7d.paid_calls, 1);
