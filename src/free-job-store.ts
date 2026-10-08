@@ -22,18 +22,47 @@ export const FREE_PAGE_METRICS = [
   "limited",
   "busy",
   "invalid_url",
+  "example_open",
+  "example_filled",
 ] as const;
 
 export type FreePageMetric = (typeof FREE_PAGE_METRICS)[number];
 
-const TABLE_SQL = `
-CREATE TABLE IF NOT EXISTS free_page_daily (
+const dailyTableSql = (name: string) => `
+CREATE TABLE IF NOT EXISTS ${name} (
   day TEXT NOT NULL CHECK (length(day) = 10),
   metric TEXT NOT NULL CHECK (metric IN (${FREE_PAGE_METRICS.map((m) => `'${m}'`).join(", ")})),
   n INTEGER NOT NULL DEFAULT 0 CHECK (n >= 0),
   PRIMARY KEY (day, metric)
 );
 `;
+const TABLE_SQL = dailyTableSql("free_page_daily");
+
+/**
+ * SQLite can't ALTER a CHECK. When a new metric is added, an existing
+ * free_page_daily (created with the older list) is rebuilt in one
+ * transaction: copy counts into a table with the current CHECK, drop, rename.
+ */
+export function migrateFreePageDaily(db: DatabaseSync): void {
+  db.exec(TABLE_SQL);
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'free_page_daily'").get() as
+    | { sql?: string }
+    | undefined;
+  const sql = row?.sql ?? "";
+  if (FREE_PAGE_METRICS.every((metric) => sql.includes(`'${metric}'`))) return;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec("DROP TABLE IF EXISTS free_page_daily_v2");
+    db.exec(dailyTableSql("free_page_daily_v2"));
+    db.exec("INSERT INTO free_page_daily_v2 (day, metric, n) SELECT day, metric, n FROM free_page_daily");
+    db.exec("DROP TABLE free_page_daily");
+    db.exec("ALTER TABLE free_page_daily_v2 RENAME TO free_page_daily");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
 
 /**
  * Live knobs for the free page, editable with no deploy and no restart:
@@ -125,7 +154,7 @@ function open(path: string): DatabaseSync {
     db.exec("PRAGMA journal_mode = WAL;");
     db.exec("PRAGMA synchronous = NORMAL;");
   }
-  db.exec(TABLE_SQL);
+  migrateFreePageDaily(db);
   migrateFreePageSettings(db);
   return db;
 }
@@ -135,7 +164,7 @@ export function openFreePageDbForAdmin(path: string): DatabaseSync {
   if (!existsSync(path)) throw new Error(`no free-page database at ${path} (the app creates it on boot)`);
   const db = new DatabaseSync(path);
   db.exec("PRAGMA busy_timeout = 5000;");
-  db.exec(TABLE_SQL);
+  migrateFreePageDaily(db);
   migrateFreePageSettings(db);
   return db;
 }
