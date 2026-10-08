@@ -152,6 +152,22 @@ curl -sS -D - -o /dev/null https://livecheck.fly.dev/v1/verify \
 # and extensions.bazaar must be present
 ```
 
+## Free job check page (`GET /job`)
+
+The free "Is this job still open?" page for people is at **`/job`**, and `/check` redirects there. It's for the Product Hunt launch. Paste a link and get **Open / Closed / Can't tell**, plus the title, the platform, and the evidence in plain words. It runs the same classifier as `POST /v1/verify/job` (`verifyUrl` with the Greenhouse/Lever/Ashby/Workday APIs on). No wallet, no signup, no JavaScript.
+
+| Item | Behavior |
+|---|---|
+| Limit | 5 free checks per visitor per Pacific day, counted by cookie (`lc_free`) **and** by IP (`Fly-Client-IP`). Clearing cookies doesn't reset it. |
+| Cost guard | Global cap of 300 free checks per hour, plus its own pool of 2 concurrent checks. When either is full: "Busy, try again in a few minutes" (503 + `Retry-After`). The paid API's verify slots are never used. |
+| Privacy | The link is in memory only for the check. It isn't logged or written to `paid_calls`, receipts, or any file. Limits are keyed by an HMAC under a random in-memory key that rotates daily, so raw IPs and cookies are never stored. The shared ATS board cache is in memory with a 5-minute TTL, the same as the paid API. |
+| Safety | Only public web hosts on ports 80/443 are fetched. Localhost, private/link-local/Fly 6PN addresses, `*.internal` names, and URLs with credentials are refused, and every redirect hop is re-checked. |
+| Not paid calls | Free checks never call `recordSuccessfulPaidCheck`, so `/stats` revenue, buckets, and reconciliation are untouched. |
+| Tracking | Daily counts only, in `/data/free-page.sqlite` (`FREE_PAGE_DB_PATH`): views, checks, verdict_open/closed/cant_tell, cta_docs, cta_skill, limited, busy, invalid_url. Read them at **`GET /job/stats`**. The CTA links go through `/job/go/docs` (→ `/llms.txt`) and `/job/go/skill` (→ the skill repo) so clicks are counted. |
+| HTML only | There's no JSON answer, so the free page is not a free API. Agents use `POST /v1/verify/job` ($0.01). |
+
+Knobs (`fly secrets set …` restarts the machine, no deploy): `LIVECHECK_FREE_PER_VISITOR_DAILY` (5), `LIVECHECK_FREE_PER_IP_DAILY` (5), `LIVECHECK_FREE_HOURLY_CAP` (300), `LIVECHECK_FREE_CONCURRENCY` (2), `LIVECHECK_FREE_PAGE=off` (hides the page). Limits live in memory, so a restart resets today's counts.
+
 ## Sentinel check (`POST /v1/check`)
 
 One-shot condition check. **Does not create a watcher.** Fixed **$0.02 USDC** (`"20000"` atomic). One accept on the 402 — never dual-priced.
