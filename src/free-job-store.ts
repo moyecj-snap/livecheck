@@ -35,6 +35,79 @@ CREATE TABLE IF NOT EXISTS free_page_daily (
 );
 `;
 
+/**
+ * Live knobs for the free page, editable with no deploy and no restart:
+ *   fly ssh console -a livecheck -C "npm run --silent free:set -- hourly_cap 1000"
+ * The page reads this table on every request. A key that is not set falls
+ * back to its env var, then the built-in default.
+ */
+export const FREE_PAGE_SETTINGS = {
+  hourly_cap: { min: 0, max: 100_000 },
+  concurrency: { min: 1, max: 16 },
+  per_visitor_daily: { min: 1, max: 1000 },
+  per_ip_daily: { min: 1, max: 10_000 },
+  enabled: { min: 0, max: 1 },
+} as const;
+
+export type FreePageSettingKey = keyof typeof FREE_PAGE_SETTINGS;
+export type FreePageSettings = Partial<Record<FreePageSettingKey, number>>;
+
+export const SETTINGS_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS free_page_settings (
+  key TEXT PRIMARY KEY CHECK (key IN (${Object.keys(FREE_PAGE_SETTINGS).map((k) => `'${k}'`).join(", ")})),
+  value INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
+);
+`;
+
+export function isFreePageSettingKey(value: unknown): value is FreePageSettingKey {
+  return typeof value === "string" && Object.prototype.hasOwnProperty.call(FREE_PAGE_SETTINGS, value);
+}
+
+/** Validate a key/value pair. Throws with a plain message on anything out of range. */
+export function parseFreePageSetting(key: unknown, raw: unknown): { key: FreePageSettingKey; value: number } {
+  if (!isFreePageSettingKey(key)) {
+    throw new Error(`unknown setting ${String(key)}; use one of: ${Object.keys(FREE_PAGE_SETTINGS).join(", ")}`);
+  }
+  const text = typeof raw === "number" ? String(raw) : String(raw ?? "").trim().toLowerCase();
+  const value = key === "enabled" && (text === "on" || text === "true") ? 1 : key === "enabled" && (text === "off" || text === "false") ? 0 : Number(text);
+  const { min, max } = FREE_PAGE_SETTINGS[key];
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`${key} must be a whole number from ${min} to ${max}, got ${String(raw)}`);
+  }
+  return { key, value };
+}
+
+export function migrateFreePageSettings(db: DatabaseSync): void {
+  db.exec(SETTINGS_TABLE_SQL);
+}
+
+export function readFreePageSettingsFrom(db: DatabaseSync): FreePageSettings {
+  const out: FreePageSettings = {};
+  const rows = db.prepare(`SELECT key, value FROM free_page_settings`).all() as Array<{ key: string; value: number }>;
+  for (const row of rows) {
+    if (!isFreePageSettingKey(row.key)) continue;
+    const { min, max } = FREE_PAGE_SETTINGS[row.key];
+    const value = Number(row.value);
+    if (Number.isInteger(value) && value >= min && value <= max) out[row.key] = value;
+  }
+  return out;
+}
+
+export function setFreePageSettingIn(db: DatabaseSync, key: unknown, raw: unknown, now = new Date()): { key: FreePageSettingKey; value: number } {
+  const parsed = parseFreePageSetting(key, raw);
+  db.prepare(
+    `INSERT INTO free_page_settings (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).run(parsed.key, parsed.value, now.toISOString().replace(/\.\d{3}Z$/, "Z"));
+  return parsed;
+}
+
+export function unsetFreePageSettingIn(db: DatabaseSync, key: unknown): boolean {
+  if (!isFreePageSettingKey(key)) throw new Error(`unknown setting ${String(key)}`);
+  return Number(db.prepare(`DELETE FROM free_page_settings WHERE key = ?`).run(key).changes) === 1;
+}
+
 type StoreState = { db: DatabaseSync; path: string; persisted: boolean };
 let state: StoreState | undefined;
 
@@ -53,7 +126,31 @@ function open(path: string): DatabaseSync {
     db.exec("PRAGMA synchronous = NORMAL;");
   }
   db.exec(TABLE_SQL);
+  migrateFreePageSettings(db);
   return db;
+}
+
+/** Open an existing counts file for the admin script (never creates one). */
+export function openFreePageDbForAdmin(path: string): DatabaseSync {
+  if (!existsSync(path)) throw new Error(`no free-page database at ${path} (the app creates it on boot)`);
+  const db = new DatabaseSync(path);
+  db.exec("PRAGMA busy_timeout = 5000;");
+  db.exec(TABLE_SQL);
+  migrateFreePageSettings(db);
+  return db;
+}
+
+/** Live settings for this request. Empty when the read fails (defaults apply). */
+export function readFreePageSettings(): FreePageSettings {
+  try {
+    return readFreePageSettingsFrom(db().db);
+  } catch {
+    return {};
+  }
+}
+
+export function setFreePageSetting(key: unknown, raw: unknown, now = new Date()): { key: FreePageSettingKey; value: number } {
+  return setFreePageSettingIn(db().db, key, raw, now);
 }
 
 /** Open the counts file. On failure, counts live in memory for this process. */

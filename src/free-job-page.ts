@@ -1,10 +1,16 @@
-import { createHmac, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Context, Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import { ATS_API_LISTED, ATS_API_MISSING, parseAtsJobUrl } from "./ats-api.js";
 import { PRICE_USD } from "./config.js";
-import { BlockedTargetError, assertPublicTarget, defaultResolver, guardedFetch, type Resolver } from "./free-job-guard.js";
-import { bumpFreePageMetric, pacificDay, readFreePageStats } from "./free-job-store.js";
+import { BlockedTargetError, DEFAULT_FETCH_POLICY, guardedFetch, vetTarget, type FetchPolicy } from "./free-job-guard.js";
+import {
+  bumpFreePageMetric,
+  pacificDay,
+  readFreePageSettings,
+  readFreePageStats,
+  type FreePageSettings,
+} from "./free-job-store.js";
 import type { VerifyVerdict } from "./types.js";
 import { VerifyError, parseTargetUrl, verifyUrl } from "./verify.js";
 
@@ -43,10 +49,14 @@ export type FreeJobConfig = {
 
 export const FREE_JOB_DEFAULTS: Omit<FreeJobConfig, "enabled"> = {
   perVisitorDaily: 5,
-  perIpDaily: 5,
+  perIpDaily: 15,
   hourlyCap: 300,
   concurrency: 2,
 };
+
+/** Whole-check budget for a free check (all hops, page + ATS API). */
+export const FREE_JOB_TOTAL_TIMEOUT_MS = 15_000;
+export const FREE_PAGE_STATS_TOKEN_ENV = "FREE_PAGE_STATS_TOKEN";
 
 function intEnv(env: NodeJS.ProcessEnv, name: string, fallback: number, min: number, max: number): number {
   const raw = env[name]?.trim();
@@ -56,20 +66,29 @@ function intEnv(env: NodeJS.ProcessEnv, name: string, fallback: number, min: num
 }
 
 /**
- * Env knobs (a `fly secrets set` restarts the machine; no deploy):
- * LIVECHECK_FREE_PER_VISITOR_DAILY (5), LIVECHECK_FREE_PER_IP_DAILY (5),
+ * Precedence: the `free_page_settings` table (live, `npm run free:set`, no
+ * deploy or restart) > env var > default.
+ * Env: LIVECHECK_FREE_PER_VISITOR_DAILY (5), LIVECHECK_FREE_PER_IP_DAILY (15),
  * LIVECHECK_FREE_HOURLY_CAP (300), LIVECHECK_FREE_CONCURRENCY (2),
  * LIVECHECK_FREE_PAGE=off hides the page.
+ * Settings keys: per_visitor_daily, per_ip_daily, hourly_cap, concurrency, enabled.
  */
-export function resolveFreeJobConfig(env: NodeJS.ProcessEnv = process.env): FreeJobConfig {
+export function resolveFreeJobConfig(env: NodeJS.ProcessEnv = process.env, settings: FreePageSettings = {}): FreeJobConfig {
   const off = ["off", "0", "false", "none"].includes((env.LIVECHECK_FREE_PAGE ?? "").trim().toLowerCase());
   return {
-    perVisitorDaily: intEnv(env, "LIVECHECK_FREE_PER_VISITOR_DAILY", FREE_JOB_DEFAULTS.perVisitorDaily, 1, 1000),
-    perIpDaily: intEnv(env, "LIVECHECK_FREE_PER_IP_DAILY", FREE_JOB_DEFAULTS.perIpDaily, 1, 10_000),
-    hourlyCap: intEnv(env, "LIVECHECK_FREE_HOURLY_CAP", FREE_JOB_DEFAULTS.hourlyCap, 0, 100_000),
-    concurrency: intEnv(env, "LIVECHECK_FREE_CONCURRENCY", FREE_JOB_DEFAULTS.concurrency, 1, 16),
-    enabled: !off,
+    perVisitorDaily:
+      settings.per_visitor_daily ??
+      intEnv(env, "LIVECHECK_FREE_PER_VISITOR_DAILY", FREE_JOB_DEFAULTS.perVisitorDaily, 1, 1000),
+    perIpDaily: settings.per_ip_daily ?? intEnv(env, "LIVECHECK_FREE_PER_IP_DAILY", FREE_JOB_DEFAULTS.perIpDaily, 1, 10_000),
+    hourlyCap: settings.hourly_cap ?? intEnv(env, "LIVECHECK_FREE_HOURLY_CAP", FREE_JOB_DEFAULTS.hourlyCap, 0, 100_000),
+    concurrency: settings.concurrency ?? intEnv(env, "LIVECHECK_FREE_CONCURRENCY", FREE_JOB_DEFAULTS.concurrency, 1, 16),
+    enabled: settings.enabled !== undefined ? settings.enabled === 1 : !off,
   };
+}
+
+/** Config for this request: settings table read live, then env, then defaults. */
+export function currentFreeJobConfig(): FreeJobConfig {
+  return resolveFreeJobConfig(process.env, readFreePageSettings());
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +164,15 @@ class FreeJobLimiter {
     return Math.max(0, Math.min(config.perIpDaily - ipUsed, config.perVisitorDaily - visitorUsed));
   }
 
+  checksThisHour(now: Date): number {
+    this.rollover(now);
+    return this.hourCount;
+  }
+
+  inFlightNow(): number {
+    return this.inFlight;
+  }
+
   /** Audit seam: every key the limiter holds (hashes only). */
   snapshotKeys(): string[] {
     return [...this.ips.keys(), ...this.visitors.keys()];
@@ -152,21 +180,22 @@ class FreeJobLimiter {
 }
 
 let limiter = new FreeJobLimiter();
-let fetchImpl: typeof fetch | undefined;
-let resolverImpl: Resolver = defaultResolver;
+let policy: FetchPolicy = DEFAULT_FETCH_POLICY;
+let totalTimeoutMs = FREE_JOB_TOTAL_TIMEOUT_MS;
 let clock: () => Date = () => new Date();
 
 export function resetFreeJobForTests(): void {
   limiter = new FreeJobLimiter();
-  fetchImpl = undefined;
-  resolverImpl = defaultResolver;
+  policy = DEFAULT_FETCH_POLICY;
+  totalTimeoutMs = FREE_JOB_TOTAL_TIMEOUT_MS;
   clock = () => new Date();
 }
-export function setFreeJobFetchForTests(fn: typeof fetch | undefined): void {
-  fetchImpl = fn;
+/** Tests point the fetch policy at a local server (e.g. allow 127.0.0.2 and its port). */
+export function setFreeJobPolicyForTests(overrides: Partial<FetchPolicy>): void {
+  policy = { ...DEFAULT_FETCH_POLICY, ...overrides };
 }
-export function setFreeJobResolverForTests(fn: Resolver): void {
-  resolverImpl = fn;
+export function setFreeJobTotalTimeoutForTests(ms: number): void {
+  totalTimeoutMs = ms;
 }
 export function setFreeJobClockForTests(fn: () => Date): void {
   clock = fn;
@@ -426,7 +455,7 @@ async function readSubmittedUrl(c: Context): Promise<unknown> {
 }
 
 async function handleFreeCheck(c: Context) {
-  const config = resolveFreeJobConfig();
+  const config = currentFreeJobConfig();
   const now = clock();
   if (!config.enabled) return c.text("Not found", 404);
   const visitor = ensureVisitor(c);
@@ -442,7 +471,7 @@ async function handleFreeCheck(c: Context) {
   let target: string;
   try {
     target = parseTargetUrl(typed);
-    await assertPublicTarget(target, resolverImpl);
+    await vetTarget(target, policy);
   } catch (error) {
     bumpFreePageMetric("invalid_url", now);
     const message =
@@ -467,12 +496,16 @@ async function handleFreeCheck(c: Context) {
     const platform = platformFor(target);
     let verdict: VerifyVerdict | undefined;
     try {
-      verdict = await verifyUrl(target, guardedFetch(fetchImpl ?? fetch, resolverImpl), now, {
+      verdict = await verifyUrl(target, guardedFetch(policy), now, {
         atsApi: true,
         signal: c.req.raw.signal,
+        deadlineMs: totalTimeoutMs,
       });
     } catch (error) {
-      if (!(error instanceof VerifyError)) throw error;
+      // Never log the message: VerifyError text can contain the link.
+      if (!(error instanceof VerifyError)) {
+        console.warn(`[free_page] check failed (${error instanceof Error ? error.name : "error"})`);
+      }
     }
     if (verdict) {
       const label = verdictLabel(verdict.status);
@@ -499,16 +532,40 @@ async function handleFreeCheck(c: Context) {
   return page(c, view, 200, config, limiter.remaining(ip, visitor, config, now));
 }
 
+function sha(value: string): Buffer {
+  return createHash("sha256").update(value).digest();
+}
+
+/** Constant-time compare against FREE_PAGE_STATS_TOKEN. No token configured = always refused. */
+export function statsTokenOk(c: Context): boolean {
+  const secret = process.env[FREE_PAGE_STATS_TOKEN_ENV]?.trim() ?? "";
+  if (secret.length < 16) return false;
+  const bearer = c.req.header("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
+  const provided = (c.req.header("x-livecheck-stats-token") ?? bearer ?? c.req.query("token") ?? "").trim();
+  if (!provided) return false;
+  return timingSafeEqual(sha(provided), sha(secret));
+}
+
 export function registerFreeJobRoutes(app: Hono): void {
   app.get(FREE_JOB_PATH, (c) => {
-    const config = resolveFreeJobConfig();
+    const config = currentFreeJobConfig();
     if (!config.enabled) return c.text("Not found", 404);
     const now = clock();
     const visitor = ensureVisitor(c);
     bumpFreePageMetric("views", now);
     return page(c, { kind: "form" }, 200, config, limiter.remaining(clientIp(c), visitor, config, now));
   });
-  app.post(FREE_JOB_PATH, handleFreeCheck);
+  app.post(FREE_JOB_PATH, async (c) => {
+    try {
+      return await handleFreeCheck(c);
+    } catch (error) {
+      // Never hand this to Hono's default onError: it would log the error, and
+      // fetch/verify messages can contain the link.
+      console.warn(`[free_page] internal error (${error instanceof Error ? error.name : "error"})`);
+      for (const [name, value] of Object.entries(SECURITY_HEADERS)) c.header(name, value);
+      return c.text("Something went wrong. Please try again.", 500);
+    }
+  });
   app.get(`${FREE_JOB_PATH}/go/docs`, (c) => {
     bumpFreePageMetric("cta_docs", clock());
     c.header("cache-control", "no-store");
@@ -519,9 +576,25 @@ export function registerFreeJobRoutes(app: Hono): void {
     c.header("cache-control", "no-store");
     return c.redirect(SKILL_URL, 302);
   });
+  // Private: needs FREE_PAGE_STATS_TOKEN (header x-livecheck-stats-token,
+  // Authorization: Bearer, or ?token=). Anything else is a plain 404.
   app.get(`${FREE_JOB_PATH}/stats`, (c) => {
     c.header("cache-control", "no-store");
-    return c.json(readFreePageStats(clock()));
+    if (!statsTokenOk(c)) return c.text("Not found", 404);
+    const now = clock();
+    const config = currentFreeJobConfig();
+    return c.json({
+      ...readFreePageStats(now),
+      limits: {
+        per_visitor_daily: config.perVisitorDaily,
+        per_ip_daily: config.perIpDaily,
+        hourly_cap: config.hourlyCap,
+        concurrency: config.concurrency,
+        enabled: config.enabled,
+      },
+      this_hour_checks: limiter.checksThisHour(now),
+      in_flight: limiter.inFlightNow(),
+    });
   });
   // /check alias from the launch kit ("livecheck.fly.dev/job (or /check)").
   app.get("/check", (c) => c.redirect(FREE_JOB_PATH, 302));

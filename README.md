@@ -158,15 +158,39 @@ The free "Is this job still open?" page for people is at **`/job`**, and `/check
 
 | Item | Behavior |
 |---|---|
-| Limit | 5 free checks per visitor per Pacific day, counted by cookie (`lc_free`) **and** by IP (`Fly-Client-IP`). Clearing cookies doesn't reset it. |
+| Limit | 5 free checks per visitor (cookie `lc_free`) and 15 per IP (`Fly-Client-IP`) per Pacific day. Both must have room. Clearing cookies doesn't reset the IP count. |
 | Cost guard | Global cap of 300 free checks per hour, plus its own pool of 2 concurrent checks. When either is full: "Busy, try again in a few minutes" (503 + `Retry-After`). The paid API's verify slots are never used. |
-| Privacy | The link is in memory only for the check. It isn't logged or written to `paid_calls`, receipts, or any file. Limits are keyed by an HMAC under a random in-memory key that rotates daily, so raw IPs and cookies are never stored. The shared ATS board cache is in memory with a 5-minute TTL, the same as the paid API. |
-| Safety | Only public web hosts on ports 80/443 are fetched. Localhost, private/link-local/Fly 6PN addresses, `*.internal` names, and URLs with credentials are refused, and every redirect hop is re-checked. |
+| Privacy | The form is POST only. No GET path takes a link (`GET /job?url=…` just shows the form, and `/check` redirects to `/job` with no query). The link is in memory only for the check. It isn't logged (errors log only a generic line), and it isn't written to `paid_calls`, receipts, or any file. Limits are keyed by an HMAC under a random in-memory key that rotates daily, so raw IPs and cookies are never stored. The shared ATS board cache is in memory with a 5-minute TTL, the same as the paid API. |
+| Safety (SSRF) | Only http/https on ports 80/443. Every hop, including each redirect, is resolved and then every address is checked: loopback, private, link-local, CGNAT (100.64/10), Fly 6PN (`fdaa::/16`), ULA, metadata (169.254.169.254, `fd00:ec2::254`), IPv4-mapped/NAT64/6to4 forms, `localhost` and `*.internal` names, and URLs with credentials are refused. The socket connects to the vetted IP (pinned lookup, no connection reuse), so DNS can't rebind between the check and the connect. |
+| Fetch caps | 5 MB max body (counted after decompression; the stream is cut and the connection closed), 8 s per hop including the body, at most 5 redirects, 15 s per check overall. One slow page holds one of the pool slots and nothing else. |
 | Not paid calls | Free checks never call `recordSuccessfulPaidCheck`, so `/stats` revenue, buckets, and reconciliation are untouched. |
-| Tracking | Daily counts only, in `/data/free-page.sqlite` (`FREE_PAGE_DB_PATH`): views, checks, verdict_open/closed/cant_tell, cta_docs, cta_skill, limited, busy, invalid_url. Read them at **`GET /job/stats`**. The CTA links go through `/job/go/docs` (→ `/llms.txt`) and `/job/go/skill` (→ the skill repo) so clicks are counted. |
+| Tracking | Daily counts only, in `/data/free-page.sqlite` (`FREE_PAGE_DB_PATH`): views, checks, verdict_open/closed/cant_tell, cta_docs, cta_skill, limited, busy, invalid_url. The CTA links go through `/job/go/docs` (→ `/llms.txt`) and `/job/go/skill` (→ the skill repo) so clicks are counted. |
 | HTML only | There's no JSON answer, so the free page is not a free API. Agents use `POST /v1/verify/job` ($0.01). |
 
-Knobs (`fly secrets set …` restarts the machine, no deploy): `LIVECHECK_FREE_PER_VISITOR_DAILY` (5), `LIVECHECK_FREE_PER_IP_DAILY` (5), `LIVECHECK_FREE_HOURLY_CAP` (300), `LIVECHECK_FREE_CONCURRENCY` (2), `LIVECHECK_FREE_PAGE=off` (hides the page). Limits live in memory, so a restart resets today's counts.
+**Private stats: `GET /job/stats`.** It needs the Fly secret `FREE_PAGE_STATS_TOKEN`, sent as the `X-Livecheck-Stats-Token` header, `Authorization: Bearer …`, or `?token=…` (constant-time compare). Without it, or if the secret isn't set, the answer is a plain 404. The JSON has today's and the last 7 days' counts, the current limits, this hour's check count, and checks in flight. `/stats` (the paid-traffic page) stays public.
+
+```bash
+fly secrets list -a livecheck              # shows the name FREE_PAGE_STATS_TOKEN and a digest, never the value
+fly ssh console -a livecheck -C 'printenv FREE_PAGE_STATS_TOKEN'   # prints the value in your own terminal
+curl -s -H "X-Livecheck-Stats-Token: $TOKEN" https://livecheck.fly.dev/job/stats
+```
+
+**Live settings (no deploy, no restart).** Limits are read from the `free_page_settings` table in `/data/free-page.sqlite` on every request, so a change applies to the next check:
+
+```bash
+fly ssh console -a livecheck -C "npm run --silent free:get"
+fly ssh console -a livecheck -C "npm run --silent free:set -- hourly_cap 1000"
+fly ssh console -a livecheck -C "npm run --silent free:unset -- hourly_cap"     # back to env/default
+```
+
+Keys: `hourly_cap` (default 300, 0–100000), `concurrency` (2, 1–16), `per_visitor_daily` (5, 1–1000), `per_ip_daily` (15, 1–10000), `enabled` (on/off). A setting beats the env var, which beats the default. Env vars still work as a fallback (`fly secrets set` restarts the machine): `LIVECHECK_FREE_PER_VISITOR_DAILY`, `LIVECHECK_FREE_PER_IP_DAILY`, `LIVECHECK_FREE_HOURLY_CAP`, `LIVECHECK_FREE_CONCURRENCY`, `LIVECHECK_FREE_PAGE=off`. Per-visitor and per-IP counts live in memory, so a restart resets today's counts.
+
+**Launch day:** raise the cap before the Product Hunt post goes up, and drop it back afterwards:
+
+```bash
+fly ssh console -a livecheck -C "npm run --silent free:set -- hourly_cap 1000"
+fly ssh console -a livecheck -C "npm run --silent free:unset -- hourly_cap"     # after launch: back to 300
+```
 
 ## Sentinel check (`POST /v1/check`)
 
