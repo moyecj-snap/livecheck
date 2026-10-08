@@ -177,8 +177,25 @@ export function verifyPaymentRoutes(payTo: string): RoutesConfig {
 }
 
 /**
+ * True when the library 402 body carries nothing (empty or `{}`) and is not
+ * HTML, so the x402 challenge can be mirrored into it.
+ */
+export function shouldMirrorChallengeIntoBody(contentType: string | null | undefined, body: string): boolean {
+  if (/text\/html/i.test(contentType ?? "")) return false;
+  const trimmed = body.trim();
+  if (trimmed === "") return true;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return Boolean(parsed) && typeof parsed === "object" && !Array.isArray(parsed) && Object.keys(parsed as object).length === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Rewrite the library 402 so resource.url / description / bazaar are what
- * we advertise, not Fly's internal http:// request URL.
+ * we advertise, not Fly's internal http:// request URL. The same challenge
+ * object is mirrored into an empty JSON body (header unchanged).
  */
 export function withAdvertised402(inner: MiddlewareHandler): MiddlewareHandler {
   return async (c, next) => {
@@ -206,9 +223,16 @@ export function withAdvertised402(inner: MiddlewareHandler): MiddlewareHandler {
       : c.req.url;
     const advertised = advertisePaymentRequired(decoded, requestUrl, c.req.header("host"));
     const encoded = encodePaymentRequired(advertised);
+    const libraryBody = await current.text();
+    const contentType = current.headers.get("content-type") ?? "application/json";
+    // Mirror the challenge into the body for x402 v1-style clients that read
+    // the body instead of the header. Same object as the header, byte for
+    // byte after decode. Only an empty / `{}` JSON body is replaced; an HTML
+    // paywall or a JSON body that already says something is left alone.
+    const mirror = shouldMirrorChallengeIntoBody(contentType, libraryBody);
     // Re-emit via Hono so payment-required is not stuck on an immutable Fetch header map.
-    return c.body(await current.text(), 402, {
-      "content-type": current.headers.get("content-type") ?? "application/json",
+    return c.body(mirror ? JSON.stringify(advertised) : libraryBody, 402, {
+      "content-type": mirror ? "application/json" : contentType,
       "cache-control": current.headers.get("cache-control") ?? "no-store",
       "payment-required": encoded,
     });

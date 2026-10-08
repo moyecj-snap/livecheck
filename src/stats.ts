@@ -10,8 +10,7 @@ import {
   DOCS_EXAMPLE_URLS,
   docsExampleUrlHashes,
 } from "./docs-example-url.js";
-import { graderWallets } from "./grader-wallets.js";
-import { testTrafficAddresses } from "./test-traffic.js";
+import { graderWallets, testerWallets } from "./grader-wallets.js";
 import { internalWallets } from "./internal-wallets.js";
 import { PAID_CALL_ROUTES } from "./paid-call.js";
 import {
@@ -435,11 +434,11 @@ export function trafficHonestyNote(input: {
     GRADER_TEST_TRAFFIC_LABEL,
     input.graders.wallets_configured === 0
       ? "No grader wallets are configured (LIVECHECK_GRADER_WALLETS=off disables the list)."
-      : `traffic.external omits ${input.graders.wallets_configured} known grader wallets (built-in list plus LIVECHECK_GRADER_WALLETS).`,
+      : `traffic.external omits ${input.graders.wallets_configured} known grader wallets (test_wallets list plus LIVECHECK_GRADER_WALLETS).`,
     graderNote(input.graders, input.fleet),
     input.testers.wallets_configured === 0
       ? "No tester wallets are configured."
-      : `traffic.external omits ${input.testers.wallets_configured} tester wallets from src/test-traffic.ts.`,
+      : `traffic.external omits ${input.testers.wallets_configured} tester wallets from the test_wallets list.`,
     testerNote(input.testers, input.fleet),
     DOCS_EXAMPLE_TEST_TRAFFIC_LABEL,
     `The stored paid_calls column is url_sha256 (SHA-256 of the full URL). traffic.external omits ${DOCS_EXAMPLE_URLS.join(", ")}. Those calls stay in traffic.all.`,
@@ -1778,7 +1777,7 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
   const notes = statsNotes(unscoped, LOCAL_VOLUME_NOTE, "volume");
   const wallets = internalWallets();
   const graders = graderWallets();
-  const testers = testTrafficAddresses("tester");
+  const testers = testerWallets();
   const externalPayersExcluded = [...new Set([...wallets, ...graders, ...testers])];
   const watchAll = loadWatchStats();
   const watchExternal = loadWatchStats(externalPayersExcluded);
@@ -2050,7 +2049,7 @@ function testerHtml(doc: StatsDocument): string {
     return `${label} Counts are not a measurement on this response (paid-call store closed, or a machine did not publish the split).`;
   }
   const payers = (value: number | null) => (value === null ? "withheld" : String(value));
-  return `${label} ${testers.wallets_configured} wallets configured. ${testers.calls.l7d} L7d / ${testers.calls.l30d} L30d paid calls (${payers(testers.unique_payers.l7d)} / ${payers(testers.unique_payers.l30d)} unique payers${revenueSuffix(testers.revenue)}). These rows stay in All and are omitted from External. The wallet list is src/test-traffic.ts.`;
+  return `${label} ${testers.wallets_configured} wallets configured. ${testers.calls.l7d} L7d / ${testers.calls.l30d} L30d paid calls (${payers(testers.unique_payers.l7d)} / ${payers(testers.unique_payers.l30d)} unique payers${revenueSuffix(testers.revenue)}). These rows stay in All and are omitted from External. The wallet list is the test_wallets table (seeded from src/test-traffic.ts).`;
 }
 
 function revenueSuffix(revenue: TrafficRevenueWindow | undefined): string {

@@ -25,6 +25,8 @@ import {
   type VerifyPaidStatus,
 } from "./paid-call.js";
 import { INTERNAL_USER_AGENT_PREFIX } from "./internal-wallets.js";
+import type { TestTrafficWallet } from "./test-traffic.js";
+import { listActiveTestWallets, migrateTestWalletStore } from "./test-wallet-store.js";
 import { bucketPaidCallRows, type BucketWindows, type TrafficBucketLists } from "./traffic-buckets.js";
 import {
   ATTRIBUTION_TX_TRANSFER,
@@ -361,6 +363,8 @@ export function migratePaidCallStore(db: DatabaseSync): void {
   db.exec(INDEXES_AFTER_MIGRATE);
   db.exec(PAID_CALL_UNIQUE_INDEXES);
   markUnattributedNullPayers(db);
+  // Grader / tester list (editable without a deploy). Seeded, idempotent.
+  migrateTestWalletStore(db);
 }
 
 /**
@@ -581,6 +585,23 @@ export function paidCallStoreStatus(): PaidCallStoreStatus {
   if (!state) return { kind: "stdout", reason: "not_initialized" };
   if (state.ok) return { kind: "sqlite", path: state.path };
   return { kind: "stdout", reason: state.reason };
+}
+
+/**
+ * Active grader / tester wallets from the `test_wallets` table, read fresh on
+ * every call so `npm run testers:add` shows up without a restart.
+ * Undefined when the store is closed or the read fails (caller falls back to
+ * the built-in seed list).
+ */
+export function listTestWalletsFromStore(): TestTrafficWallet[] | undefined {
+  if (!state?.ok) return undefined;
+  try {
+    return listActiveTestWallets(state.db);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(`[test_wallets] read failed, using built-in list: ${reason}`);
+    return undefined;
+  }
 }
 
 export function openPaidCallDb(path: string): DatabaseSync {

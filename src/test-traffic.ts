@@ -2,9 +2,16 @@ import { sanitizePayer } from "./paid-call.js";
 
 /**
  * Test wallets and test URLs omitted from `traffic.external`.
- * One list. Add a grader, tester, or URL by appending one entry.
  * Addresses stay lowercase. Labels are the reason, and they are not
  * published on `/stats` (only counts are).
+ *
+ * Wallets: `TEST_TRAFFIC_WALLETS` below is only the SEED for the
+ * `test_wallets` table in the paid-calls SQLite file
+ * (`src/test-wallet-store.ts`). The live list is that table, so the team adds
+ * a grader without a deploy:
+ *   fly ssh console -a livecheck -C "npm run --silent testers:add -- <0x wallet> <grader|tester> '<label>'"
+ * When the store is closed (no volume), the seed list is used as-is.
+ * URLs: `TEST_TRAFFIC_URLS` is still code (a URL rule change is a deploy).
  *
  * Runtime additions (additive, comma-separated):
  *   LIVECHECK_TEST_WALLETS=0xabc…:grader:Name, 0xdef…:tester:Name
@@ -48,6 +55,16 @@ export const TEST_TRAFFIC_WALLETS: readonly TestTrafficWallet[] = [
     address: "0x9cd5b9a8341dcaf7825348d70792ad9903f2c5a7",
     role: "tester",
     label: "docs-example tester",
+  },
+  {
+    address: "0x6a0b784cf4e3f79e0bca889e35a1b3aa1dc24518",
+    role: "grader",
+    label: "cog-x402-audit grader (UA cog-x402-audit/2 (+https://cog.xyz)); 5 routes on docs/demo URLs Oct 7",
+  },
+  {
+    address: "0xe3badbd4f38214b9eae528a1a5398f6678f63fb3",
+    role: "tester",
+    label: "Sep 14 docs-example verify (Greenhouse docs job)",
   },
 ];
 
@@ -115,14 +132,19 @@ function parseAddressList(raw: string, role: TestTrafficRole, label: string): Te
 }
 
 /**
- * Built-in list, plus env additions.
- * `LIVECHECK_TEST_WALLETS=off` drops the built-in list.
+ * Base list, plus env additions. `base` is the `test_wallets` table when the
+ * store is open (see `activeTestTrafficWallets` in `src/grader-wallets.ts`)
+ * and the built-in seed list otherwise.
+ * `LIVECHECK_TEST_WALLETS=off` drops the base list.
  * `LIVECHECK_GRADER_WALLETS=off` drops graders and keeps testers.
  */
-export function testTrafficWallets(env: NodeJS.ProcessEnv = process.env): TestTrafficWallet[] {
+export function testTrafficWallets(
+  env: NodeJS.ProcessEnv = process.env,
+  base: readonly TestTrafficWallet[] = TEST_TRAFFIC_WALLETS,
+): TestTrafficWallet[] {
   const testRaw = env.LIVECHECK_TEST_WALLETS;
   const testOff = testRaw !== undefined && FILTER_OFF.has(testRaw.trim().toLowerCase());
-  let wallets: TestTrafficWallet[] = testOff ? [] : TEST_TRAFFIC_WALLETS.map((wallet) => ({ ...wallet }));
+  let wallets: TestTrafficWallet[] = testOff ? [] : base.map((wallet) => ({ ...wallet }));
 
   const graderRaw = env.LIVECHECK_GRADER_WALLETS;
   if (graderRaw !== undefined && FILTER_OFF.has(graderRaw.trim().toLowerCase())) {

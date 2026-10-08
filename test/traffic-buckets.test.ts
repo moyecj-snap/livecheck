@@ -24,7 +24,9 @@ const INTERNAL = DEFAULT_INTERNAL_WALLETS[0]!;
 const GRADER = DEFAULT_GRADER_WALLETS[0]!;
 const TESTER = testTrafficAddresses("tester")[0]!;
 const OUTSIDE = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-const PROBABLE = "0xe3badbd4f38214b9eae528a1a5398f6678f63fb3";
+// An unknown wallet on a docs-example URL (row 24 shape). 0xe3ba…3fb3, the
+// original row 24 payer, is on the tester list now, so use a fresh address.
+const PROBABLE = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const DOCS = DOCS_EXAMPLE_URL_SHA256;
 const REAL_URL = hashUrl("https://jobs.example.com/opening-42");
 

@@ -15,7 +15,11 @@ import {
   VERIFY_DESCRIPTION,
 } from "../src/config.js";
 import { setFacilitatorFetchForTests, wrapFacilitatorForCatalog } from "../src/facilitator-catalog.js";
-import { livePaymentMiddlewareFromServer, resourceServerFromFacilitator } from "../src/payments.js";
+import {
+  livePaymentMiddlewareFromServer,
+  resourceServerFromFacilitator,
+  shouldMirrorChallengeIntoBody,
+} from "../src/payments.js";
 import { advertisePaymentRequired, decodePaymentRequired } from "../src/x402-payload.js";
 import { assertInfoInputMatchesSchema } from "./bazaar-schema.js";
 
@@ -295,6 +299,51 @@ describe("live @x402/hono 402 (decoded payment-required)", () => {
     assert.equal(accepts.length, 1);
     assert.equal(accepts[0]?.amount, "250000");
     assert.deepEqual(accepts[0]?.extra, { name: "USD Coin", version: "2" });
+  });
+  it("mirrors the decoded payment-required challenge into the body on every paid route", async () => {
+    const watchBody = {
+      target: { type: "url", url: "https://example.com", render: "never" },
+      condition: { detector: "status_change", params: {} },
+      callback: { url: "https://example.com/hook", secret: "whsec_x" },
+    };
+    const cases: Array<{ path: string; body?: unknown; amount: string }> = [
+      { path: "/v1/verify", body: { url: "https://example.com" }, amount: "10000" },
+      { path: "/v1/verify/job", body: { url: "https://boards.greenhouse.io/example/jobs/1842" }, amount: "10000" },
+      { path: "/v1/verify/listing", body: { url: "https://example.com/listing/1" }, amount: "10000" },
+      { path: "/v1/confirm", body: { url: "https://example.com/thank-you", intent: "lead_submit" }, amount: "100000" },
+      {
+        path: "/v1/confirm/order",
+        body: { url: "https://shop.example.com/thank-you", intent: "order_placed" },
+        amount: "250000",
+      },
+      {
+        path: "/v1/check",
+        body: { target: watchBody.target, condition: watchBody.condition },
+        amount: "20000",
+      },
+      { path: "/v1/watch", body: watchBody, amount: "2500000" },
+      { path: "/v1/watch/renew", body: { id: "wtc_01M26F7JFYRFCCBSQVNW1B0E3M" }, amount: "2500000" },
+      { path: "/v1/watch/wtc_01M26F7JFYRFCCBSQVNW1B0E3M/chain/topup", amount: "500000" },
+    ];
+    for (const entry of cases) {
+      const res = await fetch(`${origin}${entry.path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        ...(entry.body === undefined ? {} : { body: JSON.stringify(entry.body) }),
+      });
+      assert.equal(res.status, 402, entry.path);
+      assert.match(res.headers.get("content-type") ?? "", /application\/json/, entry.path);
+      const fromHeader = decode402(res);
+      const text = await res.text();
+      assert.notEqual(text.trim(), "{}", `${entry.path} body is no longer {}`);
+      const fromBody = JSON.parse(text) as Record<string, unknown>;
+      assert.deepEqual(fromBody, fromHeader, `${entry.path}: body equals decoded header`);
+      assert.equal(fromBody.x402Version, 2, entry.path);
+      const accepts = fromBody.accepts as Array<{ amount?: string }>;
+      assert.equal(accepts[0]?.amount, entry.amount, entry.path);
+      const resource = fromBody.resource as { url?: string };
+      assert.equal(resource.url, `https://livecheck.fly.dev${entry.path}`, entry.path);
+    }
   });
 });
 
@@ -606,5 +655,18 @@ describe("paid watch 402 carries the full CDP errorMessage", () => {
     } finally {
       console.log = original;
     }
+  });
+});
+
+describe("shouldMirrorChallengeIntoBody", () => {
+  it("replaces only an empty or {} JSON body, never HTML or a body that says something", () => {
+    assert.equal(shouldMirrorChallengeIntoBody("application/json", "{}"), true);
+    assert.equal(shouldMirrorChallengeIntoBody("application/json; charset=UTF-8", " { } "), true);
+    assert.equal(shouldMirrorChallengeIntoBody(null, ""), true);
+    assert.equal(shouldMirrorChallengeIntoBody("text/html; charset=UTF-8", "{}"), false);
+    assert.equal(shouldMirrorChallengeIntoBody("text/html", "<html>paywall</html>"), false);
+    assert.equal(shouldMirrorChallengeIntoBody("application/json", '{"error":"payment_amount_insufficient"}'), false);
+    assert.equal(shouldMirrorChallengeIntoBody("application/json", "[]"), false);
+    assert.equal(shouldMirrorChallengeIntoBody("application/json", "not json"), false);
   });
 });
