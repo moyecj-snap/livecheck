@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto";
 import type { Context, MiddlewareHandler, Next } from "hono";
 import { Credential, Receipt } from "mppx";
 import { Mppx, stripe } from "mppx/server";
 import StripeClient from "stripe";
 import { hasMppPaymentCredential } from "./mpp-flags.js";
+import { openMppResultCache, type MppResultCache, type StoredResponse } from "./mpp-idempotency.js";
 import { openMppStore } from "./mpp-store.js";
 import { PRICE_USD, VERIFY_DESCRIPTION } from "./config.js";
 import {
@@ -33,10 +35,11 @@ import { withWatchHint } from "./watch-hint.js";
  *     gate, unchanged. mppx is never called.
  *   - both an x402 credential and `Authorization: Payment`: 400, nothing charged.
  *   - no credential: the x402 402 (same PAYMENT-REQUIRED header, same mirrored
- *     body). Only when the request body is valid do we append the MPP
- *     `WWW-Authenticate: Payment` challenge. An invalid request never gets an
- *     MPP challenge.
- *   - `Authorization: Payment`: validate the request first (400, not charged).
+ *     body) with the MPP `WWW-Authenticate: Payment` challenge appended. Empty
+ *     and bodyless probes get it too, so MPP discovery tools see Tempo.
+ *   - `Authorization: Payment`: validate the request before SETTLING (400,
+ *     not charged). A retry with the same credential or tx never settles
+ *     twice (see mpp-idempotency.ts).
  *     Then mppx verifies and settles the Tempo payment. After that the caller
  *     always gets 200 with the normal verify shape: a handler error becomes
  *     status "unknown" and a refund candidate is logged.
@@ -334,7 +337,53 @@ export type MppDispatchOptions = {
   /** stdout writer for the refund-candidate line (tests capture it). */
   writer?: (line: string) => void;
   now?: () => Date;
+  /** Retry/idempotency rows. Default: a private in-memory SQLite. */
+  results?: MppResultCache;
 };
+
+export const IDEMPOTENT_REPLAY_HEADER = "livecheck-idempotent-replay";
+
+export const PAYMENT_UNCONFIRMED_MESSAGE =
+  "The MPP payment could not be confirmed. If your wallet shows a charge for this request, it is logged for refund. Retrying with the same credential is safe: it is never charged twice.";
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+/** Tx hash when the client already broadcast (push mode). Pull-mode credentials carry a signed tx instead. */
+function credentialTxHash(request: Request): string | undefined {
+  try {
+    const payload = Credential.fromRequest(request).payload as { type?: string; hash?: unknown } | undefined;
+    if (payload?.type === "hash" && typeof payload.hash === "string") return sanitizeTx(payload.hash.toLowerCase());
+  } catch {
+    // unparsable: mppx will refuse it
+  }
+  return undefined;
+}
+
+const STORED_HEADERS = ["content-type", "payment-receipt", "cache-control"];
+
+async function storableResponse(response: Response): Promise<StoredResponse> {
+  const headers: Record<string, string> = {};
+  for (const name of STORED_HEADERS) {
+    const value = response.headers.get(name);
+    if (value) headers[name] = value;
+  }
+  return { status: response.status, headers, body: await response.clone().text() };
+}
+
+function replayStored(stored: StoredResponse): Response {
+  const headers = new Headers(stored.headers);
+  headers.set(IDEMPOTENT_REPLAY_HEADER, "1");
+  if (!headers.has("cache-control")) headers.set("cache-control", "no-store");
+  return new Response(stored.body, { status: stored.status, headers });
+}
+
+function conflict(error: string, message: string, retryAfter?: number): Response {
+  const headers: Record<string, string> = { "content-type": "application/json", "cache-control": "no-store" };
+  if (retryAfter !== undefined) headers["retry-after"] = String(retryAfter);
+  return new Response(JSON.stringify({ error, message }), { status: 409, headers });
+}
 
 function logRefundCandidate(candidate: RefundCandidate, writer: (line: string) => void): void {
   const line: Record<string, unknown> = {
@@ -359,6 +408,7 @@ export function withMppDispatch(
 ): MiddlewareHandler {
   const writer = options.writer ?? ((line: string) => console.log(line));
   const now = options.now ?? (() => new Date());
+  const results = options.results ?? openMppResultCache(":memory:");
 
   return async (c: Context, next: Next) => {
     const route = c.req.method === "POST" ? mppRouteForPath(c.req.path) : undefined;
@@ -382,9 +432,8 @@ export function withMppDispatch(
       const result = await x402Gate(c, next);
       const unpaid = current402(result, c);
       if (!unpaid) return result;
-      // Validate before any MPP challenge. Invalid → the x402 402 exactly as before.
-      const valid = await validateVerifyRequest(c);
-      if (!valid.ok) return result;
+      // Challenge every unpaid 402 on these routes, empty probes included,
+      // so MPP discovery sees Tempo. Validation happens before settlement.
       let outcome: MppChargeOutcome;
       try {
         outcome = await gateway.charge(route, mppRequest(c), scope);
@@ -398,35 +447,82 @@ export function withMppDispatch(
       return appendChallenge(unpaid, lines);
     }
 
-    // MPP payment attempt. Validate first: an invalid request is never charged.
+    // MPP payment attempt. Validate before settling: an invalid request is never charged.
     const valid = await validateVerifyRequest(c);
     if (!valid.ok) {
       return c.json(valid.body, valid.status, { "cache-control": "no-store" });
     }
 
+    // Retry safety: one settlement per credential / tx, ever.
+    const request = mppRequest(c);
+    const credentialKey = sha256Hex(c.req.header("authorization") ?? "");
+    const credentialTx = credentialTxHash(request);
+    const requestKey = sha256Hex(`${route}\n${await c.req.text().catch(() => "")}`);
+    const claim = results.claim({
+      credential_sha256: credentialKey,
+      ...(credentialTx ? { tx: credentialTx } : {}),
+      route,
+      request_sha256: requestKey,
+      ts: isoTs(now()),
+    });
+    if (claim.kind === "existing") {
+      const { existing } = claim;
+      if (existing.request_sha256 !== requestKey) {
+        return conflict(
+          "credential_already_used",
+          "This MPP payment already paid for a different request. It was not charged again. Request a new challenge to pay for this one.",
+        );
+      }
+      if (existing.state === "pending") {
+        return conflict(
+          "payment_in_progress",
+          "This MPP payment is being settled by another request. Retry shortly with the same credential; it will not be charged twice.",
+          2,
+        );
+      }
+      if (existing.response) return replayStored(existing.response);
+      return conflict("payment_in_progress", "Retry shortly with the same credential.", 2);
+    }
+    const retrying = claim.kind === "retry_unconfirmed" ? claim.original : undefined;
+
     let outcome: MppChargeOutcome;
     try {
-      outcome = await gateway.charge(route, mppRequest(c), scope);
+      outcome = await gateway.charge(route, request, scope);
     } catch (error) {
+      console.error(`[mpp] charge threw: ${error instanceof Error ? error.message : String(error)}`);
+      if (retrying?.response) {
+        results.restoreUnconfirmed(credentialKey);
+        return replayStored(retrying.response);
+      }
       // We cannot tell whether the transfer landed. Do not answer as paid,
       // and keep a record so a charge can be found and refunded.
       logRefundCandidate(
-        { ts: isoTs(now()), protocol: gateway.protocol, route, reason: "charge_outcome_unknown" },
+        {
+          ts: isoTs(now()),
+          protocol: gateway.protocol,
+          ...(credentialTx ? { payment_id: credentialTx } : {}),
+          route,
+          reason: "charge_outcome_unknown",
+        },
         writer,
       );
-      console.error(`[mpp] charge threw: ${error instanceof Error ? error.message : String(error)}`);
-      return c.json(
-        {
-          error: "payment_unconfirmed",
-          message:
-            "The MPP payment could not be confirmed. If your wallet shows a charge for this request, it is logged for refund. Retry with a new credential.",
-        },
+      const unconfirmed = c.json(
+        { error: "payment_unconfirmed", message: PAYMENT_UNCONFIRMED_MESSAGE },
         503,
         { "cache-control": "no-store" },
       );
+      results.complete(credentialKey, { state: "unconfirmed", response: await storableResponse(unconfirmed) });
+      return unconfirmed;
     }
 
     if (outcome.status === 402) {
+      if (retrying?.response) {
+        // Never answer a retry of a possibly-paid credential with a fresh 402:
+        // that invites a second payment. Same 503 as before.
+        results.restoreUnconfirmed(credentialKey);
+        return replayStored(retrying.response);
+      }
+      results.release(credentialKey);
       // Bad, expired, replayed, or wrong-route credential. mppx's problem body
       // and fresh challenge, plus the x402 header so an x402 fallback works.
       const x402Result = await x402Gate(c, async () => undefined);
@@ -477,6 +573,11 @@ export function withMppDispatch(
           headers: { "content-type": "application/json", "cache-control": "no-store" },
         }),
       );
+      results.complete(credentialKey, {
+        state: "done",
+        ...(outcome.reference ? { tx: sanitizeTx(outcome.reference) } : {}),
+        response: await storableResponse(replacement),
+      });
       c.res = undefined;
       c.res = replacement;
       return c.res;
@@ -489,6 +590,11 @@ export function withMppDispatch(
     }
     emitPaidCall(settlement);
     const withReceipt = outcome.withReceipt(handled);
+    results.complete(credentialKey, {
+      state: "done",
+      ...(outcome.reference ? { tx: sanitizeTx(outcome.reference) } : {}),
+      response: await storableResponse(withReceipt),
+    });
     c.res = undefined;
     c.res = withReceipt;
     return c.res;

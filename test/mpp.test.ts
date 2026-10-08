@@ -12,6 +12,7 @@ import { createApp } from "../src/app.js";
 import { hasPaymentAttempt } from "../src/check-capacity.js";
 import { MOCK_PAY_TO, NETWORK } from "../src/config.js";
 import {
+  IDEMPOTENT_REPLAY_HEADER,
   MULTIPLE_CREDENTIALS_MESSAGE,
   POST_PAYMENT_UNKNOWN_SIGNAL,
   REFUND_CANDIDATE_EVENT,
@@ -102,7 +103,7 @@ function fakeTempoGateway() {
 
 function credentialFor(res: Response, hash: string, source = `did:pkh:eip155:4217:${PAYER}`): string {
   const challenge = Challenge.fromResponse(res);
-  return Credential.serialize(Credential.from({ challenge, payload: { hash }, source }));
+  return Credential.serialize(Credential.from({ challenge, payload: { type: "hash", hash }, source }));
 }
 
 function txHash(n: number): string {
@@ -327,16 +328,28 @@ describe("MPP dispatcher on the verify routes (real mppx, stand-in Tempo method)
     }
   });
 
-  it("validates before any MPP challenge: an invalid request gets the x402 402 only and mppx is not called", async () => {
-    const before = fake.state.challenges;
-    for (const body of ["{}", "not json", JSON.stringify({ url: "ftp://example.com/x" })]) {
-      const [withMpp, plain] = await Promise.all([post(mpp.origin, "/v1/verify", body), post(x402Only.origin, "/v1/verify", body)]);
-      assert.equal(withMpp.status, 402);
-      assert.equal(withMpp.headers.get("www-authenticate"), null);
-      assert.deepEqual(headerList(withMpp), headerList(plain));
-      assert.equal(await withMpp.text(), await plain.text());
+  it("empty, bodyless and invalid probes get the same x402 402 plus the MPP challenge, and nothing settles", async () => {
+    const before = fake.state.verifyCalls;
+    const probes: Array<{ body?: string; headers: Record<string, string> }> = [
+      { headers: {} },
+      { body: "", headers: { "content-type": "application/json" } },
+      { body: "{}", headers: { "content-type": "application/json" } },
+      { body: "not json", headers: { "content-type": "application/json" } },
+      { body: JSON.stringify({ url: "ftp://example.com/x" }), headers: { "content-type": "application/json" } },
+    ];
+    for (const probe of probes) {
+      const init = (origin: string) =>
+        fetch(`${origin}/v1/verify/job`, { method: "POST", headers: probe.headers, ...(probe.body !== undefined ? { body: probe.body } : {}) });
+      const [withMpp, plain] = await Promise.all([init(mpp.origin), init(x402Only.origin)]);
+      assert.equal(withMpp.status, 402, JSON.stringify(probe));
+      assert.equal(plain.status, 402);
+      assert.equal(withMpp.headers.get("payment-required"), plain.headers.get("payment-required"));
+      assert.equal(await withMpp.clone().text(), await plain.text());
+      const challenge = Challenge.fromResponse(withMpp);
+      assert.equal(challenge.method, "tempo");
+      assert.equal(plain.headers.get("www-authenticate"), null);
     }
-    assert.equal(fake.state.challenges, before);
+    assert.equal(fake.state.verifyCalls, before, "a challenge never settles anything");
   });
 
   it("non-verify paid routes are x402 only", async () => {
@@ -402,7 +415,7 @@ describe("MPP dispatcher on the verify routes (real mppx, stand-in Tempo method)
     assert.equal(logged.length, 0, "success writes no refund line");
   });
 
-  it("a replayed, bad, or wrong-route credential is a 402 with both challenges and no row", async () => {
+  it("a bad or wrong-route credential is a 402 with both challenges and no row", async () => {
     const body = JSON.stringify({ url: `${mpp.origin}/fixtures/live-apply-now` });
     const unpaid = await post(mpp.origin, "/v1/verify", body);
     const rowsBefore = listPaidCallRowsFromStore().length;
@@ -410,17 +423,106 @@ describe("MPP dispatcher on the verify routes (real mppx, stand-in Tempo method)
     assert.equal(bad.status, 402);
     assert.ok(bad.headers.get("payment-required"), "x402 fallback header");
     assert.ok(bad.headers.get("www-authenticate")?.startsWith("Payment "));
-    // Paid once, then replayed.
-    const hash = txHash(2);
-    const first = await post(mpp.origin, "/v1/verify", body, { authorization: credentialFor(unpaid, hash) });
-    assert.equal(first.status, 200);
-    const unpaid2 = await post(mpp.origin, "/v1/verify", body);
-    const replay = await post(mpp.origin, "/v1/verify", body, { authorization: credentialFor(unpaid2, hash) });
-    assert.equal(replay.status, 402);
     // A /v1/verify challenge does not pay for /v1/verify/listing.
-    const wrongRoute = await post(mpp.origin, "/v1/verify/listing", body, { authorization: credentialFor(unpaid2, txHash(3)) });
+    const wrongRoute = await post(mpp.origin, "/v1/verify/listing", body, { authorization: credentialFor(unpaid, txHash(3)) });
     assert.equal(wrongRoute.status, 402);
-    assert.equal(listPaidCallRowsFromStore().length, rowsBefore + 1, "only the one paid call is a row");
+    // A refused credential can be fixed and sent again (the claim is released).
+    const fixed = await post(mpp.origin, "/v1/verify", body, { authorization: credentialFor(unpaid, txHash(5)) });
+    assert.equal(fixed.status, 200);
+    assert.equal(listPaidCallRowsFromStore().length, rowsBefore + 1);
+  });
+
+  it("a retry with the same credential returns the original answer and is never settled twice", async () => {
+    const body = JSON.stringify({ url: `${mpp.origin}/fixtures/live-apply-now` });
+    const unpaid = await post(mpp.origin, "/v1/verify", body);
+    const hash = txHash(2);
+    const auth = credentialFor(unpaid, hash);
+    const first = await post(mpp.origin, "/v1/verify", body, { authorization: auth });
+    assert.equal(first.status, 200);
+    const firstBody = await first.text();
+    const settles = fake.state.verifyCalls;
+    const rows = listPaidCallRowsFromStore().length;
+
+    const retry = await post(mpp.origin, "/v1/verify", body, { authorization: auth });
+    assert.equal(retry.status, 200);
+    assert.equal(retry.headers.get(IDEMPOTENT_REPLAY_HEADER), "1");
+    assert.equal(await retry.text(), firstBody, "byte-identical original answer");
+    assert.equal(Receipt.fromResponse(retry).reference, hash);
+    assert.equal(fake.state.verifyCalls, settles, "mppx not called again");
+    assert.equal(listPaidCallRowsFromStore().length, rows, "no second paid_calls row");
+
+    // Same tx wrapped in a NEW credential (fresh challenge): same answer, no settle.
+    const unpaid2 = await post(mpp.origin, "/v1/verify", body);
+    const sameTx = await post(mpp.origin, "/v1/verify", body, { authorization: credentialFor(unpaid2, hash) });
+    assert.equal(sameTx.status, 200);
+    assert.equal(sameTx.headers.get(IDEMPOTENT_REPLAY_HEADER), "1");
+    assert.equal(fake.state.verifyCalls, settles);
+
+    // Same credential for a different request: refused, not charged, no free check.
+    const other = await post(mpp.origin, "/v1/verify", JSON.stringify({ url: `${mpp.origin}/fixtures/gone-404` }), {
+      authorization: auth,
+    });
+    assert.equal(other.status, 409);
+    assert.equal(((await other.json()) as { error: string }).error, "credential_already_used");
+    assert.equal(fake.state.verifyCalls, settles);
+    assert.equal(listPaidCallRowsFromStore().length, rows);
+  });
+
+  it("without the retry row (expired), mppx replay protection still refuses a reused tx: 402, no charge", async () => {
+    const body = JSON.stringify({ url: `${mpp.origin}/fixtures/live-apply-now` });
+    const unpaid = await post(mpp.origin, "/v1/verify", body);
+    const hash = txHash(6);
+    assert.equal((await post(mpp.origin, "/v1/verify", body, { authorization: credentialFor(unpaid, hash) })).status, 200);
+    // A second dispatcher with an empty retry cache, same mppx store.
+    const fresh = await startApp(withMppDispatch(liveX402Gate(), fake.gateway, { writer: () => undefined }));
+    try {
+      const rows = listPaidCallRowsFromStore().length;
+      const res = await post(fresh.origin, "/v1/verify", body, { authorization: credentialFor(unpaid, hash) });
+      assert.equal(res.status, 402);
+      assert.equal(listPaidCallRowsFromStore().length, rows);
+    } finally {
+      fresh.close();
+    }
+  });
+
+  it("two concurrent requests with one credential settle once: one answer, one 409 in progress", async () => {
+    const body = JSON.stringify({ url: `${mpp.origin}/fixtures/live-apply-now` });
+    const unpaid = await post(mpp.origin, "/v1/verify/job", body);
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let charges = 0;
+    const slow: MppGateway = {
+      ...fake.gateway,
+      async charge(route, request, scope) {
+        if (request.headers.get("authorization")) {
+          charges += 1;
+          await gate;
+        }
+        return fake.gateway.charge(route, request, scope);
+      },
+    };
+    const app = await startApp(withMppDispatch(liveX402Gate(), slow, { writer: () => undefined }));
+    try {
+      const auth = credentialFor(unpaid, txHash(7));
+      const firstP = post(app.origin, "/v1/verify/job", body, { authorization: auth });
+      await new Promise((r) => setTimeout(r, 50));
+      const second = await post(app.origin, "/v1/verify/job", body, { authorization: auth });
+      assert.equal(second.status, 409);
+      assert.equal(((await second.json()) as { error: string }).error, "payment_in_progress");
+      assert.equal(second.headers.get("retry-after"), "2");
+      release();
+      assert.equal((await firstP).status, 200);
+      assert.equal(charges, 1);
+      const third = await post(app.origin, "/v1/verify/job", body, { authorization: auth });
+      assert.equal(third.status, 200);
+      assert.equal(third.headers.get(IDEMPOTENT_REPLAY_HEADER), "1");
+      assert.equal(charges, 1);
+    } finally {
+      release();
+      app.close();
+    }
   });
 
   it("after an MPP payment a handler error becomes 200 status unknown, with a refund candidate", async () => {
@@ -458,27 +560,61 @@ describe("MPP dispatcher on the verify routes (real mppx, stand-in Tempo method)
     assert.equal(row.protocol, "mpp_tempo");
   });
 
-  it("if the MPP settle step itself throws, the caller gets 503 payment_unconfirmed and a refund candidate is logged", async () => {
+  it("settle throws: 503 payment_unconfirmed + refund candidate; retries re-check the same payment and never charge twice", async () => {
     const out: string[] = [];
-    const throwing: MppGateway = {
-      protocol: "mpp_tempo",
-      methods: ["tempo/charge"],
-      async charge(_route, request) {
-        if (!request.headers.get("authorization")) return fake.gateway.charge(_route, request, "");
-        throw new Error("rpc timeout");
+    const mode = { value: "throw" as "throw" | "pass" | "refuse" };
+    let settleAttempts = 0;
+    const flaky: MppGateway = {
+      ...fake.gateway,
+      async charge(route, request, scope) {
+        if (request.headers.get("authorization")) {
+          settleAttempts += 1;
+          if (mode.value === "throw") throw new Error("rpc timeout");
+          if (mode.value === "refuse") return fake.gateway.charge(route, new Request(request.url, { headers: { authorization: "Payment e30" } }), scope);
+        }
+        return fake.gateway.charge(route, request, scope);
       },
     };
-    const app = await startApp(withMppDispatch(liveX402Gate(), throwing, { writer: (line) => out.push(line) }));
+    const app = await startApp(withMppDispatch(liveX402Gate(), flaky, { writer: (line) => out.push(line) }));
     try {
-      const res = await post(app.origin, "/v1/verify", JSON.stringify({ url: "https://example.com/c" }), {
-        authorization: "Payment eyJ4IjoxfQ",
-      });
+      const body = JSON.stringify({ url: `${mpp.origin}/fixtures/live-apply-now` });
+      const unpaid = await post(app.origin, "/v1/verify", body);
+      const hash = txHash(8);
+      const auth = credentialFor(unpaid, hash);
+      const res = await post(app.origin, "/v1/verify", body, { authorization: auth });
       assert.equal(res.status, 503);
-      assert.equal(((await res.json()) as { error: string }).error, "payment_unconfirmed");
-      const line = out.map((l) => JSON.parse(l) as Record<string, unknown>).find((l) => l.reason === "charge_outcome_unknown");
-      assert.ok(line);
-      assert.equal(line.route, "verify");
-      assert.equal(line.protocol, "mpp_tempo");
+      const original = await res.text();
+      assert.equal((JSON.parse(original) as { error: string }).error, "payment_unconfirmed");
+      const lines = () => out.map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.reason === "charge_outcome_unknown");
+      assert.equal(lines().length, 1);
+      assert.equal(lines()[0]?.payment_id, hash, "push-mode tx hash recorded for the refund lookup");
+      assert.equal(lines()[0]?.route, "verify");
+
+      // Retry while still failing: the same 503, no second refund line.
+      const again = await post(app.origin, "/v1/verify", body, { authorization: auth });
+      assert.equal(again.status, 503);
+      assert.equal(await again.text(), original);
+      assert.equal(lines().length, 1);
+
+      // Retry where mppx refuses the credential: still the original 503, never a fresh 402.
+      mode.value = "refuse";
+      const refused = await post(app.origin, "/v1/verify", body, { authorization: auth });
+      assert.equal(refused.status, 503);
+      assert.equal(refused.headers.get("www-authenticate"), null);
+
+      // Retry once settlement works: verification of the SAME payment, then the answer.
+      mode.value = "pass";
+      const rows = listPaidCallRowsFromStore().length;
+      const ok = await post(app.origin, "/v1/verify", body, { authorization: auth });
+      assert.equal(ok.status, 200);
+      assert.equal(Receipt.fromResponse(ok).reference, hash);
+      assert.equal(listPaidCallRowsFromStore().length, rows + 1);
+      const attempts = settleAttempts;
+      const after = await post(app.origin, "/v1/verify", body, { authorization: auth });
+      assert.equal(after.status, 200);
+      assert.equal(after.headers.get(IDEMPOTENT_REPLAY_HEADER), "1");
+      assert.equal(settleAttempts, attempts, "done: never settled again");
+      assert.equal(listPaidCallRowsFromStore().length, rows + 1);
     } finally {
       app.close();
     }
