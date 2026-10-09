@@ -4,6 +4,8 @@
  * Hits the network. Not part of npm test.
  *
  *   npm run bench:oct1-accuracy
+ *   npm run bench:job-accuracy            (Oct 9 21-posting plate, incl. LinkedIn + Lever)
+ *   tsx scripts/oct1-accuracy.ts <plate.json>
  */
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -19,7 +21,9 @@ type PlateItem = {
   url: string;
 };
 
-const platePath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "bench", "oct1-accuracy-urls.json");
+const platePath = process.argv[2]
+  ? resolve(process.argv[2])
+  : resolve(dirname(fileURLToPath(import.meta.url)), "..", "bench", "oct1-accuracy-urls.json");
 const plate = JSON.parse(readFileSync(platePath, "utf8")) as { items: PlateItem[] };
 
 async function main(): Promise<void> {
@@ -28,6 +32,7 @@ async function main(): Promise<void> {
   let unknown = 0;
   let closedToLive = 0;
   let falseLive = 0;
+  let liveToClosed = 0;
 
   for (const item of plate.items) {
     const verdict = await verifyUrl(item.url, fetch, new Date(), { atsApi: true, deadlineMs: 20000 });
@@ -37,11 +42,12 @@ async function main(): Promise<void> {
     else unknown += 1;
     if (item.expected === "closed" && got === "live") closedToLive += 1;
     if (item.expected !== "live" && got === "live") falseLive += 1;
+    if (item.expected === "live" && got === "closed") liveToClosed += 1;
     process.stdout.write(`${item.id}\texpect=${item.expected}\tgot=${got}\t${verdict.signals.join(",")}\n`);
   }
 
   process.stdout.write(
-    `N=${plate.items.length}\nlive=${live} closed=${closed} unknown=${unknown}\nclosed_to_live=${closedToLive}\nfalse_live=${falseLive}\n`,
+    `N=${plate.items.length}\nlive=${live} closed=${closed} unknown=${unknown}\nclosed_to_live=${closedToLive}\nfalse_live=${falseLive}\nlive_to_closed=${liveToClosed}\n`,
   );
   if (closedToLive !== 0 || falseLive !== 0) process.exitCode = 1;
 }

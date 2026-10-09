@@ -272,19 +272,20 @@ describe("page × API combine", () => {
     assert.ok(combined.signals.includes("ats_posted_at:2026-08-15T13:30:00Z"));
   });
 
-  it("a challenge page stays unknown even when the API lists or misses the job", () => {
+  it("a challenge page is answered by the API for that job id, never bypassed", () => {
     const page = classified(LEVER_LIVE, CHALLENGE);
     assert.equal(page.status, "unknown");
     assert.ok(page.signals.includes("challenge_page"));
     const listedVerdict = combinePageAndAts(page, listed());
+    assert.equal(listedVerdict.status, "live");
+    assert.ok(listedVerdict.signals.includes(ATS_API_LISTED));
+    assert.ok(listedVerdict.signals.includes("challenge_page"));
     const missingVerdict = combinePageAndAts(page, { outcome: "missing", httpStatus: 404 });
+    assert.equal(missingVerdict.status, "closed");
+    assert.ok(missingVerdict.signals.includes(ATS_API_MISSING));
     const blockedVerdict = combinePageAndAts(page, { outcome: "unavailable" });
-    for (const verdict of [listedVerdict, missingVerdict, blockedVerdict]) {
-      assert.equal(verdict.status, "unknown");
-      assert.ok(verdict.signals.includes("challenge_page"));
-      assert.equal(verdict.signals.includes(ATS_API_LISTED), false);
-      assert.equal(verdict.signals.includes(ATS_API_MISSING), false);
-    }
+    assert.equal(blockedVerdict.status, "unknown");
+    assert.ok(blockedVerdict.signals.includes("challenge_page"));
   });
 
   it("unavailable API leaves the HTML verdict unchanged", () => {
@@ -371,14 +372,23 @@ describe("verifyUrl ATS integration", () => {
     assert.equal(greenhouseMissing.signals.includes(ATS_API_MISSING), true);
   });
 
-  it("does not promote a challenge page when the Lever API lists the job", async () => {
+  it("answers a Lever challenge page from the Lever postings API by job id", async () => {
     const verdict = await verifyUrl(LEVER_LIVE, routed({
       [LEVER_LIVE]: htmlResponse(CHALLENGE),
       [refOf(LEVER_LIVE).apiUrl]: jsonResponse(fixture("lever-posting.json")),
     }), new Date(), { atsApi: true });
+    assert.equal(verdict.status, "live");
+    assert.ok(verdict.signals.includes("challenge_page"));
+    assert.ok(verdict.signals.includes(ATS_API_LISTED));
+  });
+
+  it("a challenge page with the Lever API down stays unknown", async () => {
+    const verdict = await verifyUrl(LEVER_LIVE, routed({
+      [LEVER_LIVE]: htmlResponse(CHALLENGE),
+      [refOf(LEVER_LIVE).apiUrl]: new Response("oops", { status: 503 }),
+    }), new Date(), { atsApi: true });
     assert.equal(verdict.status, "unknown");
     assert.ok(verdict.signals.includes("challenge_page"));
-    assert.equal(verdict.signals.includes(ATS_API_LISTED), false);
   });
 
   it("falls back to HTML when the API is a 500 and does not call it unless opted in", async () => {

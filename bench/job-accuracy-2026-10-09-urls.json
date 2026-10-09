@@ -1,0 +1,157 @@
+{
+  "created_pt": "2026-10-09 12:08 PT",
+  "endpoint": "https://livecheck.fly.dev/v1/verify/job",
+  "note": "Real postings only; closed = previously real IDs now absent from the vendor API / 404 / expired redirect. Ground truth checked independently before calling Livecheck.",
+  "items": [
+    {
+      "id": "open-gh-1",
+      "ats": "greenhouse",
+      "expected": "live",
+      "url": "https://job-boards.greenhouse.io/discord/jobs/8806482002",
+      "ground_truth": "Listed in Greenhouse boards-api (discord); page 200, title \"Commercial Policy Lead\""
+    },
+    {
+      "id": "open-gh-2",
+      "ats": "greenhouse",
+      "expected": "live",
+      "url": "https://job-boards.greenhouse.io/discord/jobs/8840756002",
+      "ground_truth": "Listed in boards-api; page 200, \"Data Scientist - Client Platform\""
+    },
+    {
+      "id": "closed-gh-1",
+      "ats": "greenhouse",
+      "expected": "closed",
+      "url": "https://job-boards.greenhouse.io/cloudflare/jobs/8084358",
+      "ground_truth": "Real past ID, absent from boards-api cloudflare; page redirects to cloudflare.com/careers/#open-roles"
+    },
+    {
+      "id": "closed-gh-2",
+      "ats": "greenhouse",
+      "expected": "closed",
+      "url": "https://job-boards.greenhouse.io/discord/jobs/8498984002",
+      "ground_truth": "Real past ID, absent from boards-api; redirects to job-boards.greenhouse.io/discord?error=true"
+    },
+    {
+      "id": "closed-gh-3",
+      "ats": "greenhouse",
+      "expected": "closed",
+      "url": "https://job-boards.greenhouse.io/discord/jobs/8537955002",
+      "ground_truth": "Real past ID, absent from boards-api; redirects to discord?error=true"
+    },
+    {
+      "id": "open-lv-1",
+      "ats": "lever",
+      "expected": "live",
+      "url": "https://jobs.lever.co/spotify/2193db3f-77c5-43b8-b030-8f92c9882bf1",
+      "ground_truth": "Listed in Lever API spotify; page 200 \"Android Engineer - Experience\"",
+      "regression": "Oct 9 prod v88 returned unknown: Cloudflare challenge-platform script on the real Lever page was read as a challenge and the Lever API answer was discarded"
+    },
+    {
+      "id": "open-lv-2",
+      "ats": "lever",
+      "expected": "live",
+      "url": "https://jobs.lever.co/palantir/6ed76ce8-4156-4b60-b120-403538bd66cd",
+      "ground_truth": "Listed in Lever API palantir; page 200",
+      "regression": "Oct 9 prod v88 returned unknown: Cloudflare challenge-platform script on the real Lever page was read as a challenge and the Lever API answer was discarded"
+    },
+    {
+      "id": "closed-lv-1",
+      "ats": "lever",
+      "expected": "closed",
+      "url": "https://jobs.lever.co/palantir/119ff141-1fa7-4466-a154-da57cf17bd52",
+      "ground_truth": "Real past ID, absent from Lever API; page HTTP 404"
+    },
+    {
+      "id": "closed-lv-2",
+      "ats": "lever",
+      "expected": "closed",
+      "url": "https://jobs.lever.co/equativ/52476339-7687-44c9-b0f9-653bb170b734",
+      "ground_truth": "Real past ID, absent from Lever API; page HTTP 404"
+    },
+    {
+      "id": "closed-lv-3",
+      "ats": "lever",
+      "expected": "closed",
+      "url": "https://jobs.lever.co/palantir/76195098-5e66-4b62-96d0-dcaabb6ea009",
+      "ground_truth": "Real past ID, absent from Lever API; page HTTP 404"
+    },
+    {
+      "id": "open-ab-1",
+      "ats": "ashby",
+      "expected": "live",
+      "url": "https://jobs.ashbyhq.com/openai/8fb1615c-34bf-47c4-a1d1-b7b2f836bbd3",
+      "ground_truth": "Listed in Ashby posting API openai; page title matches"
+    },
+    {
+      "id": "open-ab-2",
+      "ats": "ashby",
+      "expected": "live",
+      "url": "https://jobs.ashbyhq.com/ramp/34413f8d-26bf-4bbc-8ade-eb309a0e2245",
+      "ground_truth": "Listed in Ashby API ramp; page title matches"
+    },
+    {
+      "id": "closed-ab-1",
+      "ats": "ashby",
+      "expected": "closed",
+      "url": "https://jobs.ashbyhq.com/blockstream/17b9025f-66b7-4331-a0a0-a7f0c93be132",
+      "ground_truth": "Real past ID, absent from Ashby API blockstream; page shows generic \"Jobs\" title (no posting)"
+    },
+    {
+      "id": "closed-ab-2",
+      "ats": "ashby",
+      "expected": "closed",
+      "url": "https://jobs.ashbyhq.com/Vidmob/d19d23ae-7720-4ea8-bf49-80dee5cbb35b",
+      "ground_truth": "Real past ID, absent from Ashby API Vidmob; page generic \"Jobs\" title"
+    },
+    {
+      "id": "open-wd-1",
+      "ats": "workday",
+      "expected": "live",
+      "url": "https://adobe.wd5.myworkdayjobs.com/en-US/external_experienced/job/San-Jose/Staff-Security-Data-Engineer_R171875-1",
+      "ground_truth": "Workday CXS 200, title \"Staff Security Data Engineer\""
+    },
+    {
+      "id": "open-wd-2",
+      "ats": "workday",
+      "expected": "live",
+      "url": "https://accenture.wd103.myworkdayjobs.com/AccentureCareers/job/Bucharest/Salesforce-Developer_R00359693",
+      "ground_truth": "Workday CXS 200, \"Salesforce Developer\""
+    },
+    {
+      "id": "open-wd-3",
+      "ats": "workday",
+      "expected": "live",
+      "url": "https://accenture.wd103.myworkdayjobs.com/AccentureCareers/job/Amsterdam/GCC-Sales-Advisory-Lead_R00361037-1",
+      "ground_truth": "Workday CXS 200, \"GCC Sales Advisory Lead\""
+    },
+    {
+      "id": "closed-wd-1",
+      "ats": "workday",
+      "expected": "closed",
+      "url": "https://adobe.wd5.myworkdayjobs.com/en-US/external_experienced/job/San-Jose/Sr-Technology-Compliance-Product-Owner_R172124",
+      "ground_truth": "Real req that was live Oct 1; CXS now HTTP 403 (S22), search R172124 = 0 (hand check Oct 8, CXS 403 again today)"
+    },
+    {
+      "id": "open-li-1",
+      "ats": "linkedin",
+      "expected": "live",
+      "url": "https://www.linkedin.com/jobs/view/4343961010/",
+      "ground_truth": "Page 200, \"Institutional Sales Director at BitGo\", Apply present, no closed notice"
+    },
+    {
+      "id": "open-li-2",
+      "ats": "linkedin",
+      "expected": "live",
+      "url": "https://www.linkedin.com/jobs/view/4404565293/",
+      "ground_truth": "Page 200, \"Account Executive, Solana at Alchemy\", Apply present"
+    },
+    {
+      "id": "closed-li-1",
+      "ats": "linkedin",
+      "expected": "closed",
+      "url": "https://www.linkedin.com/jobs/view/4385154626/",
+      "ground_truth": "Redirects with trk=expired_jd_redirect; \"no longer available\" notice",
+      "regression": "Oct 9 prod v88 returned live: LinkedIn bounced the expired posting to /jobs/<slug>-jobs?trk=expired_jd_redirect"
+    }
+  ]
+}

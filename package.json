@@ -26,6 +26,7 @@
     "free:unset": "tsx scripts/free-page-settings.ts unset",
     "bench:job-redirect": "tsx scripts/job-redirect-bench.ts",
     "bench:oct1-accuracy": "tsx scripts/oct1-accuracy.ts",
+    "bench:job-accuracy": "tsx scripts/oct1-accuracy.ts bench/job-accuracy-2026-10-09-urls.json",
     "bench:listing-published": "tsx scripts/listing-published-bench.ts",
     "bench:order-placed": "tsx scripts/order-placed-bench.ts",
     "bench:sentinel": "tsx scripts/sentinel-bench.ts",
