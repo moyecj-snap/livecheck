@@ -470,14 +470,15 @@ function postedSignal(iso: string | undefined): string[] {
  * - unknown without challenge_page (JS shell / blank) + listed → live + ats_api_listed
  * - any non-challenge page + missing → closed + ats_api_missing
  * - closed + listed → unknown, page closed signals and ats_api_listed
- * - challenge_page (status not already closed) stays unknown, listed or missing
+ * - challenge_page + listed/missing → answered from the API (page never bypassed)
  * - unavailable leaves the HTML verdict untouched
  */
 export function combinePageAndAts(page: VerifyVerdict, api: AtsLookup): VerifyVerdict {
   if (api.outcome === "unavailable") return page;
 
-  const challengeBlocked = page.status !== "closed" && page.signals.includes("challenge_page");
-  if (challengeBlocked) return page;
+  // A challenge page is never bypassed. When the link carries a job id the
+  // vendor's public API answers for that exact posting, so it decides; the
+  // challenge_page signal stays for transparency.
 
   if (api.outcome === "missing") {
     return {

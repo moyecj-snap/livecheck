@@ -12,7 +12,36 @@ const CLOSED_PHRASES = [
   "this requisition is closed",
   "sorry, this job is no longer available",
   "the job you are looking for is no longer available",
+  "this job is no longer accepting applications",
+  "job is no longer available",
+  "posting is no longer available",
 ];
+
+/** Query markers a site adds when it bounces an expired posting to a list page. */
+const EXPIRED_REDIRECT_MARKERS = /[?&](trk=expired_jd_redirect|expired(_job)?=(1|true)|error=true)\b/i;
+
+function isLinkedInHost(host: string): boolean {
+  return host === "linkedin.com" || host.endsWith(".linkedin.com");
+}
+
+/**
+ * Stable posting id in a URL path: a long digit run or a UUID. Used to tell
+ * whether a redirect kept the same posting (Greenhouse -> company site with
+ * gh_jid keeps it) or landed on a different page.
+ */
+function postingIdToken(url: string): string | undefined {
+  const { path } = extractHostPath(url);
+  const uuid = path.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  if (uuid) return uuid[0].toLowerCase();
+  const digits = path.match(/\d{6,}/g);
+  return digits ? digits[digits.length - 1] : undefined;
+}
+
+function redirectKeptPosting(requestedUrl: string, canonicalUrl: string): boolean {
+  const id = postingIdToken(requestedUrl);
+  if (!id) return true;
+  return canonicalUrl.toLowerCase().includes(id);
+}
 
 const APPLY_PHRASES = [
   "apply now",
@@ -152,6 +181,8 @@ function looksLikeNumericGhJid(url: string): boolean {
 function looksLikeSpecificJobUrl(url: string): boolean {
   const { host, path } = extractHostPath(url);
   if (/\/careers\/listing\/[^/]+\/\d+/i.test(path)) return true;
+  // LinkedIn: only /jobs/view/<id> is a posting; /jobs/<slug>-jobs is a search page.
+  if (isLinkedInHost(host)) return /\/jobs\/view\/[^/]*\d{5,}/i.test(path);
   if (host.endsWith("greenhouse.io")) {
     return /\/jobs\/\d+/.test(path) || /\/embed\/job_app/.test(path);
   }
@@ -181,6 +212,8 @@ function looksLikeBoardOrSearchUrl(url: string): boolean {
     return true;
   }
   if (/\/(careers|jobs)\/?$/.test(path)) return true;
+  if (isLinkedInHost(host) && /\/jobs(\/|$)/.test(path) && !/\/jobs\/view\//.test(path)) return true;
+  if (EXPIRED_REDIRECT_MARKERS.test(search)) return true;
   return false;
 }
 
@@ -305,8 +338,13 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
   // A single job with an apply form is not a search or category page.
   if (specificPosting && apply && !manyCards) collectionOrCategory = false;
   const requestedJobRef = looksLikeSpecificJobUrl(page.requestedUrl) || looksLikeNumericGhJid(page.requestedUrl);
-  const redirectedAwayFromJob = redirected && requestedJobRef && !looksLikeSpecificJobUrl(page.canonicalUrl);
-  if (redirectedAwayFromJob && (boardOrSearch || collectionOrCategory || closedPhrase)) {
+  const expiredMarker = redirected && EXPIRED_REDIRECT_MARKERS.test(extractHostPath(page.canonicalUrl).search);
+  const redirectedAwayFromJob =
+    redirected &&
+    requestedJobRef &&
+    (!looksLikeSpecificJobUrl(page.canonicalUrl) || !redirectKeptPosting(page.requestedUrl, page.canonicalUrl));
+  if (expiredMarker && requestedJobRef) signals.push("expired_redirect");
+  if (redirectedAwayFromJob && (boardOrSearch || collectionOrCategory || closedPhrase || expiredMarker)) {
     signals.push("redirected_to_board");
     if (isAtsHost(extractHostPath(page.canonicalUrl).host) || isAtsHost(extractHostPath(page.requestedUrl).host)) {
       signals.push("ats_empty_state");
@@ -330,7 +368,11 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
   const jsShell =
     looksLikeJsShell(html, text, page.canonicalUrl) ||
     (!redirected && looksLikeJsShell(html, text, page.requestedUrl));
-  const challenge = isChallengeInterstitial(html, text, specificProduct || buy);
+  // A passive bot-management script on a rendered posting with an apply form
+  // (Lever ships Cloudflare's challenge-platform script on every job page) is
+  // not an interstitial. Real walls (cf-challenge, "verify you are human") still are.
+  const renderedPosting = specificPosting && apply && !redirected && text.length > 400;
+  const challenge = isChallengeInterstitial(html, text, specificProduct || buy || renderedPosting);
   if (challenge) {
     signals.push("challenge_page");
     if (status !== "closed") {

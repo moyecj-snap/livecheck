@@ -440,3 +440,65 @@ describe("classify fixtures", () => {
     assert.equal(verdict.status, "unknown");
   });
 });
+
+describe("page type beats page signals (LinkedIn + generalized redirect rule)", () => {
+  const APPLY_SEARCH = `<html><head><title>Jones Logistics Jobs in United States | LinkedIn</title></head><body>
+    <h1>Jones Logistics Jobs</h1><p>This job is no longer available.</p>
+    <a class="job-card">Driver</a><a class="job-card">Dispatcher</a><button>Apply now</button></body></html>`;
+  const APPLY_SEARCH_NO_PHRASE = `<html><head><title>Jobs | LinkedIn</title></head><body><button>Easy Apply</button><a>Apply now</a></body></html>`;
+  const VIEW = "https://www.linkedin.com/jobs/view/4385154626/";
+
+  it("expired LinkedIn view -> search page with trk=expired_jd_redirect is closed, never live", () => {
+    const v = classify(page({ requestedUrl: VIEW, canonicalUrl: "https://www.linkedin.com/jobs/jones-logistics-jobs?trk=expired_jd_redirect", redirected: true, httpStatus: 200, html: APPLY_SEARCH }));
+    assert.equal(v.status, "closed");
+    assert.ok(v.signals.includes("redirected_to_board"));
+    assert.ok(v.signals.includes("expired_redirect"));
+  });
+
+  it("LinkedIn view -> /jobs/search with an apply button is closed (apply on a search page never counts)", () => {
+    const v = classify(page({ requestedUrl: VIEW, canonicalUrl: "https://www.linkedin.com/jobs/search/?keywords=driver", redirected: true, httpStatus: 200, html: APPLY_SEARCH_NO_PHRASE }));
+    assert.equal(v.status, "closed");
+  });
+
+  it("LinkedIn view that loses the job id is not live", () => {
+    const v = classify(page({ requestedUrl: VIEW, canonicalUrl: "https://www.linkedin.com/jobs/view/9999999999/", redirected: true, httpStatus: 200, html: APPLY_SEARCH_NO_PHRASE }));
+    assert.notEqual(v.status, "live");
+    assert.ok(v.signals.includes("redirected_away_from_job"));
+  });
+
+  it("LinkedIn 'no longer accepting applications' on the posting itself is closed", () => {
+    const v = classify(page({ requestedUrl: VIEW, httpStatus: 200, html: `<html><title>Driver | LinkedIn</title><body><p>No longer accepting applications</p></body></html>` }));
+    assert.equal(v.status, "closed");
+  });
+
+  it("LinkedIn login wall stays unknown", () => {
+    const v = classify(page({ requestedUrl: VIEW, httpStatus: 200, html: `<html><title>LinkedIn</title><body><p>Sign in to see who you already know</p><a>Apply now</a></body></html>` }));
+    assert.equal(v.status, "unknown");
+    assert.ok(v.signals.includes("loginwalled"));
+  });
+
+  it("generic: a specific job link redirected to another site's list page with expired marker is closed", () => {
+    const v = classify(page({ requestedUrl: "https://careers.example.com/jobs/123456", canonicalUrl: "https://careers.example.com/openings?expired=1", redirected: true, httpStatus: 200, html: APPLY_SEARCH_NO_PHRASE }));
+    assert.equal(v.status, "closed");
+  });
+
+  it("a redirect that keeps the job id (Greenhouse -> company site gh_jid) can still be live", () => {
+    const v = classify(page({ requestedUrl: "https://job-boards.greenhouse.io/acme/jobs/8172508", canonicalUrl: "https://acme.com/careers/listing/eng/8172508", redirected: true, httpStatus: 200, html: FIXTURES["live-apply-now"].body! }));
+    assert.equal(v.status, "live");
+  });
+});
+
+describe("passive bot-management script on a rendered posting", () => {
+  const LEVER = "https://jobs.lever.co/acme/2193db3f-77c5-43b8-b030-8f92c9882bf1";
+  const body = `<html><head><title>Acme - Android Engineer</title><script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></head><body><h2>Android Engineer</h2><p>${"We build things. ".repeat(40)}</p><div class="g-recaptcha"></div><a class="postings-btn">Apply for this job</a></body></html>`;
+  it("is not a challenge page", () => {
+    const v = classify(page({ requestedUrl: LEVER, httpStatus: 200, html: body }));
+    assert.equal(v.signals.includes("challenge_page"), false);
+    assert.equal(v.status, "live");
+  });
+  it("a real Cloudflare wall is still a challenge page", () => {
+    const v = classify(page({ requestedUrl: LEVER, httpStatus: 200, html: `<html><title>Just a moment...</title><body><div class="cf-challenge">verify you are human</div></body></html>` }));
+    assert.ok(v.signals.includes("challenge_page"));
+    assert.equal(v.status, "unknown");
+  });
+});
