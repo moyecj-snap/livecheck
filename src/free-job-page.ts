@@ -9,11 +9,13 @@ import { PRICE_USD } from "./config.js";
 import { BlockedTargetError, DEFAULT_FETCH_POLICY, guardedFetch, vetTarget, type FetchPolicy } from "./free-job-guard.js";
 import {
   bumpFreePageMetric,
+  bumpFreePageSources,
   pacificDay,
   readFreePageSettings,
   readFreePageStats,
   type FreePageSettings,
 } from "./free-job-store.js";
+import { referrerSource, registrableDomain, uaClass, utmSource } from "./free-job-sources.js";
 import { EXAMPLE_TTL_MS, ExampleCache, FREE_JOB_EXAMPLES, isExampleKey, type ExampleKey } from "./free-job-examples.js";
 import { lookupRole, roleLine, type RoleInfo } from "./free-job-role.js";
 import { publicOrigin } from "./public-url.js";
@@ -406,12 +408,16 @@ function resultHtml(view: FreeJobView, remaining: number | undefined): string {
   </section>`;
 }
 
-export function freeJobHtml(view: FreeJobView, options: { remaining?: number; perDay: number; origin?: string }): string {
+export function freeJobHtml(
+  view: FreeJobView,
+  options: { remaining?: number; perDay: number; origin?: string; formAction?: string },
+): string {
+  const action = esc(options.formAction ?? FREE_JOB_PATH);
   const value = view.kind === "result" || view.kind === "invalid" ? (view.url ?? "") : "";
   const origin = (options.origin ?? "https://livecheck.fly.dev").replace(/\/+$/, "");
   const pageUrl = `${origin}${FREE_JOB_PATH}`;
   const imageUrl = `${origin}${OG_IMAGE_PATH}`;
-  const examplesForm = `<form class="examples" method="post" action="${FREE_JOB_PATH}">
+  const examplesForm = `<form class="examples" method="post" action="${action}">
     <span>Try one:</span>
     <button type="submit" name="example" value="open">${esc(FREE_JOB_EXAMPLES.open.label)}</button>
     <span aria-hidden="true">&middot;</span>
@@ -491,7 +497,7 @@ export function freeJobHtml(view: FreeJobView, options: { remaining?: number; pe
 <main class="wrap">
   <h1>Is this job still open?</h1>
   <p class="lede">Paste a job link. Livecheck checks the posting and the hiring platform right now and tells you Open, Closed, or Can't tell.</p>
-  <form class="check" method="post" action="${FREE_JOB_PATH}">
+  <form class="check" method="post" action="${action}">
     <label for="url">Paste a job posting link</label>
     <input id="url" name="url" type="url" required maxlength="2048" placeholder="Paste a job posting link" value="${esc(value)}" autocomplete="off" inputmode="url" />
     <button type="submit">Check</button>
@@ -548,7 +554,47 @@ function page(c: Context, view: FreeJobView, status: number, config: FreeJobConf
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) c.header(name, value);
   if (view.kind === "busy") c.header("retry-after", "180");
   const origin = publicOrigin(c.req.url, c.req.header("host"));
-  return c.html(freeJobHtml(view, { perDay: config.perVisitorDaily, remaining, origin }), status as 200);
+  const formAction = sourceFormAction(carriedSource(c));
+  return c.html(freeJobHtml(view, { perDay: config.perVisitorDaily, remaining, origin, formAction }), status as 200);
+}
+
+/** Hosts that count as "self" for the referrer dimension. */
+function selfHosts(c: Context): string[] {
+  const hosts = [c.req.header("host") ?? ""];
+  try {
+    hosts.push(new URL(publicOrigin(c.req.url, c.req.header("host"))).host);
+  } catch {
+    // ignore
+  }
+  return hosts.filter(Boolean);
+}
+
+/**
+ * Source for this request. A page view reads the Referer host and
+ * utm_source/ref. A form POST cannot (its Referer is /job), so the page
+ * carries the already-reduced values in its own form action
+ * (`/job?utm_source=x&sref=domain`), and they are re-sanitized here.
+ */
+function carriedSource(c: Context): { utm: string; referrer: string } {
+  const utm = utmSource(c.req.query("utm_source") ?? c.req.query("ref"));
+  if (c.req.method === "GET") return { utm, referrer: referrerSource(c.req.header("referer"), selfHosts(c)) };
+  const sref = (c.req.query("sref") ?? "").trim().toLowerCase();
+  const referrer =
+    sref === "" ? "direct" : sref === "self" || sref === "other" ? sref : (registrableDomain(sref) ?? "other");
+  return { utm, referrer };
+}
+
+function sourceFormAction(source: { utm: string; referrer: string }): string {
+  const params = new URLSearchParams();
+  if (source.utm !== "none") params.set("utm_source", source.utm);
+  if (source.referrer !== "direct") params.set("sref", source.referrer);
+  const query = params.toString();
+  return query ? `${FREE_JOB_PATH}?${query}` : FREE_JOB_PATH;
+}
+
+function countSource(c: Context, event: "view" | "check", now: Date): void {
+  const { utm, referrer } = carriedSource(c);
+  bumpFreePageSources(event, { referrer, utm, ua: uaClass(c.req.header("user-agent")) }, now);
 }
 
 async function readSubmitted(c: Context): Promise<{ url?: unknown; example?: unknown }> {
@@ -674,6 +720,7 @@ async function handleFreeCheck(c: Context) {
   }
   if (view.kind !== "result") throw new Error("unexpected view");
   bumpFreePageMetric("checks", now);
+  countSource(c, "check", now);
   bumpFreePageMetric(
     view.label === "Open" ? "verdict_open" : view.label === "Closed" ? "verdict_closed" : "verdict_cant_tell",
     now,
@@ -702,6 +749,7 @@ export function registerFreeJobRoutes(app: Hono): void {
     const now = clock();
     const visitor = ensureVisitor(c);
     bumpFreePageMetric("views", now);
+    countSource(c, "view", now);
     return page(c, { kind: "form" }, 200, config, limiter.remaining(clientIp(c), visitor, config, now));
   });
   app.post(FREE_JOB_PATH, async (c) => {
