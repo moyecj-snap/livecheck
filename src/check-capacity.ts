@@ -9,6 +9,7 @@ import {
   TEST_MODE_HEADER,
   TEST_MODE_SECRET_ENV,
 } from "./config.js";
+import { hasMppPaymentCredential, mppEnabled } from "./mpp-flags.js";
 
 /**
  * Slots cover the expensive verify pipeline only:
@@ -118,8 +119,14 @@ export function testModeAuthorized(headerValue: string | undefined): boolean {
   return timingSafeEqual(left, right);
 }
 
-function hasPaymentAttempt(c: Context): boolean {
-  return Boolean(c.req.header("payment-signature") || c.req.header("x-payment") || c.req.header("x-livecheck-mock"));
+/**
+ * A request that will run the check once paid takes a slot. With MPP on,
+ * `Authorization: Payment …` is a payment attempt too, so a paid MPP call
+ * cannot skip the cap. With MPP off the header is ignored, as before.
+ */
+export function hasPaymentAttempt(c: Context): boolean {
+  if (c.req.header("payment-signature") || c.req.header("x-payment") || c.req.header("x-livecheck-mock")) return true;
+  return mppEnabled() && hasMppPaymentCredential(c.req.header("authorization"));
 }
 
 function slotsFull(): boolean {

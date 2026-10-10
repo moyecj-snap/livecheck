@@ -31,7 +31,7 @@
     "bench:order-placed": "tsx scripts/order-placed-bench.ts",
     "bench:sentinel": "tsx scripts/sentinel-bench.ts",
     "watch:credit-day1": "tsx scripts/credit-day1-watcher.ts",
-    "test": "tsx --test --test-concurrency=1 test/classify.test.ts test/verify.test.ts test/ats-api.test.ts test/ats-cache.test.ts test/deadline.test.ts test/burst-protection.test.ts test/check.test.ts test/detectors.test.ts test/watch.test.ts test/watch-renew.test.ts test/watch-confirm.test.ts test/watch-reliability.test.ts test/watch-callback.test.ts test/watch-chain.test.ts test/watch-store-migrate.test.ts test/watch-hint.test.ts test/server.test.ts test/mcp-client.test.ts test/mcp-stdio.test.ts test/sentinel-webhook.test.ts test/config.test.ts test/public-url.test.ts test/bazaar.test.ts test/live-402.test.ts test/settle-timing.test.ts test/catalog-payload.test.ts test/discovery.test.ts test/ebay.test.ts test/confirm.test.ts test/listing-published.test.ts test/listing-published-bench.test.ts test/lead-submit-bench.test.ts test/order-placed.test.ts test/order-placed-bench.test.ts test/confirm-payment.test.ts test/paid-call.test.ts test/paid-call-store.test.ts test/attribution.test.ts test/settlement-payer.test.ts test/job-redirect-bench.test.ts test/receipt.test.ts test/receipt-store.test.ts test/receipt-backfill.test.ts test/receipt-rescue.test.ts test/recheck-confirm-receipts.test.ts test/listen.test.ts test/stats.test.ts test/stats-fleet.test.ts test/traffic-buckets.test.ts test/test-wallets.test.ts test/free-job-page.test.ts test/free-job-polish.test.ts test/sentinel-bench.test.ts",
+    "test": "tsx --test --test-concurrency=1 test/classify.test.ts test/verify.test.ts test/ats-api.test.ts test/ats-cache.test.ts test/deadline.test.ts test/burst-protection.test.ts test/check.test.ts test/detectors.test.ts test/watch.test.ts test/watch-renew.test.ts test/watch-confirm.test.ts test/watch-reliability.test.ts test/watch-callback.test.ts test/watch-chain.test.ts test/watch-store-migrate.test.ts test/watch-hint.test.ts test/server.test.ts test/mcp-client.test.ts test/mcp-stdio.test.ts test/sentinel-webhook.test.ts test/config.test.ts test/public-url.test.ts test/bazaar.test.ts test/live-402.test.ts test/settle-timing.test.ts test/catalog-payload.test.ts test/discovery.test.ts test/ebay.test.ts test/confirm.test.ts test/listing-published.test.ts test/listing-published-bench.test.ts test/lead-submit-bench.test.ts test/order-placed.test.ts test/order-placed-bench.test.ts test/confirm-payment.test.ts test/paid-call.test.ts test/paid-call-store.test.ts test/attribution.test.ts test/settlement-payer.test.ts test/job-redirect-bench.test.ts test/receipt.test.ts test/receipt-store.test.ts test/receipt-backfill.test.ts test/receipt-rescue.test.ts test/recheck-confirm-receipts.test.ts test/listen.test.ts test/stats.test.ts test/stats-fleet.test.ts test/traffic-buckets.test.ts test/test-wallets.test.ts test/free-job-page.test.ts test/free-job-polish.test.ts test/sentinel-bench.test.ts test/mpp.test.ts test/mpp-stats.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -43,7 +43,9 @@
     "@x402/extensions": "^2.24.0",
     "@x402/hono": "^2.24.0",
     "hono": "^4.13.5",
+    "mppx": "0.13.3",
     "stripe": "^22.6.0",
+    "viem": "2.57.4",
     "zod": "^3.25.76"
   },
   "devDependencies": {
