@@ -373,6 +373,56 @@ describe("free /job page", () => {
     }
   });
 
+  it("launch tags never fold: one ?ref=test visit shows as test; by_source gives views and checks per tag", async () => {
+    const chrome = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36";
+    for (const tag of ["test", "producthunt", "linkedin", "x", "email"]) {
+      await app.request(`/job?ref=${tag}`, { headers: { "user-agent": chrome } });
+    }
+    await app.request("/job?ref=oneoff-random", { headers: { "user-agent": chrome } });
+    await app.request("/job", { headers: { referer: "https://www.producthunt.com/posts/livecheck", "user-agent": chrome } });
+    const res = await app.request("/job?utm_source=producthunt", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", "fly-client-ip": "198.51.100.90", cookie: `${FREE_JOB_COOKIE}=${visitor(90)}`, "user-agent": chrome },
+      body: new URLSearchParams({ url: u("/jobs/1842") }).toString(),
+    });
+    assert.match(await res.text(), /class="verdict">Open</);
+    const stats = await freeStats();
+    const utm = stats.sources.today.view.utm;
+    for (const tag of ["test", "producthunt", "linkedin", "x", "email"]) assert.equal(utm[tag], 1, tag);
+    assert.equal(utm.other, 1, "a non-launch one-off still folds");
+    assert.equal(utm["oneoff-random"], undefined);
+    assert.equal(stats.sources.today.view.referrer["producthunt.com"], 1, "launch domain shown on a single visit");
+    assert.deepEqual(stats.sources.by_source.today.producthunt, { views: 1, checks: 1 });
+    assert.deepEqual(stats.sources.by_source.today.test, { views: 1, checks: 0 });
+  });
+
+  it("no new cookies and no third-party trackers: source carry is the form address only", async () => {
+    // First visit with a source: exactly one cookie, the existing free-check limit cookie.
+    const first = await app.request("/job?utm_source=producthunt", {
+      headers: { referer: "https://www.producthunt.com/posts/livecheck" },
+    });
+    const cookies = first.headers.getSetCookie();
+    assert.equal(cookies.length, 1);
+    assert.match(cookies[0]!, new RegExp(`^${FREE_JOB_COOKIE}=`));
+    // Returning visitor: no cookie at all, on GET and on the POST that carries sref.
+    const again = await app.request("/job?utm_source=producthunt", {
+      headers: { referer: "https://www.producthunt.com/", cookie: `${FREE_JOB_COOKIE}=${visitor(91)}` },
+    });
+    assert.deepEqual(again.headers.getSetCookie(), []);
+    const posted = await app.request("/job?utm_source=producthunt&sref=producthunt.com", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", "fly-client-ip": "198.51.100.91", cookie: `${FREE_JOB_COOKIE}=${visitor(91)}` },
+      body: new URLSearchParams({ url: u("/jobs/1842") }).toString(),
+    });
+    assert.deepEqual(posted.headers.getSetCookie(), []);
+    for (const html of [await first.text(), await again.text(), await posted.text()]) {
+      assert.equal(/<script|<iframe|<img\b|<link[^>]+rel="?preconnect|navigator\.sendBeacon|google-analytics|googletagmanager|gtag|plausible|segment|mixpanel|posthog|facebook\.net|pixel/i.test(html), false);
+      // Every src/href/action stays on our origin or the docs/skill links that were already there.
+      for (const m of html.matchAll(/(?:src|action)="([^"]+)"/g)) assert.match(m[1]!, /^\/(job|og)/, m[1]);
+    }
+    assert.equal(first.headers.get("referrer-policy"), "no-referrer");
+  });
+
   it("/job/stats is private: 404 without the token, wrong token, or no secret set", async () => {
     assert.equal((await app.request("/job/stats")).status, 404);
     assert.equal((await app.request("/job/stats", { headers: { "x-livecheck-stats-token": "nope" } })).status, 404);
@@ -714,6 +764,19 @@ describe("free /job source counters", () => {
     );
     const cols = db.prepare("PRAGMA table_info(free_page_sources)").all().map((c) => c.name);
     assert.deepEqual(cols, ["day", "event", "dimension", "value", "n"], "no ip, url, cookie, or ua column");
+  });
+
+  it("launch tags and domains are never pushed out by the daily cap", () => {
+    const db = openSourcesDb();
+    for (let i = 0; i < SOURCE_DISTINCT_CAP + 5; i++) {
+      bumpSourcesIn(db, "2026-10-09", "view", { referrer: `site${i}.com`, utm: `s${i}`, ua: "browser" });
+    }
+    bumpSourcesIn(db, "2026-10-09", "view", { referrer: "linkedin.com", utm: "producthunt", ua: "browser" });
+    const row = (dimension: string, value: string) =>
+      db.prepare("SELECT n FROM free_page_sources WHERE dimension = ? AND value = ?").get(dimension, value) as { n: number } | undefined;
+    assert.equal(Number(row("utm", "producthunt")?.n), 1);
+    assert.equal(Number(row("referrer", "linkedin.com")?.n), 1);
+    assert.equal(Number(row("utm", "other")?.n), 5);
   });
 
   it(`caps distinct values per day at ${SOURCE_DISTINCT_CAP}; later new values count as other`, () => {

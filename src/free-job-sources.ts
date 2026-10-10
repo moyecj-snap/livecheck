@@ -25,6 +25,20 @@ export type SourceDimension = (typeof SOURCE_DIMENSIONS)[number];
 export type UaClass = "browser" | "bot" | "agent";
 
 export const SOURCE_DISTINCT_CAP = 50;
+
+/**
+ * Craig's launch tags (utm_source / ref) and their referrer domains. These are
+ * always counted under their own name: never folded into "other" in the
+ * report and never pushed out by the daily distinct cap. "test" is here so a
+ * single deploy check is visible.
+ */
+export const LAUNCH_UTM_TAGS = ["producthunt", "linkedin", "x", "email", "test"] as const;
+export const LAUNCH_REFERRER_DOMAINS = ["producthunt.com", "linkedin.com", "x.com", "t.co"] as const;
+const ALWAYS_SHOWN: Record<SourceDimension, ReadonlySet<string>> = {
+  referrer: new Set(LAUNCH_REFERRER_DOMAINS),
+  utm: new Set(LAUNCH_UTM_TAGS),
+  ua: new Set(["browser", "bot", "agent"]),
+};
 export const SOURCE_REPORT_MIN_COUNT = 2;
 export const UTM_MAX_LENGTH = 40;
 const DOMAIN_MAX_LENGTH = 60;
@@ -123,7 +137,8 @@ export type SourceValues = { referrer: string; utm: string; ua: UaClass };
  */
 export function bumpSourcesIn(db: DatabaseSync, day: string, event: SourceEvent, values: SourceValues): void {
   const countDistinct = db.prepare(
-    `SELECT COUNT(*) AS n FROM free_page_sources WHERE day = ? AND event = ? AND dimension = ? AND value != 'other'`,
+    `SELECT COUNT(*) AS n FROM free_page_sources WHERE day = ? AND event = ? AND dimension = ? AND value != 'other'
+       AND value NOT IN (${[...LAUNCH_UTM_TAGS, ...LAUNCH_REFERRER_DOMAINS].map((v) => `'${v}'`).join(", ")})`,
   );
   const exists = db.prepare(
     `SELECT 1 AS hit FROM free_page_sources WHERE day = ? AND event = ? AND dimension = ? AND value = ?`,
@@ -137,7 +152,7 @@ export function bumpSourcesIn(db: DatabaseSync, day: string, event: SourceEvent,
     for (const dimension of SOURCE_DIMENSIONS) {
       let value: string = values[dimension];
       if (!value || value.length > DOMAIN_MAX_LENGTH) value = "other";
-      if (value !== "other" && !exists.get(day, event, dimension, value)) {
+      if (value !== "other" && !ALWAYS_SHOWN[dimension].has(value) && !exists.get(day, event, dimension, value)) {
         const distinct = Number((countDistinct.get(day, event, dimension) as { n: number | bigint }).n);
         if (distinct >= SOURCE_DISTINCT_CAP) value = "other";
       }
@@ -179,7 +194,10 @@ export function readSourceTotalsFrom(db: DatabaseSync, sinceDay: string | null):
     if (!(SOURCE_DIMENSIONS as readonly string[]).includes(row.dimension)) continue;
     const bucket = out[row.event as SourceEvent][row.dimension as SourceDimension];
     const n = Number(row.n);
-    const keep = row.dimension === "ua" || RESERVED_VALUES.has(row.value) || n >= SOURCE_REPORT_MIN_COUNT;
+    const keep =
+      ALWAYS_SHOWN[row.dimension as SourceDimension].has(row.value) ||
+      RESERVED_VALUES.has(row.value) ||
+      n >= SOURCE_REPORT_MIN_COUNT;
     const key = keep ? row.value : "other";
     bucket[key] = (bucket[key] ?? 0) + n;
   }
@@ -190,4 +208,12 @@ export function readSourceTotalsFrom(db: DatabaseSync, sinceDay: string | null):
     }
   }
   return out;
+}
+
+/** "producthunt: 412 views, 1030 checks": one line per utm_source/ref value, from the folded totals. */
+export function sourceSummary(totals: SourceTotals): Record<string, { views: number; checks: number }> {
+  const out: Record<string, { views: number; checks: number }> = {};
+  for (const [value, n] of Object.entries(totals.view.utm)) (out[value] ??= { views: 0, checks: 0 }).views += n;
+  for (const [value, n] of Object.entries(totals.check.utm)) (out[value] ??= { views: 0, checks: 0 }).checks += n;
+  return Object.fromEntries(Object.entries(out).sort((a, b) => b[1].views + b[1].checks - (a[1].views + a[1].checks) || a[0].localeCompare(b[0])));
 }

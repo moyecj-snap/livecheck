@@ -5,6 +5,7 @@ import {
   SOURCES_TABLE_SQL,
   bumpSourcesIn,
   readSourceTotalsFrom,
+  sourceSummary,
   type SourceEvent,
   type SourceTotals,
   type SourceValues,
@@ -297,7 +298,14 @@ export type FreePageStats = {
   all_time: FreePageCounts;
   by_day: Array<{ day: string } & FreePageCounts>;
   /** Where views and checks came from. Totals only; private view only. */
-  sources: { note: string; today: SourceTotals; l7d: SourceTotals; l30d: SourceTotals };
+  sources: {
+    note: string;
+    /** Per utm_source/ref value: views and checks, e.g. producthunt {views: 412, checks: 1030}. */
+    by_source: { today: Record<string, { views: number; checks: number }>; l7d: Record<string, { views: number; checks: number }>; l30d: Record<string, { views: number; checks: number }> };
+    today: SourceTotals;
+    l7d: SourceTotals;
+    l30d: SourceTotals;
+  };
 };
 
 export function readFreePageStats(now = new Date()): FreePageStats {
@@ -328,12 +336,18 @@ export function readFreePageStats(now = new Date()): FreePageStats {
     l30d: sumSince(day(29)),
     all_time: sumSince(null),
     by_day: [...byDay.values()],
-    sources: {
-      note:
-        "Daily totals only. referrer = Referer registrable domain (direct/self/other); utm = utm_source or ref, sanitized; ua = browser/bot/agent. Values seen fewer than 2 times in the window show as other. No IPs, URLs, or per-visit rows.",
-      today: readSourceTotalsFrom(db().db, day(0)),
-      l7d: readSourceTotalsFrom(db().db, day(6)),
-      l30d: readSourceTotalsFrom(db().db, day(29)),
-    },
+    sources: (() => {
+      const today = readSourceTotalsFrom(db().db, day(0));
+      const l7d = readSourceTotalsFrom(db().db, day(6));
+      const l30d = readSourceTotalsFrom(db().db, day(29));
+      return {
+        note:
+          "Daily totals only. referrer = Referer registrable domain (direct/self/other); utm = utm_source or ref, sanitized; ua = browser/bot/agent. Values seen fewer than 2 times in the window show as other, except launch tags (producthunt, linkedin, x, email, test) and their domains. No IPs, URLs, cookies, or per-visit rows.",
+        by_source: { today: sourceSummary(today), l7d: sourceSummary(l7d), l30d: sourceSummary(l30d) },
+        today,
+        l7d,
+        l30d,
+      };
+    })(),
   };
 }
