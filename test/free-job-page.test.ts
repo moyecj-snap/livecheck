@@ -37,6 +37,17 @@ import {
   setFreePageSetting,
 } from "../src/free-job-store.js";
 import { closePaidCallStore, initPaidCallStore } from "../src/paid-call-store.js";
+import {
+  SOURCES_TABLE_SQL,
+  SOURCE_DISTINCT_CAP,
+  bumpSourcesIn,
+  readSourceTotalsFrom,
+  referrerSource,
+  registrableDomain,
+  uaClass,
+  utmSource,
+} from "../src/free-job-sources.js";
+import { DatabaseSync } from "node:sqlite";
 
 // ---------------------------------------------------------------------------
 // Local "internet": one server on 127.0.0.2. The test policy treats 127.0.0.2
@@ -297,6 +308,121 @@ describe("free /job page", () => {
     assert.equal((await first).status, 200);
   });
 
+  it("source tracking: Referer domain, utm/ref and UA class as daily totals; views and checks; private only", async () => {
+    const chrome = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36";
+    const fromHn = (n: number) =>
+      app.request("/job?utm_source=HN&fbclid=abc123", {
+        headers: { referer: `https://news.ycombinator.com/item?id=424242&n=${n}`, "user-agent": chrome },
+      });
+    const first = await (await fromHn(1)).text();
+    await fromHn(2);
+    // The form carries only the reduced values, so the check can be attributed.
+    assert.match(first, /<form class="check" method="post" action="\/job\?utm_source=hn&amp;sref=ycombinator\.com">/);
+    assert.match(first, /<form class="examples" method="post" action="\/job\?utm_source=hn&amp;sref=ycombinator\.com">/);
+    assert.equal(first.includes("424242"), false);
+    assert.equal(first.includes("fbclid"), false);
+
+    await app.request("/job?ref=https://evil.example/smuggle?x=1", { headers: { "user-agent": "curl/8.5.0" } });
+    await app.request("/job", { headers: { "user-agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" } });
+    await app.request("/job", { headers: { "user-agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" } });
+
+    const check = (cookie: string) =>
+      app.request("/job?utm_source=hn&sref=ycombinator.com", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          "fly-client-ip": "198.51.100.77",
+          cookie: `${FREE_JOB_COOKIE}=${cookie}`,
+          "user-agent": chrome,
+        },
+        body: new URLSearchParams({ url: u("/jobs/1842") }).toString(),
+      });
+    assert.match(await (await check(visitor(70))).text(), /class="verdict">Open</);
+    assert.match(await (await check(visitor(71))).text(), /class="verdict">Open</);
+    // A forged sref/utm on the POST is re-sanitized.
+    await app.request("/job?utm_source=https://x.example/a&sref=https://evil.example/p?q=1", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", "fly-client-ip": "198.51.100.78", cookie: `${FREE_JOB_COOKIE}=${visitor(72)}`, "user-agent": chrome },
+      body: new URLSearchParams({ url: u("/jobs/1842") }).toString(),
+    });
+
+    const stats = await freeStats();
+    assert.equal(stats.today.views, 5);
+    assert.equal(stats.today.checks, 3);
+    const views = stats.sources.today.view;
+    assert.deepEqual(views.referrer, { direct: 3, "ycombinator.com": 2 });
+    assert.deepEqual(views.utm, { none: 2, hn: 2, other: 1 });
+    assert.deepEqual(views.ua, { bot: 2, browser: 2, agent: 1 });
+    const checks = stats.sources.today.check;
+    assert.deepEqual(checks.referrer, { "ycombinator.com": 2, other: 1 });
+    assert.deepEqual(checks.utm, { hn: 2, other: 1 });
+    assert.deepEqual(checks.ua, { browser: 3 });
+    assert.deepEqual(stats.sources.l7d.check.utm, { hn: 2, other: 1 });
+
+    // Nothing but day + reduced values in the table: no paths, queries, IPs, or checked links.
+    const rows = freePageDbForTests().prepare("SELECT * FROM free_page_sources").all() as Array<Record<string, unknown>>;
+    const dump = JSON.stringify(rows);
+    for (const forbidden of ["/", "?", "424242", "fbclid", "evil", "smuggle", "198.51.100", "1842", "127.0.0.2", "curl", "Googlebot", "Chrome"]) {
+      assert.equal(dump.includes(forbidden), false, forbidden);
+    }
+    // Private only: public /stats never shows it.
+    for (const path of ["/stats", "/stats?format=json"]) {
+      const text = await (await app.request(path)).text();
+      assert.equal(text.includes("ycombinator"), false, path);
+      assert.equal(/utm|referrer_domain|free_page_sources/.test(text), false, path);
+    }
+  });
+
+  it("launch tags never fold: one ?ref=test visit shows as test; by_source gives views and checks per tag", async () => {
+    const chrome = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36";
+    for (const tag of ["test", "producthunt", "linkedin", "x", "email"]) {
+      await app.request(`/job?ref=${tag}`, { headers: { "user-agent": chrome } });
+    }
+    await app.request("/job?ref=oneoff-random", { headers: { "user-agent": chrome } });
+    await app.request("/job", { headers: { referer: "https://www.producthunt.com/posts/livecheck", "user-agent": chrome } });
+    const res = await app.request("/job?utm_source=producthunt", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", "fly-client-ip": "198.51.100.90", cookie: `${FREE_JOB_COOKIE}=${visitor(90)}`, "user-agent": chrome },
+      body: new URLSearchParams({ url: u("/jobs/1842") }).toString(),
+    });
+    assert.match(await res.text(), /class="verdict">Open</);
+    const stats = await freeStats();
+    const utm = stats.sources.today.view.utm;
+    for (const tag of ["test", "producthunt", "linkedin", "x", "email"]) assert.equal(utm[tag], 1, tag);
+    assert.equal(utm.other, 1, "a non-launch one-off still folds");
+    assert.equal(utm["oneoff-random"], undefined);
+    assert.equal(stats.sources.today.view.referrer["producthunt.com"], 1, "launch domain shown on a single visit");
+    assert.deepEqual(stats.sources.by_source.today.producthunt, { views: 1, checks: 1 });
+    assert.deepEqual(stats.sources.by_source.today.test, { views: 1, checks: 0 });
+  });
+
+  it("no new cookies and no third-party trackers: source carry is the form address only", async () => {
+    // First visit with a source: exactly one cookie, the existing free-check limit cookie.
+    const first = await app.request("/job?utm_source=producthunt", {
+      headers: { referer: "https://www.producthunt.com/posts/livecheck" },
+    });
+    const cookies = first.headers.getSetCookie();
+    assert.equal(cookies.length, 1);
+    assert.match(cookies[0]!, new RegExp(`^${FREE_JOB_COOKIE}=`));
+    // Returning visitor: no cookie at all, on GET and on the POST that carries sref.
+    const again = await app.request("/job?utm_source=producthunt", {
+      headers: { referer: "https://www.producthunt.com/", cookie: `${FREE_JOB_COOKIE}=${visitor(91)}` },
+    });
+    assert.deepEqual(again.headers.getSetCookie(), []);
+    const posted = await app.request("/job?utm_source=producthunt&sref=producthunt.com", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", "fly-client-ip": "198.51.100.91", cookie: `${FREE_JOB_COOKIE}=${visitor(91)}` },
+      body: new URLSearchParams({ url: u("/jobs/1842") }).toString(),
+    });
+    assert.deepEqual(posted.headers.getSetCookie(), []);
+    for (const html of [await first.text(), await again.text(), await posted.text()]) {
+      assert.equal(/<script|<iframe|<img\b|<link[^>]+rel="?preconnect|navigator\.sendBeacon|google-analytics|googletagmanager|gtag|plausible|segment|mixpanel|posthog|facebook\.net|pixel/i.test(html), false);
+      // Every src/href/action stays on our origin or the docs/skill links that were already there.
+      for (const m of html.matchAll(/(?:src|action)="([^"]+)"/g)) assert.match(m[1]!, /^\/(job|og)/, m[1]);
+    }
+    assert.equal(first.headers.get("referrer-policy"), "no-referrer");
+  });
+
   it("/job/stats is private: 404 without the token, wrong token, or no secret set", async () => {
     assert.equal((await app.request("/job/stats")).status, 404);
     assert.equal((await app.request("/job/stats", { headers: { "x-livecheck-stats-token": "nope" } })).status, 404);
@@ -411,8 +537,12 @@ describe("free /job page", () => {
     }
     const db = freePageDbForTests();
     const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>).map((t) => t.name);
-    assert.deepEqual(tables, ["free_page_daily", "free_page_settings"]);
-    const dump = JSON.stringify([db.prepare("SELECT * FROM free_page_daily").all(), db.prepare("SELECT * FROM free_page_settings").all()]);
+    assert.deepEqual(tables, ["free_page_daily", "free_page_settings", "free_page_sources"]);
+    const dump = JSON.stringify([
+      db.prepare("SELECT * FROM free_page_daily").all(),
+      db.prepare("SELECT * FROM free_page_settings").all(),
+      db.prepare("SELECT * FROM free_page_sources").all(),
+    ]);
     for (const needle of [marker, "acme", "jane", "203.0.113.70", visitor(70)]) assert.equal(dump.includes(needle), false);
     for (const key of freeJobLimiterKeysForTests()) assert.match(key, /^[A-Za-z0-9_-]{22}$/);
     assert.equal(paid.ok && Number((paid.db.prepare("SELECT COUNT(*) AS n FROM paid_calls").get() as { n: number }).n), 0);
@@ -549,5 +679,146 @@ describe("free /job helpers", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// ---- Source tracking (daily totals; private /job/stats only) ----
+
+const CHROME =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36";
+
+describe("free /job source values", () => {
+  it("referrer is the registrable domain of the Referer host; never path or query", () => {
+    assert.equal(referrerSource("https://news.ycombinator.com/item?id=4242&secret=abc"), "ycombinator.com");
+    assert.equal(referrerSource("https://www.linkedin.com/feed/update/urn:li:activity:1"), "linkedin.com");
+    assert.equal(referrerSource("https://jobs.example.co.uk/x"), "example.co.uk");
+    assert.equal(referrerSource("https://a.b.c.tracker.example.com/?u=https://evil.test"), "example.com");
+    assert.equal(referrerSource("http://t.co/abc"), "t.co");
+    assert.equal(referrerSource(undefined), "direct");
+    assert.equal(referrerSource(""), "direct");
+    assert.equal(referrerSource("https://livecheck.fly.dev/", ["livecheck.fly.dev"]), "self");
+    assert.equal(referrerSource("http://127.0.0.1:43127/job", ["127.0.0.1:43127"]), "other", "IP literal is never a domain");
+    assert.equal(referrerSource("http://[::1]/"), "other");
+    assert.equal(referrerSource("javascript:alert(1)"), "other");
+    assert.equal(referrerSource("android-app://com.slack/"), "other");
+    assert.equal(referrerSource("not a url"), "other");
+    assert.equal(registrableDomain("localhost"), undefined);
+    assert.equal(registrableDomain("under_score.example.com"), undefined);
+  });
+
+  it("utm_source/ref: lowercase token, <= 40 chars, links and odd values become other", () => {
+    assert.equal(utmSource("HN"), "hn");
+    assert.equal(utmSource(" Twitter "), "twitter");
+    assert.equal(utmSource("newsletter_2026-10"), "newsletter_2026-10");
+    assert.equal(utmSource("news.ycombinator.com"), "news.ycombinator.com");
+    assert.equal(utmSource(undefined), "none");
+    assert.equal(utmSource(""), "none");
+    assert.equal(utmSource("https://evil.example/x?y=1"), "other");
+    assert.equal(utmSource("evil.example/path"), "other");
+    assert.equal(utmSource("a".repeat(41)), "other");
+    assert.equal(utmSource("a".repeat(40)), "a".repeat(40));
+    assert.equal(utmSource("user@example.com"), "other");
+    assert.equal(utmSource("café"), "other");
+    assert.equal(utmSource("www.example.com"), "other");
+    assert.equal(utmSource("id1234567"), "other", "long digit runs (ids, phone numbers) are folded");
+    assert.equal(utmSource("none"), "other", "reserved words cannot be spoofed");
+    assert.equal(utmSource("direct"), "other");
+  });
+
+  it("UA is only a class: browser, bot, or agent", () => {
+    assert.equal(uaClass(CHROME), "browser");
+    assert.equal(uaClass("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"), "browser");
+    assert.equal(uaClass("Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0"), "browser");
+    assert.equal(uaClass("Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"), "bot");
+    assert.equal(uaClass("Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.2; +https://openai.com/gptbot)"), "bot");
+    assert.equal(uaClass("Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)"), "bot");
+    assert.equal(uaClass("facebookexternalhit/1.1"), "bot");
+    assert.equal(uaClass("Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; ChatGPT-User/1.0; +https://openai.com/bot)"), "agent");
+    assert.equal(uaClass("Mozilla/5.0 (compatible; Claude-User/1.0; +Claude-User@anthropic.com)"), "agent");
+    assert.equal(uaClass("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/129.0.0.0 Safari/537.36"), "agent");
+    assert.equal(uaClass("curl/8.5.0"), "agent");
+    assert.equal(uaClass("python-requests/2.32.3"), "agent");
+    assert.equal(uaClass(""), "agent");
+    assert.equal(uaClass(undefined), "agent");
+  });
+});
+
+function openSourcesDb(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec(SOURCES_TABLE_SQL);
+  return db;
+}
+
+describe("free /job source counters", () => {
+  it("one counter per day+event+dimension+value; views and checks separate", () => {
+    const db = openSourcesDb();
+    const v = { referrer: "ycombinator.com", utm: "hn", ua: "browser" as const };
+    bumpSourcesIn(db, "2026-10-09", "view", v);
+    bumpSourcesIn(db, "2026-10-09", "view", v);
+    bumpSourcesIn(db, "2026-10-09", "check", v);
+    const rows = db.prepare("SELECT day, event, dimension, value, n FROM free_page_sources ORDER BY event, dimension").all();
+    assert.equal(rows.length, 6);
+    assert.deepEqual(
+      rows.map((r) => `${r.event}/${r.dimension}/${r.value}=${r.n}`),
+      ["check/referrer/ycombinator.com=1", "check/ua/browser=1", "check/utm/hn=1", "view/referrer/ycombinator.com=2", "view/ua/browser=2", "view/utm/hn=2"],
+    );
+    const cols = db.prepare("PRAGMA table_info(free_page_sources)").all().map((c) => c.name);
+    assert.deepEqual(cols, ["day", "event", "dimension", "value", "n"], "no ip, url, cookie, or ua column");
+  });
+
+  it("launch tags and domains are never pushed out by the daily cap", () => {
+    const db = openSourcesDb();
+    for (let i = 0; i < SOURCE_DISTINCT_CAP + 5; i++) {
+      bumpSourcesIn(db, "2026-10-09", "view", { referrer: `site${i}.com`, utm: `s${i}`, ua: "browser" });
+    }
+    bumpSourcesIn(db, "2026-10-09", "view", { referrer: "linkedin.com", utm: "producthunt", ua: "browser" });
+    const row = (dimension: string, value: string) =>
+      db.prepare("SELECT n FROM free_page_sources WHERE dimension = ? AND value = ?").get(dimension, value) as { n: number } | undefined;
+    assert.equal(Number(row("utm", "producthunt")?.n), 1);
+    assert.equal(Number(row("referrer", "linkedin.com")?.n), 1);
+    assert.equal(Number(row("utm", "other")?.n), 5);
+  });
+
+  it(`caps distinct values per day at ${SOURCE_DISTINCT_CAP}; later new values count as other`, () => {
+    const db = openSourcesDb();
+    for (let i = 0; i < SOURCE_DISTINCT_CAP + 10; i++) {
+      bumpSourcesIn(db, "2026-10-09", "view", { referrer: `site${i}.com`, utm: `s${i}`, ua: "browser" });
+    }
+    bumpSourcesIn(db, "2026-10-09", "view", { referrer: "site0.com", utm: "s0", ua: "browser" });
+    const distinct = (dimension: string) =>
+      Number(
+        (db.prepare("SELECT COUNT(*) AS n FROM free_page_sources WHERE day = ? AND dimension = ? AND value != 'other'").get("2026-10-09", dimension) as { n: number }).n,
+      );
+    assert.equal(distinct("referrer"), SOURCE_DISTINCT_CAP);
+    assert.equal(distinct("utm"), SOURCE_DISTINCT_CAP);
+    const other = db.prepare("SELECT n FROM free_page_sources WHERE dimension = 'referrer' AND value = 'other'").get() as { n: number };
+    assert.equal(Number(other.n), 10);
+    const site0 = db.prepare("SELECT n FROM free_page_sources WHERE dimension = 'referrer' AND value = 'site0.com'").get() as { n: number };
+    assert.equal(Number(site0.n), 2, "a value already counted today keeps counting after the cap");
+    // A new day starts fresh.
+    bumpSourcesIn(db, "2026-10-10", "view", { referrer: "new.com", utm: "fresh", ua: "bot" });
+    assert.ok(db.prepare("SELECT 1 FROM free_page_sources WHERE day = '2026-10-10' AND value = 'new.com'").get());
+  });
+
+  it("report: totals per window, sorted, one-off values folded into other", () => {
+    const db = openSourcesDb();
+    const bump = (day: string, referrer: string, utm: string, ua: "browser" | "bot" | "agent", event: "view" | "check" = "view") =>
+      bumpSourcesIn(db, day, event, { referrer, utm, ua });
+    bump("2026-10-09", "ycombinator.com", "hn", "browser");
+    bump("2026-10-09", "ycombinator.com", "hn", "browser");
+    bump("2026-10-09", "ycombinator.com", "hn", "agent");
+    bump("2026-10-09", "oneoff.example", "zz-token", "bot");
+    bump("2026-10-09", "direct", "none", "browser");
+    bump("2026-10-01", "linkedin.com", "li", "browser");
+    bump("2026-10-02", "linkedin.com", "li", "browser");
+    bump("2026-10-09", "ycombinator.com", "hn", "browser", "check");
+    const today = readSourceTotalsFrom(db, "2026-10-09");
+    assert.deepEqual(today.view.referrer, { "ycombinator.com": 3, direct: 1, other: 1 });
+    assert.deepEqual(today.view.utm, { hn: 3, none: 1, other: 1 });
+    assert.deepEqual(today.view.ua, { browser: 3, agent: 1, bot: 1 });
+    assert.deepEqual(today.check.referrer, { other: 1 }, "a single check from a domain is folded too");
+    const all = readSourceTotalsFrom(db, null);
+    assert.equal(all.view.referrer["linkedin.com"], 2);
+    assert.equal(Object.keys(all.view.referrer)[0], "ycombinator.com");
   });
 });

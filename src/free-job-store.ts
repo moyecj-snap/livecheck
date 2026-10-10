@@ -1,6 +1,15 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import {
+  SOURCES_TABLE_SQL,
+  bumpSourcesIn,
+  readSourceTotalsFrom,
+  sourceSummary,
+  type SourceEvent,
+  type SourceTotals,
+  type SourceValues,
+} from "./free-job-sources.js";
 
 /**
  * Launch tracking for the free /job page: daily COUNTS only.
@@ -156,6 +165,7 @@ function open(path: string): DatabaseSync {
   }
   migrateFreePageDaily(db);
   migrateFreePageSettings(db);
+  db.exec(SOURCES_TABLE_SQL);
   return db;
 }
 
@@ -166,6 +176,7 @@ export function openFreePageDbForAdmin(path: string): DatabaseSync {
   db.exec("PRAGMA busy_timeout = 5000;");
   migrateFreePageDaily(db);
   migrateFreePageSettings(db);
+  db.exec(SOURCES_TABLE_SQL);
   return db;
 }
 
@@ -242,6 +253,16 @@ export function bumpFreePageMetric(metric: FreePageMetric, now = new Date()): vo
   }
 }
 
+/** Daily source counters (referrer domain, utm/ref, UA class). See free-job-sources.ts. */
+export function bumpFreePageSources(event: SourceEvent, values: SourceValues, now = new Date()): void {
+  try {
+    bumpSourcesIn(db().db, pacificDay(now), event, values);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(`[free_page] source count failed: ${reason}`);
+  }
+}
+
 export type FreePageCounts = Record<FreePageMetric, number>;
 
 function emptyCounts(): FreePageCounts {
@@ -276,6 +297,15 @@ export type FreePageStats = {
   l30d: FreePageCounts;
   all_time: FreePageCounts;
   by_day: Array<{ day: string } & FreePageCounts>;
+  /** Where views and checks came from. Totals only; private view only. */
+  sources: {
+    note: string;
+    /** Per utm_source/ref value: views and checks, e.g. producthunt {views: 412, checks: 1030}. */
+    by_source: { today: Record<string, { views: number; checks: number }>; l7d: Record<string, { views: number; checks: number }>; l30d: Record<string, { views: number; checks: number }> };
+    today: SourceTotals;
+    l7d: SourceTotals;
+    l30d: SourceTotals;
+  };
 };
 
 export function readFreePageStats(now = new Date()): FreePageStats {
@@ -306,5 +336,18 @@ export function readFreePageStats(now = new Date()): FreePageStats {
     l30d: sumSince(day(29)),
     all_time: sumSince(null),
     by_day: [...byDay.values()],
+    sources: (() => {
+      const today = readSourceTotalsFrom(db().db, day(0));
+      const l7d = readSourceTotalsFrom(db().db, day(6));
+      const l30d = readSourceTotalsFrom(db().db, day(29));
+      return {
+        note:
+          "Daily totals only. referrer = Referer registrable domain (direct/self/other); utm = utm_source or ref, sanitized; ua = browser/bot/agent. Values seen fewer than 2 times in the window show as other, except launch tags (producthunt, linkedin, x, email, test) and their domains. No IPs, URLs, cookies, or per-visit rows.",
+        by_source: { today: sourceSummary(today), l7d: sourceSummary(l7d), l30d: sourceSummary(l30d) },
+        today,
+        l7d,
+        l30d,
+      };
+    })(),
   };
 }
