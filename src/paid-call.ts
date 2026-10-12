@@ -1,3 +1,4 @@
+import { isInternalTestMode } from "./check-capacity.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
@@ -417,6 +418,8 @@ export function recordSuccessfulPaidCheck(input: {
   user_agent?: string;
   receipt_id?: string;
 }): void {
+  // Test mode never charges, so it never writes a paid_calls row or counts in /stats.
+  if (isInternalTestMode()) return;
   rememberPaidCall(input);
   if (!isLiveSettlement()) {
     emitPaidCall();
@@ -429,5 +432,6 @@ export function recordSuccessfulPaidCheck(input: {
  * not on the settle payload (success, payer, transaction, network).
  */
 export function emitPaidCallAfterSettle(settlement: PaidCallSettlement): void {
+  if (isInternalTestMode()) return;
   emitPaidCall(settlement);
 }

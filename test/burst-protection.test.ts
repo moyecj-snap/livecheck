@@ -575,7 +575,9 @@ describe("internal test mode", () => {
         },
         body: JSON.stringify({ url: "https://example.com/thanks", intent: "lead_submit" }),
       });
-      assert.equal(confirm.status, 402, "test mode does not comp Confirm");
+      // Test mode now covers every paid route (see test-mode-routes.test.ts).
+      assert.equal(confirm.status, 200, "test mode runs Confirm without payment");
+      assert.equal(counts().settleCalls, 0);
 
       delete process.env[TEST_MODE_SECRET_ENV];
       const unset = await app.request("/v1/verify", {

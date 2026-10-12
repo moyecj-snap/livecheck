@@ -1,3 +1,4 @@
+import { isInternalTestMode } from "./check-capacity.js";
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
   CheckError,
@@ -545,17 +546,20 @@ export async function createWatch(
     },
   };
 
-  try {
-    insertWatcher(row);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (/unique/i.test(message)) {
-      const raced = findActiveDuplicate(payer, parsed.target.url, key);
-      throw new WatchError("duplicate_watch", "An active watcher already exists for this wallet, URL, and condition.", 409, {
-        existing_id: raced,
-      });
+  // Test mode is a dry run: baseline is fetched, but no watcher is stored.
+  if (!isInternalTestMode()) {
+    try {
+      insertWatcher(row);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/unique/i.test(message)) {
+        const raced = findActiveDuplicate(payer, parsed.target.url, key);
+        throw new WatchError("duplicate_watch", "An active watcher already exists for this wallet, URL, and condition.", 409, {
+          existing_id: raced,
+        });
+      }
+      throw error;
     }
-    throw error;
   }
 
   const result: Omit<WatchCreateResult, "receipt"> = {
@@ -596,10 +600,13 @@ export function renewWatch(
   const baseMs = Number.isFinite(currentExpiry) ? Math.max(now.getTime(), currentExpiry) : now.getTime();
   const expires_at = watchTermExpiresAt(new Date(baseMs));
   const checks_remaining = row.checks_remaining + checksRemainingForInterval(row.interval_s);
-  if (!renewWatcher(row.id, { expires_at, checks_remaining })) {
+  const dryRun = isInternalTestMode();
+  if (!dryRun && !renewWatcher(row.id, { expires_at, checks_remaining })) {
     throw new WatchError("not_renewable", "Only an active watcher can be renewed.", 409);
   }
-  const updated = getWatcher(row.id) ?? { ...row, expires_at, checks_remaining, expiring_emitted: false };
+  const updated = dryRun
+    ? { ...row, expires_at, checks_remaining, expiring_emitted: false }
+    : (getWatcher(row.id) ?? { ...row, expires_at, checks_remaining, expiring_emitted: false });
   const result: Omit<WatchRenewResult, "receipt"> = {
     id: updated.id,
     tier: "standard",
@@ -634,8 +641,11 @@ export function topupWatchChain(
   run: WatchRun;
 } {
   const row = requireOwnerToken(ownerToken, getWatcher(watcherId));
-  const nextAtomic = creditChainBalance(row.id, CHAIN_TOPUP_PRICE_ATOMIC);
-  const updated = getWatcher(row.id);
+  const dryRun = isInternalTestMode();
+  const nextAtomic = dryRun
+    ? row.chain_balance_atomic + CHAIN_TOPUP_PRICE_ATOMIC
+    : creditChainBalance(row.id, CHAIN_TOPUP_PRICE_ATOMIC);
+  const updated = dryRun ? undefined : getWatcher(row.id);
   return {
     id: row.id,
     added_usd: CHAIN_TOPUP_PRICE_USD,
