@@ -242,7 +242,9 @@ describe("callback retry + events HTTP", () => {
       next_check_at: "2099-01-01T00:00:00Z",
     });
     insertWatcher(watcher);
-    const base = new Date("2026-09-10T19:00:00Z").getTime();
+    // Events must sit inside the 30-day GET /events retention window relative to
+    // the real clock: a fixed 2026-09-10 date aged out on 2026-10-10.
+    const base = Date.now() - 60 * 60 * 1000;
     const ids: string[] = [];
     for (let i = 0; i < 5; i += 1) {
       const payload = emitWatchEvent({
