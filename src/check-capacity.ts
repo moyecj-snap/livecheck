@@ -102,7 +102,27 @@ export function isBurstCheckPath(path: string): boolean {
   return normalized === "/v1/verify" || normalized === "/v1/verify/job" || normalized === "/v1/verify/listing";
 }
 
-/** True only inside a verify request whose test-mode secret matched. */
+/**
+ * Every x402-priced POST route. Test mode (matching secret header) skips
+ * payment on all of them, and no paid_calls row, receipt, or watcher write
+ * is made. Keep in sync with the routes in payments.ts.
+ */
+export function isTestModePaidPath(path: string): boolean {
+  const normalized = path.replace(/\/+$/, "") || "/";
+  if (isBurstCheckPath(normalized)) return true;
+  if (
+    normalized === "/v1/confirm" ||
+    normalized === "/v1/confirm/order" ||
+    normalized === "/v1/check" ||
+    normalized === "/v1/watch" ||
+    normalized === "/v1/watch/renew"
+  ) {
+    return true;
+  }
+  return /^\/v1\/watch\/[^/]+\/chain\/topup$/.test(normalized);
+}
+
+/** True only inside a paid-route request whose test-mode secret matched. */
 export function isInternalTestMode(): boolean {
   return testModeAls.getStore()?.enabled === true;
 }
@@ -214,12 +234,18 @@ async function runAdmitted(c: Context, run: () => Promise<Response | void>): Pro
  */
 export function withBurstProtection(paymentGate: MiddlewareHandler): MiddlewareHandler {
   return async (c, next) => {
-    if (c.req.method !== "POST" || !isBurstCheckPath(c.req.path)) {
-      return paymentGate(c, next);
+    if (
+      c.req.method === "POST" &&
+      isTestModePaidPath(c.req.path) &&
+      testModeAuthorized(c.req.header(TEST_MODE_HEADER))
+    ) {
+      c.header(TEST_MODE_HEADER, "1");
+      const run = () => testModeAls.run({ enabled: true }, () => next());
+      return isBurstCheckPath(c.req.path) ? runAdmitted(c, run) : run();
     }
 
-    if (testModeAuthorized(c.req.header(TEST_MODE_HEADER))) {
-      return runAdmitted(c, () => testModeAls.run({ enabled: true }, () => next()));
+    if (c.req.method !== "POST" || !isBurstCheckPath(c.req.path)) {
+      return paymentGate(c, next);
     }
 
     if (!hasPaymentAttempt(c)) {

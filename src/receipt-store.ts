@@ -1,3 +1,4 @@
+import { isInternalTestMode } from "./check-capacity.js";
 import { existsSync, mkdirSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -267,6 +268,9 @@ export type ReceiptRememberResult = {
 };
 
 export function rememberConfirmReceipt(row: ConfirmReceiptRow): ReceiptRememberResult {
+  // Test-mode results are signed for shape but never stored, so /stats
+  // receipt counts (the paid-volume fallback) never include them.
+  if (isInternalTestMode()) return { memory: false, durable: true };
   memory.set(row.id, row);
   const database = sqliteDb();
   if (!database) return { memory: true, durable: false };
