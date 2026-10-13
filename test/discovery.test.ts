@@ -27,6 +27,8 @@ import {
   OPENAPI_VERIFY_TAGS,
   VERIFY_DESCRIPTION,
   VERIFY_DUAL_RAIL_PAYMENT,
+  MPP_RETRY_RETENTION,
+  MPP_UNCONFIRMED_503,
 } from "../src/config.js";
 import { CONFIRM_DEMO_URL } from "../src/docs-example-url.js";
 import { PAID_DISCOVERY_ROUTES, WELL_KNOWN_X402_ROUTES } from "../src/discovery.js";
@@ -70,7 +72,7 @@ type OpenApiDoc = {
         tags?: string[];
         "x-payment-info"?: {
           price?: { mode?: string; currency?: string; amount?: string };
-          protocols?: Array<{ x402?: { network?: string; asset?: string; minimumUsd?: string }; mpp?: { method?: string; chainId?: number; asset?: string; minimumUsd?: string } }>;
+          protocols?: Array<{ x402?: { network?: string; asset?: string }; mpp?: { method?: string; chainId?: number; asset?: string } }>;
         };
         requestBody?: {
           content?: { "application/json"?: { schema?: { properties?: { url?: object }; required?: string[] } } };
@@ -159,9 +161,16 @@ function assertLlmsTxt(res: Response, body: string) {
   assert.doesNotMatch(body, /in_stock/);
   assert.doesNotMatch(body, /invalid_url/);
   assert.ok(body.includes(VERIFY_DUAL_RAIL_PAYMENT), "llms.txt must state both rails and the MPP-only 24h retention line");
+  assert.ok(body.includes(MPP_RETRY_RETENTION));
+  assert.ok(body.includes(MPP_UNCONFIRMED_503));
+  assert.doesNotMatch(body, /\$0\.01 minimum/);
+  assert.doesNotMatch(body, /minimumUsd/);
   assert.match(body, /POST \/v1\/verify, POST \/v1\/verify\/job, and POST \/v1\/verify\/listing/);
   assert.match(body, /confirm stay x402 \(Base USDC\) only/);
+  assert.match(body, /tempo\/charge/);
+  assert.match(body, /Stripe pays Tempo gas/);
   assert.doesNotMatch(body, /x402[^.]*kept for 24 hours/);
+  assert.doesNotMatch(body, /503 means you were not charged/);
 }
 
 describe("discovery documents (mock gate)", () => {
@@ -264,11 +273,14 @@ describe("discovery documents (mock gate)", () => {
     const mpp = op["x-payment-info"]?.protocols?.find((p) => p.mpp)?.mpp;
     assert.equal(x402?.network, "eip155:8453");
     assert.equal(x402?.asset, "USDC");
-    assert.equal(x402?.minimumUsd, "0.01");
-    assert.equal(mpp?.method, "tempo");
+    assert.equal("minimumUsd" in (x402 ?? {}), false);
+    assert.equal(mpp?.method, "tempo/charge");
     assert.equal(mpp?.chainId, 4217);
     assert.equal(mpp?.asset, "USDC.e");
-    assert.equal(mpp?.minimumUsd, "0.01");
+    assert.equal("minimumUsd" in (mpp ?? {}), false);
+    assert.ok(op.description?.includes(MPP_RETRY_RETENTION));
+    assert.ok(op.description?.includes(MPP_UNCONFIRMED_503));
+    assert.doesNotMatch(op.description ?? "", /minimum/);
     assert.ok(op.description?.includes(VERIFY_DUAL_RAIL_PAYMENT));
     assert.ok(job.description?.includes(VERIFY_DUAL_RAIL_PAYMENT));
     assert.ok(listing.description?.includes(VERIFY_DUAL_RAIL_PAYMENT));

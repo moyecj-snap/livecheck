@@ -95,8 +95,8 @@ function verifyPostOperation(input: {
         amount: OPENAPI_PRICE_AMOUNT,
       },
       protocols: [
-        { x402: { network: "eip155:8453", asset: "USDC", minimumUsd: "0.01" } },
-        { mpp: { method: "tempo", chainId: 4217, asset: "USDC.e", minimumUsd: "0.01" } },
+        { x402: { network: "eip155:8453", asset: "USDC" } },
+        { mpp: { method: "tempo/charge", chainId: 4217, asset: "USDC.e" } },
       ],
     },
     requestBody: {
