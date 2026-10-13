@@ -18,7 +18,10 @@ import {
   sanitizeTx,
   sanitizeUserAgent,
   sanitizeVerifyStatus,
+  sanitizePaymentProtocol,
+  PAYMENT_PROTOCOLS,
   type PaidCallEvent,
+  type PaymentProtocol,
   type PaidCallRoute,
   type SentinelDetector,
   type SentinelPaidVerdict,
@@ -81,6 +84,11 @@ export type PaidCallRow = {
   attribution_note?: string;
   /** chk_ / wtc_ / wrn_ / cfm_ / evt_ id when this row is the call that sealed that receipt. */
   receipt_id?: string;
+  /**
+   * Payment rail. New rows always store one (`x402` unless the MPP dispatcher
+   * said otherwise). A NULL column predates MPP and is read back as `x402`.
+   */
+  protocol?: PaymentProtocol;
 };
 
 export type RouteCounts = {
@@ -150,7 +158,8 @@ const PAID_CALLS_COLUMNS = `
   status TEXT,
   attribution TEXT,
   attribution_note TEXT,
-  receipt_id TEXT
+  receipt_id TEXT,
+  protocol TEXT
 `;
 
 const TABLE_SQL = `
@@ -298,6 +307,7 @@ function rebuildPaidCallsRouteCheck(db: DatabaseSync): void {
     "attribution",
     "attribution_note",
     "receipt_id",
+    "protocol",
   ].filter((name) => paidCallStoreTableColumns(db, "paid_calls").has(name));
   const columnList = copyColumns.join(", ");
   try {
@@ -352,6 +362,8 @@ export function migratePaidCallStore(db: DatabaseSync): void {
   ensureColumn(db, "paid_calls", "attribution", "attribution TEXT");
   ensureColumn(db, "paid_calls", "attribution_note", "attribution_note TEXT");
   ensureColumn(db, "paid_calls", "receipt_id", "receipt_id TEXT");
+  // MPP: payment rail per row. Existing rows stay NULL (= x402); no rewrite.
+  ensureColumn(db, "paid_calls", "protocol", "protocol TEXT");
   rebuildPaidCallsRouteCheck(db);
   // Delete receipt copies before the unique indexes. Prod row 107 duplicates
   // row 105; the indexes are created only after that row is gone.
@@ -365,6 +377,7 @@ export function migratePaidCallStore(db: DatabaseSync): void {
   markUnattributedNullPayers(db);
   // Grader / tester list (editable without a deploy). Seeded, idempotent.
   migrateTestWalletStore(db);
+  db.exec(REFUND_CANDIDATES_SQL);
 }
 
 /**
@@ -466,6 +479,8 @@ export function paidCallEventToRow(event: PaidCallEvent): PaidCallRow | undefine
   if (userAgent) row.user_agent = userAgent;
   const receiptId = sanitizeReceiptId(event.receipt_id);
   if (receiptId) row.receipt_id = receiptId;
+  const protocol = sanitizePaymentProtocol(event.protocol);
+  if (protocol) row.protocol = protocol;
   return row;
 }
 
@@ -625,6 +640,7 @@ export function insertPaidCallRow(db: DatabaseSync, row: PaidCallRow): boolean {
     http_status: row.http_status,
     user_agent: row.user_agent,
     receipt_id: row.receipt_id,
+    protocol: row.protocol,
   });
   if (!mapped) {
     throw new Error("refusing to insert unsanitized paid_call row");
@@ -637,8 +653,8 @@ export function insertPaidCallRow(db: DatabaseSync, row: PaidCallRow): boolean {
   const result = db.prepare(
     `INSERT INTO paid_calls (
        ts, route, payer, tx, payment_intent, host, url_sha256, intent, verdict, http_status, user_agent, status,
-       attribution, attribution_note, receipt_id
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       attribution, attribution_note, receipt_id, protocol
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT DO NOTHING`,
   ).run(
     mapped.ts,
@@ -656,6 +672,7 @@ export function insertPaidCallRow(db: DatabaseSync, row: PaidCallRow): boolean {
     attribution.attribution,
     attribution.note,
     mapped.receipt_id ?? null,
+    mapped.protocol ?? "x402",
   );
   return Number(result.changes) === 1;
 }
@@ -676,7 +693,7 @@ export function retainPaidCall(event: PaidCallEvent): boolean {
 
 export function listPaidCallRows(db: DatabaseSync, sinceIso?: string): PaidCallRow[] {
   const columns =
-    "ts, route, payer, tx, payment_intent, host, url_sha256, intent, verdict, http_status, user_agent, status, attribution, attribution_note, receipt_id";
+    "ts, route, payer, tx, payment_intent, host, url_sha256, intent, verdict, http_status, user_agent, status, attribution, attribution_note, receipt_id, protocol";
   const sql = sinceIso
     ? `SELECT ${columns} FROM paid_calls WHERE ts >= ? ORDER BY ts ASC`
     : `SELECT ${columns} FROM paid_calls ORDER BY ts ASC`;
@@ -697,6 +714,7 @@ export function listPaidCallRows(db: DatabaseSync, sinceIso?: string): PaidCallR
     attribution: string | null;
     attribution_note: string | null;
     receipt_id: string | null;
+    protocol: string | null;
   }>;
   const rows: PaidCallRow[] = [];
   for (const item of raw) {
@@ -735,6 +753,7 @@ export function listPaidCallRows(db: DatabaseSync, sinceIso?: string): PaidCallR
     if (item.attribution_note?.trim()) row.attribution_note = item.attribution_note.trim();
     const receiptId = sanitizeReceiptId(item.receipt_id);
     if (receiptId) row.receipt_id = receiptId;
+    row.protocol = sanitizePaymentProtocol(item.protocol) ?? "x402";
     rows.push(row);
   }
   return rows;
@@ -1362,6 +1381,7 @@ export function parsePaidCallLogLine(line: string): PaidCallEvent | undefined {
         http_status: parsed.http_status,
         user_agent: parsed.user_agent,
         receipt_id: parsed.receipt_id,
+        protocol: parsed.protocol,
       };
     } catch {
       // try next candidate
@@ -1380,4 +1400,186 @@ export function rowsFromLogText(text: string): PaidCallRow[] {
     if (row) rows.push(row);
   }
   return rows;
+}
+
+/**
+ * Calls and route-priced cents per (route, protocol) for one window.
+ * A NULL protocol is x402 (rows written before MPP). An unknown stored value
+ * is reported under its own name so the protocol lines still add up.
+ */
+export type ProtocolRouteCounts = Record<string, Record<string, { calls: number; revenue_cents: number }>>;
+
+export function queryProtocolRouteCounts(
+  db: DatabaseSync,
+  sinceIso: string,
+  priceCents: Readonly<Record<PaidCallRoute, number>>,
+): ProtocolRouteCounts {
+  const rows = db
+    .prepare(
+      `SELECT route, COALESCE(NULLIF(trim(protocol), ''), 'x402') AS protocol, COUNT(*) AS calls
+       FROM paid_calls
+       WHERE ts >= ?
+       GROUP BY route, COALESCE(NULLIF(trim(protocol), ''), 'x402')`,
+    )
+    .all(sinceIso) as Array<{ route: string; protocol: string; calls: number | bigint }>;
+  const out: ProtocolRouteCounts = {};
+  for (const row of rows) {
+    if (!isPaidCallRoute(row.route)) continue;
+    const calls = Number(row.calls);
+    const byProtocol = (out[row.route] ??= {});
+    const slot = (byProtocol[row.protocol] ??= { calls: 0, revenue_cents: 0 });
+    slot.calls += calls;
+    slot.revenue_cents += calls * priceCents[row.route];
+  }
+  return out;
+}
+
+export function queryProtocolRouteWindowsFromStore(
+  now: Date,
+  priceCents: Readonly<Record<PaidCallRoute, number>>,
+): { l7d: ProtocolRouteCounts; l30d: ProtocolRouteCounts } | undefined {
+  if (!state?.ok) return undefined;
+  return {
+    l7d: queryProtocolRouteCounts(state.db, isoCutoff(now, 7), priceCents),
+    l30d: queryProtocolRouteCounts(state.db, isoCutoff(now, 30), priceCents),
+  };
+}
+
+export { PAYMENT_PROTOCOLS };
+
+/**
+ * Paid calls that collected money but could not return a real answer
+ * (MPP charges before the handler runs). One row per payment reference.
+ * Nothing here is refunded automatically; it is the list to review.
+ */
+export const REFUND_CANDIDATES_SQL = `
+CREATE TABLE IF NOT EXISTS refund_candidates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  protocol TEXT NOT NULL,
+  payment_id TEXT,
+  route TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  payer TEXT,
+  http_status INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_refund_candidates_payment ON refund_candidates(protocol, payment_id) WHERE payment_id IS NOT NULL;
+`;
+
+export type RefundCandidate = {
+  ts: string;
+  protocol: PaymentProtocol;
+  /** On-chain reference (Tempo tx hash) or other rail payment id. */
+  payment_id?: string;
+  route: PaidCallRoute;
+  /** Short machine reason, e.g. `handler_status_502`, `handler_threw`. Never a URL. */
+  reason: string;
+  payer?: string;
+  /** Livecheck's own status before it was replaced with the unknown answer. */
+  http_status?: number;
+};
+
+export function insertRefundCandidate(db: DatabaseSync, candidate: RefundCandidate): boolean {
+  const result = db
+    .prepare(
+      `INSERT INTO refund_candidates (ts, protocol, payment_id, route, reason, payer, http_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT DO NOTHING`,
+    )
+    .run(
+      candidate.ts,
+      candidate.protocol,
+      sanitizeTx(candidate.payment_id) ?? null,
+      candidate.route,
+      candidate.reason.replace(/[^a-z0-9_:.-]/gi, "_").slice(0, 80),
+      sanitizePayer(candidate.payer) ?? null,
+      candidate.http_status ?? null,
+    );
+  return Number(result.changes) === 1;
+}
+
+/** Best-effort. The stdout line is the durable fallback. */
+export function retainRefundCandidate(candidate: RefundCandidate): boolean {
+  if (!state?.ok) return false;
+  try {
+    return insertRefundCandidate(state.db, candidate);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(`[refund_candidate] retain failed: ${reason}`);
+    return false;
+  }
+}
+
+export function listRefundCandidates(db: DatabaseSync): RefundCandidate[] {
+  const rows = db
+    .prepare(
+      `SELECT ts, protocol, payment_id, route, reason, payer, http_status FROM refund_candidates ORDER BY ts ASC, id ASC`,
+    )
+    .all() as Array<{
+    ts: string;
+    protocol: string;
+    payment_id: string | null;
+    route: string;
+    reason: string;
+    payer: string | null;
+    http_status: number | bigint | null;
+  }>;
+  const out: RefundCandidate[] = [];
+  for (const row of rows) {
+    const protocol = sanitizePaymentProtocol(row.protocol);
+    if (!protocol || !isPaidCallRoute(row.route)) continue;
+    const item: RefundCandidate = { ts: row.ts, protocol, route: row.route, reason: row.reason };
+    if (row.payment_id) item.payment_id = row.payment_id;
+    if (row.payer) item.payer = row.payer;
+    if (row.http_status !== null) item.http_status = Number(row.http_status);
+    out.push(item);
+  }
+  return out;
+}
+
+export function listRefundCandidatesFromStore(): RefundCandidate[] {
+  if (!state?.ok) return [];
+  return listRefundCandidates(state.db);
+}
+
+export type RefundCandidateDaily = {
+  /** UTC days, oldest first, zero-filled. */
+  days: Array<{ day: string; count: number }>;
+  total: number;
+  by_reason: Record<string, number>;
+};
+
+/**
+ * Daily refund-candidate counts for the private (token-gated) stats view.
+ * Counts only: no payer, payment id, or route. Never on public /stats.
+ */
+export function queryRefundCandidateDaily(db: DatabaseSync, now = new Date(), days = 30): RefundCandidateDaily {
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - (days - 1)));
+  const sinceIso = start.toISOString();
+  const rows = db
+    .prepare(
+      `SELECT substr(ts, 1, 10) AS day, reason, COUNT(*) AS n FROM refund_candidates
+       WHERE ts >= ? GROUP BY substr(ts, 1, 10), reason`,
+    )
+    .all(sinceIso) as Array<{ day: string; reason: string; n: number | bigint }>;
+  const perDay = new Map<string, number>();
+  const byReason: Record<string, number> = {};
+  let total = 0;
+  for (const row of rows) {
+    const n = Number(row.n);
+    perDay.set(row.day, (perDay.get(row.day) ?? 0) + n);
+    byReason[row.reason] = (byReason[row.reason] ?? 0) + n;
+    total += n;
+  }
+  const out: RefundCandidateDaily["days"] = [];
+  for (let i = 0; i < days; i++) {
+    const day = new Date(start.getTime() + i * 86_400_000).toISOString().slice(0, 10);
+    out.push({ day, count: perDay.get(day) ?? 0 });
+  }
+  return { days: out, total, by_reason: byReason };
+}
+
+export function queryRefundCandidateDailyFromStore(now = new Date(), days = 30): RefundCandidateDaily | undefined {
+  if (!state?.ok) return undefined;
+  return queryRefundCandidateDaily(state.db, now, days);
 }

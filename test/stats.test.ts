@@ -666,7 +666,7 @@ describe("internal wallet list and external payers", () => {
     assert.equal(list.length, DEFAULT_INTERNAL_WALLETS.length + 1);
     assert.equal(list.includes(extra), true);
     assert.equal(list.includes(DEFAULT_INTERNAL_WALLETS[3]), true);
-    assert.equal(DEFAULT_INTERNAL_WALLETS.length, 5);
+    assert.equal(DEFAULT_INTERNAL_WALLETS.length, 6);
     assert.equal(internalWallets({}).includes("0x5016cfc01db6ec359465bda316404947a5b5893a"), true);
     assert.equal(internalWallets({}).includes("0xec2abd3eda89bed90124736e317e847d5fb6d034"), false);
     assert.equal(internalWallets({}).includes("0xc9c7b38c0942914fc8ea12063bc92dcd3b581670"), false);
@@ -808,7 +808,7 @@ describe("internal wallet list and external payers", () => {
     retain("verify", olderExternal, "2026-09-15T12:00:00Z");
     retain("confirm", patty, "2026-09-15T12:00:00Z", "lead_submit");
     const doc = buildStatsDocument(now);
-    assert.equal(doc.traffic.internal_wallets_configured, 5);
+    assert.equal(doc.traffic.internal_wallets_configured, 6);
     assert.equal(doc.traffic.all.payers.l7d.verify.calls, 2);
     assert.equal(doc.traffic.all.payers.l7d.verify.unique_payers, 2);
     assert.equal(doc.traffic.all.payers.l7d.confirm.unique_payers, 1);
@@ -900,7 +900,7 @@ describe("internal wallet list and external payers", () => {
     );
     assert.match(doc.traffic.note, /boards\.greenhouse\.io\/example\/jobs\/1842/);
     assert.match(doc.traffic.note, /3 L7d \/ 3 L30d docs-example paid_calls/);
-    assert.match(doc.traffic.note, /omits 5 configured team wallets/);
+    assert.match(doc.traffic.note, /omits 6 configured team wallets/);
     const html = statsHtml(doc);
     assert.match(html, /Docs-example URLs are test traffic/);
     assert.match(html, /3 L7d \/ 3 L30d paid calls/);

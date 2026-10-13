@@ -13,6 +13,12 @@ primary_region = "sjc"
   WATCH_DB_PATH = "/data/watchers.sqlite"
   # Confirm / check / watch / event receipts. Same volume as watchers.
   RECEIPT_DB_PATH = "/data/receipts.sqlite"
+  # MPP (Tempo) on the verify routes. Off in prod until Craig flips it.
+  # STRIPE_PROFILE_ID is the live Stripe machine-payments profile (not a
+  # secret). It is read only when MPP_ENABLED=1. Secrets stay in Fly secrets:
+  # MPP_STRIPE_SECRET_KEY, TEMPO_DEPOSIT_ADDRESS, MPP_SECRET_KEY.
+  MPP_ENABLED = "0"
+  STRIPE_PROFILE_ID = "profile_61VSNWOQ7HFvnl0vmA6VSNWOCFSQQjb5qbwbmrVCKGUK"
 
 # Privacy-safe paid_call + receipt SQLite. Patty must create this volume
 # before the first deploy that includes this mount (see README).
