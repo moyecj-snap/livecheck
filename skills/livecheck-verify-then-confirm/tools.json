@@ -1,11 +1,12 @@
 {
   "name": "livecheck-verify-then-confirm",
-  "description": "Hardcode these two x402 tools into an agent tool list. Pay with any Base USDC x402 wallet (purl, CDP, AgentCore payments plugin). Actor ≠ verifier.",
+  "version": "0.2.0",
+  "description": "Hardcode these two tools into an agent tool list. Verify accepts x402 (Base USDC) or MPP (Tempo USDC.e). Each charges exactly $0.01. MPP method is tempo/charge: USDC.e on Tempo (chain 4217). Stripe pays Tempo gas. With MPP (Tempo): Paid answers, including the checked link, are kept for 24 hours so retries are safe, then deleted. Confirm is x402 on Base ($0.10). Actor ≠ verifier.",
   "demo": "docs/DEMO-AGENT-VERIFY-CONFIRM.md",
   "tools": [
     {
       "name": "livecheck_verify",
-      "description": "Check whether a specific job, Shopify/HTML product, or eBay item URL is still live. Returns live|closed|unknown. $0.01 USDC on Base via x402. Unpaid → HTTP 402. On 503, wait for Retry-After and retry. For a list of URLs, send up to 8 checks at a time.",
+      "description": "Check whether a specific job, Shopify/HTML product, or eBay item URL is still live. Returns live|closed|unknown. Unpaid 402 offers x402 (Base USDC) or MPP (Tempo USDC.e). Each charges exactly $0.01. MPP method is tempo/charge: USDC.e on Tempo (chain 4217). Stripe pays Tempo gas. With MPP (Tempo): Paid answers, including the checked link, are kept for 24 hours so retries are safe, then deleted. On 503 over_capacity or x402 processor_unavailable, wait for Retry-After and retry; you were not charged. An MPP 503 payment_unconfirmed means a possible charge is logged for refund, and retrying with the same credential is safe and never charges twice. For a list of URLs, send up to 8 checks at a time.",
       "method": "POST",
       "url": "https://livecheck.fly.dev/v1/verify",
       "price_usd": 0.01,

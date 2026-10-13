@@ -1,6 +1,8 @@
 # Livecheck
 
-> Live status of a specific product page, marketplace listing, or job posting, read from the page itself at call time. Pay per call in USDC on Base via x402. No account, no API key.
+> Live status of a specific product page, marketplace listing, or job posting, read from the page itself at call time. No account, no API key.
+
+Verify routes are POST /v1/verify, POST /v1/verify/job, and POST /v1/verify/listing. The unpaid 402 offers both x402 (Base USDC) and MPP (Tempo USDC.e). Each charges exactly $0.01. MPP method is tempo/charge: USDC.e on Tempo (chain 4217). Stripe pays Tempo gas. With MPP (Tempo): Paid answers, including the checked link, are kept for 24 hours so retries are safe, then deleted. Check, watch, renew, chain top-up, and confirm stay x402 (Base USDC) only.
 
 ## When to use
 - Before recommending or buying a product: is this listing still available?
@@ -28,7 +30,7 @@ Livecheck is not a search engine. Bring one specific item URL.
 
 ## Limits
 - Reads HTML and HTTP status; does not run JavaScript
-- POST /v1/verify, /v1/verify/job, and /v1/verify/listing return 503 with Retry-After when the check queue is full, a queued check waited too long, or the payment processor times out or errors. On 503, wait for Retry-After and retry. 503 means you were not charged. Do not treat 503 as closed or unknown. For a list of URLs, send up to 8 checks at a time.
+- POST /v1/verify, /v1/verify/job, and /v1/verify/listing return 503 with Retry-After when the check queue is full, a queued check waited too long, or the x402 payment processor times out or errors (over_capacity or processor_unavailable). On those 503s, wait for Retry-After and retry. You were not charged. An MPP 503 with error payment_unconfirmed means the payment could not be confirmed: a possible charge is logged for refund, and retrying with the same credential is safe and never charges twice. Do not treat 503 as closed or unknown. For a list of URLs, send up to 8 checks at a time.
 - POST /v1/verify and POST /v1/verify/job may also consult public job-board APIs for Ashby, Workday, Lever, and Greenhouse (no API key). A posting the API reports missing is closed. A posting the API lists is live when the page is live or a JavaScript-only shell (signal ats_api_listed). If the page looks closed and the API still lists it, the verdict is unknown. Timeouts and HTTP 5xx are not treated as closed. Bot-challenge pages stay unknown (challenge_page); Livecheck does not bypass Cloudflare or reCAPTCHA.
 - Status means availability only, not legitimacy or fraud risk
 - Never logs in, submits forms, or changes anything on the target site

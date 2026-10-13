@@ -2,7 +2,17 @@
 
 Before you scrape a listing, check if it is still there. POST a specific job posting, Shopify or HTML product URL, or eBay item URL. Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404). Product pages are HTML-only (Shopify-class add-to-cart / sold-out); eBay item URLs use Browse availability, not sold comps. Not a search engine. $0.01 USDC per check on Base via x402.
 
-This is a per-check agent API, not a platform. Agents pay **$0.01 USDC** per `POST /v1/verify`, **$0.02 USDC** per `POST /v1/check` (Sentinel one-shot condition), **$2.50 USDC** per `POST /v1/watch` (30-day standard watcher), **$2.50 USDC** per `POST /v1/watch/renew` (extend an active watcher; owner token + payment; `{id}` in the body), **$0.50 USDC** per `POST /v1/watch/{id}/chain/topup` (chain balance; owner token + payment), **$0.10 USDC** per `POST /v1/confirm` (`lead_submit` / `listing_published`), and **$0.25 USDC** per `POST /v1/confirm/order` (`order_placed`) on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md). x402 wants one fixed price per resource — dual pricing on a single path makes facilitator verify fail when settle-time `paymentRequirements` drift from the first 402.
+This is a per-check agent API, not a platform. Agents pay **$0.01 USDC** per `POST /v1/verify`, **$0.02 USDC** per `POST /v1/check` (Sentinel one-shot condition), **$2.50 USDC** per `POST /v1/watch` (30-day standard watcher), **$2.50 USDC** per `POST /v1/watch/renew` (extend an active watcher; owner token + payment; `{id}` in the body), **$0.50 USDC** per `POST /v1/watch/{id}/chain/topup` (chain balance; owner token + payment), **$0.10 USDC** per `POST /v1/confirm` (`lead_submit` / `listing_published`), and **$0.25 USDC** per `POST /v1/confirm/order` (`order_placed`) on Base via [Stripe x402](https://docs.stripe.com/payments/machine/x402.md). x402 wants one fixed price per resource — dual pricing on a single path makes facilitator verify fail when settle-time `paymentRequirements` drift from the first 402. Verify also accepts MPP at the same $0.01. See [MPP (Tempo)](#mpp-tempo).
+
+## MPP (Tempo)
+
+`POST /v1/verify`, `POST /v1/verify/job`, and `POST /v1/verify/listing` accept MPP next to x402. The unpaid 402 offers both x402 (Base USDC) and MPP (Tempo USDC.e). Each charges exactly $0.01. Check, watch, renew, chain top-up, and confirm stay x402 on Base.
+
+MPP method is `tempo/charge`: USDC.e on Tempo (chain 4217). Stripe pays Tempo gas. Send one credential: x402 `PAYMENT-SIGNATURE` or MPP `Authorization: Payment`, not both.
+
+With MPP (Tempo): Paid answers, including the checked link, are kept for 24 hours so retries are safe, then deleted.
+
+An MPP 503 with error `payment_unconfirmed` means the payment could not be confirmed: a possible charge is logged for refund, and retrying with the same credential is safe and never charges twice. A 503 `over_capacity` or x402 `processor_unavailable` means you were not charged. Do not treat either 503 as closed or unknown.
 
 ## Verify-first: first paid call
 
