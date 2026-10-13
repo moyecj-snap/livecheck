@@ -25,6 +25,7 @@ import {
   OPENAPI_VERIFY_LISTING_TAGS,
   OPENAPI_VERIFY_SUMMARY,
   OPENAPI_VERIFY_TAGS,
+  VERIFY_DUAL_RAIL_PAYMENT,
   OPENAPI_WATCH_DESCRIPTION,
   OPENAPI_WATCH_RENEW_DESCRIPTION,
   OPENAPI_WATCH_RENEW_SUMMARY,
@@ -93,7 +94,10 @@ function verifyPostOperation(input: {
         currency: "USD",
         amount: OPENAPI_PRICE_AMOUNT,
       },
-      protocols: [{ x402: {} }],
+      protocols: [
+        { x402: { network: "eip155:8453", asset: "USDC", minimumUsd: "0.01" } },
+        { mpp: { method: "tempo", chainId: 4217, asset: "USDC.e", minimumUsd: "0.01" } },
+      ],
     },
     requestBody: {
       required: true,
@@ -124,7 +128,7 @@ function verifyPostOperation(input: {
         },
       },
       "402": {
-        description: "Payment Required",
+        description: `Payment Required. ${VERIFY_DUAL_RAIL_PAYMENT}`,
       },
     },
   };

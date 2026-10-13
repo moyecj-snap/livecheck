@@ -1,6 +1,8 @@
 # Livecheck
 
-> Live status of a specific product page, marketplace listing, or job posting, read from the page itself at call time. Pay per call in USDC on Base via x402. No account, no API key.
+> Live status of a specific product page, marketplace listing, or job posting, read from the page itself at call time. No account, no API key.
+
+Verify routes are POST /v1/verify, POST /v1/verify/job, and POST /v1/verify/listing. The unpaid 402 offers both x402 (Base USDC) and MPP (Tempo USDC.e), each with a $0.01 minimum. MPP (Tempo) paid answers, including the checked link, are kept for 24 hours so retries are safe, then deleted. Check, watch, renew, chain top-up, and confirm stay x402 (Base USDC) only.
 
 ## When to use
 - Before recommending or buying a product: is this listing still available?

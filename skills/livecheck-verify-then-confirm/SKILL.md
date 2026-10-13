@@ -2,11 +2,16 @@
 name: livecheck-verify-then-confirm
 description: >-
   Use this when an agent workflow must check a URL is still live with Livecheck
-  then independently confirm a lead_submit side effect with Confirm (x402 on
-  Base). Actor ≠ verifier; thank-you copy alone is never confirmed.
+  then independently confirm a lead_submit side effect with Confirm. Verify
+  accepts x402 (Base USDC) or MPP (Tempo USDC.e). Confirm is x402 on Base.
+  Actor ≠ verifier; thank-you copy alone is never confirmed.
+metadata:
+  version: "0.2.0"
 ---
 
-# Livecheck → Confirm (x402)
+# Livecheck → Confirm
+
+Version 0.2.0.
 
 Default first call is **Verify** (`POST /v1/verify`). Confirm is later, after you have a thank-you or result URL.
 
@@ -27,8 +32,10 @@ The `skills` CLI may warn that it wants Node `>=22.20.0`. Node `20.19` still wor
 ## Endpoints
 | Tool | Method | Price | Body |
 | --- | --- | --- | --- |
-| Livecheck | `POST https://livecheck.fly.dev/v1/verify` | $0.01 USDC on Base (x402) | `{"url":"<absolute URL>"}` |
+| Livecheck | `POST https://livecheck.fly.dev/v1/verify` | $0.01 minimum: x402 (Base USDC) or MPP (Tempo USDC.e) | `{"url":"<absolute URL>"}` |
 | Confirm | `POST https://livecheck.fly.dev/v1/confirm` | $0.10 USDC on Base (x402) | `{"url":"<thank-you or result URL>","intent":"lead_submit"}` |
+
+Verify's unpaid 402 offers both rails. Send one credential. MPP (Tempo) paid answers, including the checked link, are kept for 24 hours so retries are safe, then deleted. Confirm is x402 only.
 
 - OpenAPI: https://livecheck.fly.dev/openapi.json
 - Stats: https://livecheck.fly.dev/stats
@@ -84,7 +91,7 @@ purl -A 'livecheck-internal/purl-0.2.8' https://livecheck.fly.dev/v1/confirm \
 The contrast is an extra `$0.10` if paid; skip and still treat fluff as `unknown`. Required path spend is **~$0.11 USDC**.
 
 ## Steps
-1. **Verify first** — unpaid call expects HTTP 402; complete x402 payment; body `{"url":"<absolute job, Shopify/HTML product, or eBay /itm/ URL>"}`. Demo fixture: `https://livecheck.fly.dev/fixtures/live-apply-now`.
+1. **Verify first** — unpaid call expects HTTP 402; pay with x402 (Base USDC) or MPP (Tempo USDC.e); body `{"url":"<absolute job, Shopify/HTML product, or eBay /itm/ URL>"}`. Demo fixture: `https://livecheck.fly.dev/fixtures/live-apply-now`.
 2. Parse `status` `live|closed|unknown` + `signals`. If `closed` or `unknown` (and not a known Ashby/Lever unknown), stop or escalate — do not treat as success.
 3. Run the agent’s own `lead_submit` action (separate actor). Demo: treat submit as already done; use the hosted thank-you page.
 4. **Confirm** — unpaid → 402; pay; body `{"url":"<thank-you or result URL>","intent":"lead_submit"}` (optional `claim` fingerprint). Demo page: `https://livecheck.fly.dev/demo/thank-you?ref=ABC123` (HTTP 200, confirmation number printed).
