@@ -156,7 +156,7 @@ function assertLlmsTxt(res: Response, body: string) {
   assert.match(body, /POST \/v1\/confirm\/order \(\$0\.25\)/);
   assert.match(body, /GET \/v1\/receipt\/\{id\}/);
   assert.match(body, /https:\/\/github\.com\/moyecj-snap\/livecheck-skills/);
-  assert.match(body, /npx agentcash@latest add https:\/\/livecheck\.fly\.dev/);
+  assert.match(body, /npx agentcash@0.17.1 add https:\/\/livecheck\.fly\.dev/);
   assert.match(body, /does not run JavaScript/);
   assert.doesNotMatch(body, /in_stock/);
   assert.doesNotMatch(body, /invalid_url/);

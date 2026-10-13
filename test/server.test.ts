@@ -84,7 +84,7 @@ describe("HTTP surface", () => {
     assert.match(html, /https:\/\/livecheck\.fly\.dev\/stats\?format=json/);
     assert.match(html, /Is it still there\?/);
     assert.match(html, /Live status of any product page, listing, or job posting, read from the page right now/);
-    assert.match(html, /npx agentcash@latest add https:\/\/livecheck\.fly\.dev/);
+    assert.match(html, /npx agentcash@0.17.1 add https:\/\/livecheck\.fly\.dev/);
     assert.match(html, /https:\/\/github\.com\/moyecj-snap\/livecheck-skills/);
     assert.match(html, /Search engines tell you what they saw\. Livecheck tells you what the page says now\./);
     assert.equal(html.match(/<h1\b/g)?.length, 1);

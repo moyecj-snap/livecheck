@@ -2,8 +2,10 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
+  LAUNCH_UTM_TABLE_SQL,
   SOURCES_TABLE_SQL,
   bumpSourcesIn,
+  effectiveLaunchUtmTags,
   readSourceTotalsFrom,
   sourceSummary,
   type SourceEvent,
@@ -166,6 +168,7 @@ function open(path: string): DatabaseSync {
   migrateFreePageDaily(db);
   migrateFreePageSettings(db);
   db.exec(SOURCES_TABLE_SQL);
+  db.exec(LAUNCH_UTM_TABLE_SQL);
   return db;
 }
 
@@ -177,6 +180,7 @@ export function openFreePageDbForAdmin(path: string): DatabaseSync {
   migrateFreePageDaily(db);
   migrateFreePageSettings(db);
   db.exec(SOURCES_TABLE_SQL);
+  db.exec(LAUNCH_UTM_TABLE_SQL);
   return db;
 }
 
@@ -342,7 +346,7 @@ export function readFreePageStats(now = new Date()): FreePageStats {
       const l30d = readSourceTotalsFrom(db().db, day(29));
       return {
         note:
-          "Daily totals only. referrer = Referer registrable domain (direct/self/other); utm = utm_source or ref, sanitized; ua = browser/bot/agent. Values seen fewer than 2 times in the window show as other, except launch tags (producthunt, linkedin, x, email, test) and their domains. No IPs, URLs, cookies, or per-visit rows.",
+          "Daily totals only. referrer = Referer registrable domain (direct/self/other); utm = utm_source or ref, sanitized; ua = browser/bot/agent. Values seen fewer than 2 times in the window show as other, except launch tags (producthunt, linkedin, x, email, test, clawhub, plus any added via npm run free:launch-tags) and their domains. No IPs, URLs, cookies, or per-visit rows.",
         by_source: { today: sourceSummary(today), l7d: sourceSummary(l7d), l30d: sourceSummary(l30d) },
         today,
         l7d,
