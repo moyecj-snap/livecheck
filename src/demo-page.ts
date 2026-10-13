@@ -121,7 +121,7 @@ export function demoHtml(origin: string): string {
   <main>
     <h1>Is it still there?</h1>
     <p class="lede">Live status of any product page, listing, or job posting, read from the page right now. $0.01 per URL, paid by your agent in USDC. No account, no API key.</p>
-    <pre><code>npx agentcash@latest add https://livecheck.fly.dev</code></pre>
+    <pre><code>npx agentcash@0.17.1 add https://livecheck.fly.dev</code></pre>
     <div class="row">
       <a class="btn" href="#try-verify">Try Verify</a>
       <a class="btn" href="https://github.com/moyecj-snap/livecheck-skills">Agent skill</a>

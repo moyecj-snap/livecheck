@@ -27,18 +27,84 @@ export type UaClass = "browser" | "bot" | "agent";
 export const SOURCE_DISTINCT_CAP = 50;
 
 /**
- * Craig's launch tags (utm_source / ref) and their referrer domains. These are
- * always counted under their own name: never folded into "other" in the
- * report and never pushed out by the daily distinct cap. "test" is here so a
- * single deploy check is visible.
+ * Built-in launch tags (utm_source / ref). Always counted under their own name.
+ * Extra tags can be added without a deploy via the free_page_launch_utm table
+ * (npm run free:launch-tags). "test" is here so a single deploy check is visible.
+ * "clawhub" is the ClawHub skill try-it link (?ref=clawhub).
  */
-export const LAUNCH_UTM_TAGS = ["producthunt", "linkedin", "x", "email", "test"] as const;
+export const LAUNCH_UTM_TAGS = ["producthunt", "linkedin", "x", "email", "test", "clawhub"] as const;
 export const LAUNCH_REFERRER_DOMAINS = ["producthunt.com", "linkedin.com", "x.com", "t.co"] as const;
-const ALWAYS_SHOWN: Record<SourceDimension, ReadonlySet<string>> = {
-  referrer: new Set(LAUNCH_REFERRER_DOMAINS),
-  utm: new Set(LAUNCH_UTM_TAGS),
-  ua: new Set(["browser", "bot", "agent"]),
-};
+
+export const LAUNCH_UTM_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS free_page_launch_utm (
+  tag TEXT PRIMARY KEY CHECK (length(tag) BETWEEN 1 AND 40),
+  added_at TEXT NOT NULL,
+  removed_at TEXT
+);
+`;
+
+/** Built-in + active DB extras. Pass null/undefined to get built-ins only. */
+export function effectiveLaunchUtmTags(db?: DatabaseSync | null): ReadonlySet<string> {
+  const tags = new Set<string>(LAUNCH_UTM_TAGS);
+  if (!db) return tags;
+  try {
+    const rows = db
+      .prepare(`SELECT tag FROM free_page_launch_utm WHERE removed_at IS NULL`)
+      .all() as Array<{ tag: string }>;
+    for (const row of rows) {
+      const tag = (row.tag ?? "").trim().toLowerCase();
+      if (tag && tag.length <= UTM_MAX_LENGTH && /^[a-z0-9][a-z0-9._-]*$/.test(tag)) tags.add(tag);
+    }
+  } catch {
+    // Table may not exist yet before migrate; built-ins still apply.
+  }
+  return tags;
+}
+
+export function alwaysShownFor(db?: DatabaseSync | null): Record<SourceDimension, ReadonlySet<string>> {
+  return {
+    referrer: new Set(LAUNCH_REFERRER_DOMAINS),
+    utm: effectiveLaunchUtmTags(db),
+    ua: new Set(["browser", "bot", "agent"]),
+  };
+}
+
+export function listLaunchUtmTagsFrom(db: DatabaseSync): Array<{ tag: string; source: "builtin" | "db"; added_at: string | null }> {
+  const out: Array<{ tag: string; source: "builtin" | "db"; added_at: string | null }> = [];
+  for (const tag of LAUNCH_UTM_TAGS) out.push({ tag, source: "builtin", added_at: null });
+  const rows = db
+    .prepare(`SELECT tag, added_at FROM free_page_launch_utm WHERE removed_at IS NULL ORDER BY added_at, tag`)
+    .all() as Array<{ tag: string; added_at: string }>;
+  const builtin = new Set<string>(LAUNCH_UTM_TAGS);
+  for (const row of rows) {
+    if (builtin.has(row.tag)) continue;
+    out.push({ tag: row.tag, source: "db", added_at: row.added_at });
+  }
+  return out;
+}
+
+export function upsertLaunchUtmTagIn(db: DatabaseSync, raw: string, now = new Date()): string {
+  const tag = utmSource(raw);
+  if (tag === "none" || tag === "other") throw new Error(`invalid launch tag ${JSON.stringify(raw)} (use [a-z0-9._-] <= 40)`);
+  if ((LAUNCH_UTM_TAGS as readonly string[]).includes(tag)) {
+    throw new Error(`${tag} is a built-in launch tag; no need to add it`);
+  }
+  const ts = now.toISOString().replace(/\.\d{3}Z$/, "Z");
+  db.prepare(
+    `INSERT INTO free_page_launch_utm (tag, added_at, removed_at) VALUES (?, ?, NULL)
+     ON CONFLICT(tag) DO UPDATE SET removed_at = NULL, added_at = excluded.added_at`,
+  ).run(tag, ts);
+  return tag;
+}
+
+export function removeLaunchUtmTagIn(db: DatabaseSync, raw: string, now = new Date()): boolean {
+  const tag = (raw ?? "").trim().toLowerCase();
+  if ((LAUNCH_UTM_TAGS as readonly string[]).includes(tag)) {
+    throw new Error(`cannot remove built-in launch tag ${tag}`);
+  }
+  const ts = now.toISOString().replace(/\.\d{3}Z$/, "Z");
+  return Number(db.prepare(`UPDATE free_page_launch_utm SET removed_at = ? WHERE tag = ? AND removed_at IS NULL`).run(ts, tag).changes) === 1;
+}
 export const SOURCE_REPORT_MIN_COUNT = 2;
 export const UTM_MAX_LENGTH = 40;
 const DOMAIN_MAX_LENGTH = 60;
@@ -136,9 +202,11 @@ export type SourceValues = { referrer: string; utm: string; ua: UaClass };
  * counted as "other". Synchronous transaction: no interleaving.
  */
 export function bumpSourcesIn(db: DatabaseSync, day: string, event: SourceEvent, values: SourceValues): void {
+  const always = alwaysShownFor(db);
+  const excluded = [...always.utm, ...always.referrer].map((v) => `'${v.replace(/'/g, "''")}'`).join(", ");
   const countDistinct = db.prepare(
     `SELECT COUNT(*) AS n FROM free_page_sources WHERE day = ? AND event = ? AND dimension = ? AND value != 'other'
-       AND value NOT IN (${[...LAUNCH_UTM_TAGS, ...LAUNCH_REFERRER_DOMAINS].map((v) => `'${v}'`).join(", ")})`,
+       AND value NOT IN (${excluded})`,
   );
   const exists = db.prepare(
     `SELECT 1 AS hit FROM free_page_sources WHERE day = ? AND event = ? AND dimension = ? AND value = ?`,
@@ -152,7 +220,7 @@ export function bumpSourcesIn(db: DatabaseSync, day: string, event: SourceEvent,
     for (const dimension of SOURCE_DIMENSIONS) {
       let value: string = values[dimension];
       if (!value || value.length > DOMAIN_MAX_LENGTH) value = "other";
-      if (value !== "other" && !ALWAYS_SHOWN[dimension].has(value) && !exists.get(day, event, dimension, value)) {
+      if (value !== "other" && !always[dimension].has(value) && !exists.get(day, event, dimension, value)) {
         const distinct = Number((countDistinct.get(day, event, dimension) as { n: number | bigint }).n);
         if (distinct >= SOURCE_DISTINCT_CAP) value = "other";
       }
@@ -195,7 +263,7 @@ export function readSourceTotalsFrom(db: DatabaseSync, sinceDay: string | null):
     const bucket = out[row.event as SourceEvent][row.dimension as SourceDimension];
     const n = Number(row.n);
     const keep =
-      ALWAYS_SHOWN[row.dimension as SourceDimension].has(row.value) ||
+      alwaysShownFor(db)[row.dimension as SourceDimension].has(row.value) ||
       RESERVED_VALUES.has(row.value) ||
       n >= SOURCE_REPORT_MIN_COUNT;
     const key = keep ? row.value : "other";

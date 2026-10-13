@@ -39,4 +39,4 @@ Livecheck is not a search engine. Bring one specific item URL.
 - OpenAPI: https://livecheck.fly.dev/openapi.json
 - Stats: https://livecheck.fly.dev/stats (headline counts include internal test traffic; traffic.external omits configured team wallets)
 - Agent skill: https://github.com/moyecj-snap/livecheck-skills
-- Install for agentcash: npx agentcash@latest add https://livecheck.fly.dev
+- Install for agentcash: npx agentcash@0.17.1 add https://livecheck.fly.dev
