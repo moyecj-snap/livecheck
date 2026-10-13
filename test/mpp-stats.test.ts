@@ -109,6 +109,17 @@ describe("/stats: MPP and x402 as separate lines per route", () => {
     assert.match(html, /Payment lines add up to all traffic/);
   });
 
+  it("Craig's Tempo test wallet (any case) buckets an MPP call as internal", () => {
+    const db = openStore();
+    const TEMPO_TEST = "0x3aeb3910ca25e0052d1e7b775c744feb3652f8dc";
+    assert.ok(DEFAULT_INTERNAL_WALLETS.includes(TEMPO_TEST));
+    insert(db, "verify", "0x3AEB3910CA25E0052D1E7B775C744FEB3652F8DC", "mpp_tempo");
+    const t = buildStatsDocument(NOW).traffic;
+    assert.equal(t.reconciliation.ok, true);
+    assert.deepEqual(t.reconciliation.l7d.by_bucket.internal, { calls: 1, revenue_usd: 0.01 });
+    assert.deepEqual(t.reconciliation.l7d.by_bucket.external, { calls: 0, revenue_usd: 0 });
+  });
+
   it("with no MPP rows (flag off) every line is x402 and MPP lines are zero", () => {
     const db = openStore();
     insert(db, "verify", OUTSIDE);

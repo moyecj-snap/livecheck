@@ -22,6 +22,7 @@ export const INTERNAL_WALLETS: readonly InternalWallet[] = [
   { address: "0xe54ef7a1b90bc18d5a68e9092b64a4b6812e407d", label: "Craig" },
   { address: "0xe4a34fb0f642778f612793accdf1fad8ae358ee8", label: "bazaar connect" },
   { address: "0x5016cfc01db6ec359465bda316404947a5b5893a", label: "AgentCash seed" },
+  { address: "0x3aeb3910ca25e0052d1e7b775c744feb3652f8dc", label: "mpp-tempo-test" },
 ];
 
 export const DEFAULT_INTERNAL_WALLETS = INTERNAL_WALLETS.map((wallet) => wallet.address);
