@@ -11,10 +11,10 @@ Actor ≠ verifier. Thank-you copy alone is never `confirmed`. Cursor Marketplac
 
 ```bash
 mkdir -p ~/.local/lib
-npx --yes skills add moyecj-snap/livecheck -y -s livecheck-verify-then-confirm
+npx skills add moyecj-snap/livecheck-skills --all --yes
 ```
 
-Hardcoded tools: [`skills/livecheck-verify-then-confirm/tools.json`](../skills/livecheck-verify-then-confirm/tools.json). Minimal agent prompt: [`examples/demo-agent/prompt.md`](../examples/demo-agent/prompt.md).
+Agent skill: [https://github.com/moyecj-snap/livecheck-skills](https://github.com/moyecj-snap/livecheck-skills). Hardcoded tools: [`examples/demo-agent/tools.json`](../examples/demo-agent/tools.json). Minimal agent prompt: [`examples/demo-agent/prompt.md`](../examples/demo-agent/prompt.md).
 
 ## 1. Health (free)
 

@@ -24,7 +24,7 @@ Create `~/.local/lib` first — the skills CLI can fail with `ENOENT` if that di
 
 ```bash
 mkdir -p ~/.local/lib
-npx --yes skills add moyecj-snap/livecheck -y -s livecheck-verify-then-confirm
+npx skills add moyecj-snap/livecheck-skills --all --yes  # maintained package: https://github.com/moyecj-snap/livecheck-skills
 ```
 
 The `skills` CLI may warn that it wants Node `>=22.20.0`. Node `20.19` still works.

@@ -18,7 +18,7 @@ Before you scrape. After you act. While you sleep.
 | **Sentinel check** | `POST /v1/check` | $0.02 | One-shot condition (no watcher) |
 | **Sentinel watch** | `POST /v1/watch` | $2.50 | 30-day prepaid watcher → signed webhook |
 
-OpenAPI · skill: `npx skills add moyecj-snap/livecheck` · Bazaar search `livecheck`
+OpenAPI · skill: `npx skills add moyecj-snap/livecheck-skills --all --yes` · Bazaar search `livecheck`
 
 ---
 
@@ -40,7 +40,7 @@ Label clearly **live from API** — never invent numbers.
 
 **Notes** — from `notes` / honesty: thank-you alone never confirmed; Confirm FC benches are CI/local, not a live dispute rate.
 
-CTA buttons: OpenAPI · Stats JSON (`/stats?format=json`) · x402scan · skill `npx skills add moyecj-snap/livecheck`
+CTA buttons: OpenAPI · Stats JSON (`/stats?format=json`) · x402scan · skill `npx skills add moyecj-snap/livecheck-skills --all --yes`
 
 ---
 

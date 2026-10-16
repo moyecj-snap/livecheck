@@ -2,7 +2,7 @@ Copyright © 2026 Craig Moye / SnapPrice.
 
 Permission to use, copy, and modify this repository only to call or integrate
 with the Livecheck hosted API at https://livecheck.fly.dev (or successors),
-including Cursor skills / MCP install (npx skills add moyecj-snap/livecheck).
+including Cursor skills / MCP install (npx skills add moyecj-snap/livecheck-skills).
 
 You may not offer a competing hosted verification, confirmation, or watch
 service under this code, remove attribution, or imply that you are Livecheck

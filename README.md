@@ -747,7 +747,7 @@ Local-dev override only when this repo is running (`npm start`): `purl -A 'livec
 
 ```bash
 mkdir -p ~/.local/lib
-npx --yes skills add moyecj-snap/livecheck -y -s livecheck-verify-then-confirm
+npx skills add moyecj-snap/livecheck-skills --all --yes  # https://github.com/moyecj-snap/livecheck-skills
 ```
 
 Create `~/.local/lib` first or the CLI can fail with `ENOENT`. The `skills` package may warn that it wants Node `>=22.20.0`; Node `20.19` still works. The skill’s default first call is Verify.
