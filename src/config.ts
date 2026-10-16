@@ -237,7 +237,7 @@ export const VERIFY_JOB_PAYMENT_DESCRIPTION =
   "Is this job posting still open? POST {\"url\"} with one specific job posting URL (Greenhouse, Lever, Ashby, Workday, or a company careers page). Livecheck fetches the posting at call time and returns live, closed, or unknown with the job title and evidence signals such as apply form present, closure text, 404, or redirect to the job board. Not a job search: bring the posting URL. $0.01 per check.";
 /** ASCII 402 resource.description for POST /v1/verify/listing (CDP cap: 500 characters). */
 export const VERIFY_LISTING_PAYMENT_DESCRIPTION =
-  "Is this product still available? POST {\"url\"} with one eBay item, Shopify product, or HTML product page URL. Livecheck fetches the page at call time and returns live, closed, or unknown with the product title and evidence signals such as in-stock, sold-out, listing ended, or 404. Use before recommending, adding to cart, or buying. Not a product search: bring the item URL. $0.01 per check.";
+  "Is this product still available or sold out? POST one Shopify, eBay, or store product page URL. Livecheck reads the page now and returns live (still in stock), closed (sold out or listing ended), or unknown, with title and evidence. $0.01.";
 export const USER_AGENT =
   "Livecheck/0.1 (+https://livecheck.local; primary-source verification)";
 export const FETCH_TIMEOUT_MS = 8_000;

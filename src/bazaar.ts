@@ -187,6 +187,8 @@ export const VERIFY_JOB_EXAMPLE = {
  * still in stock when an agent reads it.
  */
 export const VERIFY_LISTING_EXAMPLE_URL = "https://www.ugmonk.com/products/analog-archive-silver-aluminum";
+/** Backup example if the primary sells out. Live (in-stock, 0.8) in prod test mode 2026-10-16. */
+export const VERIFY_LISTING_BACKUP_EXAMPLE_URL = "https://www.ugmonk.com/products/analog-archive-black-aluminum";
 export const VERIFY_LISTING_EXAMPLE = {
   url: VERIFY_LISTING_EXAMPLE_URL,
   canonical_url: "https://ugmonk.com/products/analog-archive-silver-aluminum",

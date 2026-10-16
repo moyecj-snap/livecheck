@@ -73,6 +73,11 @@ describe("bazaar enrichment metadata", () => {
       assert.doesNotMatch(d, /never wrong|100%|guarantee/i);
     }
     assert.notEqual(VERIFY_JOB_PAYMENT_DESCRIPTION, VERIFY_LISTING_PAYMENT_DESCRIPTION);
+    // Shopping keywords up front; only platforms that passed the 2026-10-16 accuracy test.
+    assert.ok(VERIFY_LISTING_PAYMENT_DESCRIPTION.length <= 240);
+    assert.match(VERIFY_LISTING_PAYMENT_DESCRIPTION, /still available or sold out/);
+    assert.match(VERIFY_LISTING_PAYMENT_DESCRIPTION, /still in stock/);
+    assert.doesNotMatch(VERIFY_LISTING_PAYMENT_DESCRIPTION, /amazon|walmart|target|best buy|etsy/i);
   });
 
   it("serviceName and tags follow the bazaar validation rules", () => {
