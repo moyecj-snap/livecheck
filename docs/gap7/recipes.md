@@ -90,14 +90,14 @@ Follow the hint with `watch` if the thank-you/result URL should be watched later
 
 **Skill install (already on main):**
 ```bash
-npx skills add moyecj-snap/livecheck
+npx skills add moyecj-snap/livecheck-skills --all --yes
 ```
 
 ---
 
 ## Install blurb (docs / Wave 1)
 ```
-npx skills add moyecj-snap/livecheck
+npx skills add moyecj-snap/livecheck-skills --all --yes
 # MCP: branch cursor/sentinel-gap7-mcp-expansion @ 8fe7c35
 # Tools: verify | check | confirm | watch
 # Webhook: examples/sentinel-webhook.ts

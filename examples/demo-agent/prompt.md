@@ -1,6 +1,6 @@
 # Demo agent prompt — Livecheck Verify then Confirm
 
-Follow [`docs/DEMO-AGENT-VERIFY-CONFIRM.md`](../../docs/DEMO-AGENT-VERIFY-CONFIRM.md). Production origin: `https://livecheck.fly.dev`. Hardcode **only** the two tools in [`tools.json`](./tools.json) (same shapes as [`skills/livecheck-verify-then-confirm/tools.json`](../../skills/livecheck-verify-then-confirm/tools.json)).
+Follow [`docs/DEMO-AGENT-VERIFY-CONFIRM.md`](../../docs/DEMO-AGENT-VERIFY-CONFIRM.md). Production origin: `https://livecheck.fly.dev`. Hardcode **only** the two tools in [`tools.json`](./tools.json). Agent skill: [https://github.com/moyecj-snap/livecheck-skills](https://github.com/moyecj-snap/livecheck-skills).
 
 Actor ≠ verifier. Default first call is **Verify**. Do not trust your own `success: true`.
 
