@@ -2,7 +2,18 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { serve } from "@hono/node-server";
 import { createApp } from "../src/app.js";
-import { CONFIRM_DESCRIPTION, PRICE_ATOMIC_USDC, PRICE_USD, VERIFY_DESCRIPTION } from "../src/config.js";
+import {
+  CONFIRM_DESCRIPTION,
+  PRICE_ATOMIC_USDC,
+  PRICE_USD,
+  VERIFY_DESCRIPTION,
+  VERIFY_JOB_PAYMENT_DESCRIPTION,
+  VERIFY_LISTING_PAYMENT_DESCRIPTION,
+} from "../src/config.js";
+
+function verifyRouteDescription(path: string): string {
+  return path === "/v1/verify/job" ? VERIFY_JOB_PAYMENT_DESCRIPTION : VERIFY_LISTING_PAYMENT_DESCRIPTION;
+}
 
 describe("HTTP surface", () => {
   const app = createApp();
@@ -172,7 +183,7 @@ describe("HTTP surface", () => {
       assert.equal(decoded.accepts?.[0]?.network, "eip155:8453");
       assert.equal(decoded.accepts?.[0]?.amount, "10000");
       assert.equal(decoded.resource?.url, `${origin}${path}`);
-      assert.equal(decoded.resource?.description, VERIFY_DESCRIPTION);
+      assert.equal(decoded.resource?.description, verifyRouteDescription(path));
       assert.ok(decoded.extensions?.bazaar);
 
       const missingUrl = await fetch(`${origin}${path}`, {

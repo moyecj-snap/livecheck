@@ -10,6 +10,8 @@ import {
   PRICE_ATOMIC_USDC,
   PRICE_USD,
   VERIFY_DESCRIPTION,
+  LIVECHECK_SERVICE_NAME,
+  VERIFY_RESOURCE_TAGS,
 } from "../src/config.js";
 import {
   classifyLeadSubmit,
@@ -475,7 +477,8 @@ describe("confirmUrl + HTTP", () => {
     assert.equal(decoded.accepts?.[0]?.amount, "10000");
     assert.equal(PRICE_USD, 0.01);
     assert.equal(decoded.resource?.description, VERIFY_DESCRIPTION);
-    assert.equal(decoded.resource?.tags, undefined);
-    assert.equal(decoded.resource?.serviceName, undefined);
+    // Bazaar enrichment: verify routes carry serviceName + tags (resource metadata, not a matching field).
+    assert.deepEqual(decoded.resource?.tags, [...VERIFY_RESOURCE_TAGS]);
+    assert.equal(decoded.resource?.serviceName, LIVECHECK_SERVICE_NAME);
   });
 });

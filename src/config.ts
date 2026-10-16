@@ -218,6 +218,26 @@ export const OPENAPI_VERIFY_LISTING_TAGS = ["product-availability", "listing-sta
  */
 export const VERIFY_DESCRIPTION =
   "Before you scrape a job posting, Shopify or HTML product page, or eBay item, POST the specific URL you already have and Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404); not a search engine.";
+/**
+ * x402 resource.serviceName / resource.tags on the three $0.01 verify routes.
+ * Bazaar facilitators read these off the 402 / settled payload (serviceName
+ * <= 32 printable ASCII; up to 5 tags, each <= 32 printable ASCII). Confirm
+ * keeps its own CONFIRM_RESOURCE_TAGS.
+ */
+export const LIVECHECK_SERVICE_NAME = "Livecheck";
+export const VERIFY_RESOURCE_TAGS = [
+  "listing-status",
+  "product-availability",
+  "job-postings",
+  "ecommerce",
+  "web-monitoring",
+] as const;
+/** ASCII 402 resource.description for POST /v1/verify/job (CDP cap: 500 characters). */
+export const VERIFY_JOB_PAYMENT_DESCRIPTION =
+  "Is this job posting still open? POST {\"url\"} with one specific job posting URL (Greenhouse, Lever, Ashby, Workday, or a company careers page). Livecheck fetches the posting at call time and returns live, closed, or unknown with the job title and evidence signals such as apply form present, closure text, 404, or redirect to the job board. Not a job search: bring the posting URL. $0.01 per check.";
+/** ASCII 402 resource.description for POST /v1/verify/listing (CDP cap: 500 characters). */
+export const VERIFY_LISTING_PAYMENT_DESCRIPTION =
+  "Is this product still available or sold out? POST one Shopify, eBay, or store product page URL. Livecheck reads the page now and returns live (still in stock), closed (sold out or listing ended), or unknown, with title and evidence. $0.01.";
 export const USER_AGENT =
   "Livecheck/0.1 (+https://livecheck.local; primary-source verification)";
 export const FETCH_TIMEOUT_MS = 8_000;
