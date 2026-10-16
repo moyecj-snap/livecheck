@@ -29,11 +29,17 @@ import {
   VERIFY_DUAL_RAIL_PAYMENT,
   MPP_RETRY_RETENTION,
   MPP_UNCONFIRMED_503,
+  VERIFY_JOB_PAYMENT_DESCRIPTION,
+  VERIFY_LISTING_PAYMENT_DESCRIPTION,
 } from "../src/config.js";
 import { CONFIRM_DEMO_URL } from "../src/docs-example-url.js";
 import { PAID_DISCOVERY_ROUTES, WELL_KNOWN_X402_ROUTES } from "../src/discovery.js";
 import { LLMS_TXT } from "../src/llms.js";
 import { livePaymentMiddlewareFromServer, resourceServerFromFacilitator } from "../src/payments.js";
+
+function verifyRouteDescription(path: string): string {
+  return path === "/v1/verify/job" ? VERIFY_JOB_PAYMENT_DESCRIPTION : VERIFY_LISTING_PAYMENT_DESCRIPTION;
+}
 
 function stubFacilitator(): FacilitatorClient {
   return {
@@ -532,7 +538,7 @@ describe("discovery documents (live @x402/hono gate)", () => {
       assert.equal(decoded.accepts?.length, 1);
       assert.equal(decoded.accepts?.[0]?.amount, "10000");
       assert.equal(decoded.resource?.url, `https://livecheck.fly.dev${path}`);
-      assert.equal(decoded.resource?.description, VERIFY_DESCRIPTION);
+      assert.equal(decoded.resource?.description, verifyRouteDescription(path));
     }
   });
 });

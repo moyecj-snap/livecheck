@@ -4,6 +4,8 @@ import {
   confirmBazaarExtensions,
   orderConfirmBazaarExtensions,
   verifyBazaarExtensions,
+  verifyJobBazaarExtensions,
+  verifyListingBazaarExtensions,
   watchBazaarExtensions,
   watchRenewBazaarExtensions,
 } from "./bazaar.js";
@@ -14,7 +16,11 @@ import {
   CONFIRM_RESOURCE_TAGS,
   CONFIRM_SERVICE_NAME,
   ORDER_PAYMENT_DESCRIPTION,
+  LIVECHECK_SERVICE_NAME,
   VERIFY_DESCRIPTION,
+  VERIFY_JOB_PAYMENT_DESCRIPTION,
+  VERIFY_LISTING_PAYMENT_DESCRIPTION,
+  VERIFY_RESOURCE_TAGS,
   WATCH_PAYMENT_DESCRIPTION,
   WATCH_RENEW_PAYMENT_DESCRIPTION,
 } from "./config.js";
@@ -109,21 +115,27 @@ export function advertisedResourceInfo(
   if (kind === "verify_job") {
     return {
       url: publicVerifyJobUrl(),
-      description: VERIFY_DESCRIPTION,
+      description: VERIFY_JOB_PAYMENT_DESCRIPTION,
       mimeType: "application/json",
+      serviceName: LIVECHECK_SERVICE_NAME,
+      tags: [...VERIFY_RESOURCE_TAGS],
     };
   }
   if (kind === "verify_listing") {
     return {
       url: publicVerifyListingUrl(),
-      description: VERIFY_DESCRIPTION,
+      description: VERIFY_LISTING_PAYMENT_DESCRIPTION,
       mimeType: "application/json",
+      serviceName: LIVECHECK_SERVICE_NAME,
+      tags: [...VERIFY_RESOURCE_TAGS],
     };
   }
   return {
     url: publicVerifyUrl(),
     description: VERIFY_DESCRIPTION,
     mimeType: "application/json",
+    serviceName: LIVECHECK_SERVICE_NAME,
+    tags: [...VERIFY_RESOURCE_TAGS],
   };
 }
 
@@ -231,7 +243,11 @@ export function fillCatalogPaymentPayload(payload: PaymentEnvelope): {
                 ? watchRenewBazaarExtensions()
                 : kind === "chain_topup"
                   ? chainTopupBazaarExtensions()
-                  : verifyBazaarExtensions();
+                  : kind === "verify_job"
+                    ? verifyJobBazaarExtensions()
+                    : kind === "verify_listing"
+                      ? verifyListingBazaarExtensions()
+                      : verifyBazaarExtensions();
     next.extensions = {
       ...bazaar,
       ...(payload.extensions && typeof payload.extensions === "object" ? payload.extensions : {}),

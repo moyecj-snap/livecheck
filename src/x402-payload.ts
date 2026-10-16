@@ -4,6 +4,8 @@ import {
   confirmBazaarExtensions,
   orderConfirmBazaarExtensions,
   verifyBazaarExtensions,
+  verifyJobBazaarExtensions,
+  verifyListingBazaarExtensions,
   watchBazaarExtensions,
   watchRenewBazaarExtensions,
 } from "./bazaar.js";
@@ -20,7 +22,11 @@ import {
   PRICE_ATOMIC_USDC,
   USDC_BASE,
   USDC_EIP712,
+  LIVECHECK_SERVICE_NAME,
   VERIFY_DESCRIPTION,
+  VERIFY_JOB_PAYMENT_DESCRIPTION,
+  VERIFY_LISTING_PAYMENT_DESCRIPTION,
+  VERIFY_RESOURCE_TAGS,
   WATCH_PAYMENT_DESCRIPTION,
   WATCH_PRICE_ATOMIC_USDC,
   WATCH_RENEW_PAYMENT_DESCRIPTION,
@@ -76,18 +82,34 @@ function accept(amount: string): PaymentRequiredBody["accepts"][number] {
   };
 }
 
-export function paymentRequiredBody(resourceUrl: string): PaymentRequiredBody {
+export function paymentRequiredBody(
+  resourceUrl: string,
+  description: string = VERIFY_DESCRIPTION,
+  extensions: Record<string, unknown> = verifyBazaarExtensions(),
+): PaymentRequiredBody {
   return {
     x402Version: 2,
     error: "PAYMENT-SIGNATURE header is required",
     resource: {
       url: resourceUrl,
-      description: VERIFY_DESCRIPTION,
+      description,
       mimeType: "application/json",
+      serviceName: LIVECHECK_SERVICE_NAME,
+      tags: [...VERIFY_RESOURCE_TAGS],
     },
     accepts: [accept(PRICE_ATOMIC_USDC)],
-    extensions: verifyBazaarExtensions(),
+    extensions,
   };
+}
+
+/** Mock-mode 402 for POST /v1/verify/job. Same $0.01 accept as /v1/verify. */
+export function verifyJobPaymentRequiredBody(resourceUrl: string): PaymentRequiredBody {
+  return paymentRequiredBody(resourceUrl, VERIFY_JOB_PAYMENT_DESCRIPTION, verifyJobBazaarExtensions());
+}
+
+/** Mock-mode 402 for POST /v1/verify/listing. Same $0.01 accept as /v1/verify. */
+export function verifyListingPaymentRequiredBody(resourceUrl: string): PaymentRequiredBody {
+  return paymentRequiredBody(resourceUrl, VERIFY_LISTING_PAYMENT_DESCRIPTION, verifyListingBazaarExtensions());
 }
 
 export function confirmPaymentRequiredBody(resourceUrl: string): PaymentRequiredBody {
@@ -222,13 +244,13 @@ function advertisedResource(kind: ReturnType<typeof paidResourceKind>, requestUr
   if (kind === "verify_job") {
     return {
       url: publicVerifyJobUrl(requestUrl, host),
-      description: VERIFY_DESCRIPTION,
+      description: VERIFY_JOB_PAYMENT_DESCRIPTION,
     };
   }
   if (kind === "verify_listing") {
     return {
       url: publicVerifyListingUrl(requestUrl, host),
-      description: VERIFY_DESCRIPTION,
+      description: VERIFY_LISTING_PAYMENT_DESCRIPTION,
     };
   }
   return {
@@ -244,7 +266,13 @@ function routeBazaar(kind: ReturnType<typeof paidResourceKind>): Record<string, 
   if (kind === "watch_renew") return watchRenewBazaarExtensions();
   if (kind === "watch") return watchBazaarExtensions();
   if (kind === "chain_topup") return chainTopupBazaarExtensions();
+  if (kind === "verify_job") return verifyJobBazaarExtensions();
+  if (kind === "verify_listing") return verifyListingBazaarExtensions();
   return verifyBazaarExtensions();
+}
+
+function isVerifyKind(kind: ReturnType<typeof paidResourceKind>): boolean {
+  return kind === "verify" || kind === "verify_job" || kind === "verify_listing";
 }
 
 /**
@@ -287,6 +315,9 @@ export function advertisePaymentRequired(
       url: advertised.url,
       description: advertised.description,
       mimeType: "application/json",
+      ...(isVerifyKind(kind)
+        ? { serviceName: LIVECHECK_SERVICE_NAME, tags: [...VERIFY_RESOURCE_TAGS] }
+        : {}),
     },
     extensions,
   };

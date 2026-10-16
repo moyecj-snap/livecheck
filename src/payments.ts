@@ -6,7 +6,7 @@ import { bazaarResourceServerExtension } from "@x402/extensions/bazaar";
 import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import type { RoutesConfig } from "@x402/core/server";
 import type { MiddlewareHandler } from "hono";
-import { chainTopupBazaarExtensions, checkBazaarExtensions, confirmBazaarExtensions, orderConfirmBazaarExtensions, verifyBazaarExtensions, watchBazaarExtensions, watchRenewBazaarExtensions } from "./bazaar.js";
+import { chainTopupBazaarExtensions, checkBazaarExtensions, confirmBazaarExtensions, orderConfirmBazaarExtensions, verifyBazaarExtensions, verifyJobBazaarExtensions, verifyListingBazaarExtensions, watchBazaarExtensions, watchRenewBazaarExtensions } from "./bazaar.js";
 import {
   CHAIN_TOPUP_PAYMENT_DESCRIPTION,
   CHAIN_TOPUP_PRICE_LABEL,
@@ -19,7 +19,11 @@ import {
   ORDER_PAYMENT_DESCRIPTION,
   ORDER_PLACED_PRICE_LABEL,
   PRICE_LABEL,
+  LIVECHECK_SERVICE_NAME,
   VERIFY_DESCRIPTION,
+  VERIFY_JOB_PAYMENT_DESCRIPTION,
+  VERIFY_LISTING_PAYMENT_DESCRIPTION,
+  VERIFY_RESOURCE_TAGS,
   WATCH_PAYMENT_DESCRIPTION,
   WATCH_PRICE_LABEL,
   WATCH_RENEW_PAYMENT_DESCRIPTION,
@@ -38,6 +42,8 @@ import {
   encodePaymentRequired,
   orderConfirmPaymentRequiredBody,
   paymentRequiredBody,
+  verifyJobPaymentRequiredBody,
+  verifyListingPaymentRequiredBody,
   watchPaymentRequiredBody,
   watchRenewPaymentRequiredBody,
 } from "./x402-payload.js";
@@ -58,8 +64,18 @@ export function settlementMode(): "live" | "mock" {
   return isLiveSettlement() ? "live" : "mock";
 }
 
-/** Same $0.01 accept, description, and bazaar as POST /v1/verify. Resource URL is the path hit. */
-function verifyPricedRoute(payTo: string, resource: string) {
+/**
+ * Same $0.01 accept on all three verify routes. Description and bazaar
+ * example are per route so the catalog shows a job example on /verify/job and
+ * a product example on /verify/listing. serviceName/tags are resource metadata
+ * only; they are not payment-requirements matching fields.
+ */
+function verifyPricedRoute(
+  payTo: string,
+  resource: string,
+  description: string = VERIFY_DESCRIPTION,
+  extensions: Record<string, unknown> = verifyBazaarExtensions(),
+) {
   return {
     accepts: [
       {
@@ -69,10 +85,12 @@ function verifyPricedRoute(payTo: string, resource: string) {
         payTo,
       },
     ],
-    description: VERIFY_DESCRIPTION,
+    description,
     mimeType: "application/json",
     resource,
-    extensions: verifyBazaarExtensions(),
+    serviceName: LIVECHECK_SERVICE_NAME,
+    tags: [...VERIFY_RESOURCE_TAGS],
+    extensions,
   };
 }
 
@@ -85,8 +103,18 @@ export function verifyPaymentRoutes(payTo: string): RoutesConfig {
       // Local mock/live without those stays localhost. withAdvertised402 still
       // upgrades a leftover http://*.fly.dev request URL after the library 402.
     },
-    "POST /v1/verify/job": verifyPricedRoute(payTo, publicVerifyJobUrl()),
-    "POST /v1/verify/listing": verifyPricedRoute(payTo, publicVerifyListingUrl()),
+    "POST /v1/verify/job": verifyPricedRoute(
+      payTo,
+      publicVerifyJobUrl(),
+      VERIFY_JOB_PAYMENT_DESCRIPTION,
+      verifyJobBazaarExtensions(),
+    ),
+    "POST /v1/verify/listing": verifyPricedRoute(
+      payTo,
+      publicVerifyListingUrl(),
+      VERIFY_LISTING_PAYMENT_DESCRIPTION,
+      verifyListingBazaarExtensions(),
+    ),
     "POST /v1/confirm": {
       accepts: [
         {
@@ -362,8 +390,8 @@ function mockUnpaidBody(path: string, requestUrl: string, host?: string) {
   if (normalized === "/v1/watch") return watchPaymentRequiredBody(publicWatchUrl(requestUrl, host));
   const topupId = parseWatchChainTopupId(normalized);
   if (topupId) return chainTopupPaymentRequiredBody(publicWatchChainTopupUrl(requestUrl, host, topupId));
-  if (normalized === "/v1/verify/job") return paymentRequiredBody(publicVerifyJobUrl(requestUrl, host));
-  if (normalized === "/v1/verify/listing") return paymentRequiredBody(publicVerifyListingUrl(requestUrl, host));
+  if (normalized === "/v1/verify/job") return verifyJobPaymentRequiredBody(publicVerifyJobUrl(requestUrl, host));
+  if (normalized === "/v1/verify/listing") return verifyListingPaymentRequiredBody(publicVerifyListingUrl(requestUrl, host));
   return paymentRequiredBody(publicVerifyUrl(requestUrl, host));
 }
 

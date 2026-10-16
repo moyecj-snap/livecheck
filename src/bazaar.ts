@@ -171,6 +171,59 @@ export function verifyBazaarExtensions(): Record<string, unknown> {
   );
 }
 
+/**
+ * Bazaar example for POST /v1/verify/job. Same shape as VERIFY_EXAMPLE, with
+ * the route that produced it.
+ */
+export const VERIFY_JOB_EXAMPLE = {
+  ...VERIFY_EXAMPLE,
+  route: "verify/job",
+} as const;
+
+/**
+ * Bazaar example for POST /v1/verify/listing: a real Shopify product page.
+ * Checked live with Livecheck on 2026-10-16 (status live, signal in-stock,
+ * confidence 0.8). This is the indexed example, not a guarantee the item is
+ * still in stock when an agent reads it.
+ */
+export const VERIFY_LISTING_EXAMPLE_URL = "https://www.ugmonk.com/products/analog-archive-silver-aluminum";
+export const VERIFY_LISTING_EXAMPLE = {
+  url: VERIFY_LISTING_EXAMPLE_URL,
+  canonical_url: "https://ugmonk.com/products/analog-archive-silver-aluminum",
+  status: "live",
+  http_status: 200,
+  checked_at: "2026-10-16T15:45:39Z",
+  title: "Analog Archive (Silver Aluminum)",
+  signals: ["in-stock"],
+  confidence: 0.8,
+  price_usd: PRICE_USD,
+  route: "verify/listing",
+} as const;
+
+function verifyRouteBazaar(example: { url: string } & Record<string, unknown>): Record<string, unknown> {
+  return withPostJsonMethod(
+    declareDiscoveryExtension({
+      bodyType: "json",
+      input: { url: example.url },
+      inputSchema: VERIFY_INPUT_SCHEMA,
+      output: {
+        example,
+        schema: VERIFY_OUTPUT_SCHEMA,
+      },
+    }),
+  );
+}
+
+/** POST /v1/verify/job: job-posting example. */
+export function verifyJobBazaarExtensions(): Record<string, unknown> {
+  return verifyRouteBazaar(VERIFY_JOB_EXAMPLE);
+}
+
+/** POST /v1/verify/listing: live Shopify product example, not a job URL. */
+export function verifyListingBazaarExtensions(): Record<string, unknown> {
+  return verifyRouteBazaar(VERIFY_LISTING_EXAMPLE);
+}
+
 export const VERIFY_ROUTE_DESCRIPTION = VERIFY_DESCRIPTION;
 
 export const CONFIRM_EXAMPLE = {

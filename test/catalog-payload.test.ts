@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { FacilitatorClient } from "@x402/core/server";
-import { VERIFY_DESCRIPTION, WATCH_PAYMENT_DESCRIPTION } from "../src/config.js";
+import {
+  VERIFY_DESCRIPTION,
+  VERIFY_JOB_PAYMENT_DESCRIPTION,
+  VERIFY_LISTING_PAYMENT_DESCRIPTION,
+  WATCH_PAYMENT_DESCRIPTION,
+} from "../src/config.js";
 import {
   CDP_RESOURCE_DESCRIPTION_MAX,
   decodeExtensionResponsesHeader,
@@ -21,13 +26,17 @@ describe("fillCatalogPaymentPayload", () => {
     const previous = process.env.LIVECHECK_PUBLIC_URL;
     process.env.LIVECHECK_PUBLIC_URL = "https://livecheck.fly.dev";
     try {
+      const expected: Record<string, string> = {
+        "/v1/verify/job": VERIFY_JOB_PAYMENT_DESCRIPTION,
+        "/v1/verify/listing": VERIFY_LISTING_PAYMENT_DESCRIPTION,
+      };
       for (const path of ["/v1/verify/job", "/v1/verify/listing"]) {
         const { payload, resourceFilled } = fillCatalogPaymentPayload({
           resource: { url: `http://livecheck.fly.dev${path}`, description: "old" },
         });
         assert.equal(resourceFilled, true);
         assert.equal(paymentPayloadResourceUrl(payload), `https://livecheck.fly.dev${path}`);
-        assert.equal((payload.resource as { description?: string }).description, VERIFY_DESCRIPTION);
+        assert.equal((payload.resource as { description?: string }).description, expected[path]);
       }
     } finally {
       if (previous === undefined) delete process.env.LIVECHECK_PUBLIC_URL;
