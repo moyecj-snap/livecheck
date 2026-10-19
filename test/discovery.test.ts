@@ -225,7 +225,9 @@ describe("discovery documents (mock gate)", () => {
     assert.equal(doc.info?.contact?.email, "moyecj@gmail.com");
     assert.equal((doc.info as { iconUrl?: string } | undefined)?.iconUrl, undefined);
     assert.notEqual(doc.info?.description, VERIFY_DESCRIPTION);
-    assert.match(VERIFY_DESCRIPTION, /not a search engine/i);
+    assert.match(VERIFY_DESCRIPTION, /^Live status checks for AI agents\./);
+    assert.ok(VERIFY_DESCRIPTION.length <= 240);
+    assert.doesNotMatch(VERIFY_DESCRIPTION, /amazon/i);
     const op = doc.paths?.["/v1/verify"]?.post;
     assert.ok(op, "expected POST /v1/verify");
     assert.equal(op.summary, OPENAPI_VERIFY_SUMMARY);

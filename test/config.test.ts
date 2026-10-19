@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   CONFIRM_DESCRIPTION,
+  CONFIRM_PAYMENT_DESCRIPTION,
   CONFIRM_PRICE_ATOMIC_USDC,
   CONFIRM_PRICE_USD,
   OPENAPI_CONFIRM_DESCRIPTION,
@@ -59,7 +60,7 @@ describe("listing price and description", () => {
     assert.equal(PRICE_ATOMIC_USDC, "10000");
     assert.equal(
       VERIFY_DESCRIPTION,
-      "Before you scrape a job posting, Shopify or HTML product page, or eBay item, POST the specific URL you already have and Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404); not a search engine.",
+      "Live status checks for AI agents. Is this product still available or sold out (Shopify, eBay)? Is this job posting still open (Greenhouse, Lever, Ashby, Workday)? Real-time answer with evidence. $0.01 per check via x402 or Stripe MPP.",
     );
     assert.equal(CONFIRM_PRICE_USD, 0.1);
     assert.equal(CONFIRM_PRICE_ATOMIC_USDC, "100000");
@@ -97,9 +98,14 @@ describe("listing price and description", () => {
     );
     assert.equal(
       CONFIRM_DESCRIPTION,
-      "Livecheck Confirm — independent side-effect verification (actor ≠ verifier). POST /v1/confirm with {url, intent} (+ optional claim). Returns confirmed|failed|unknown; thank-you fluff alone never confirmed — durable ref/id required. Intents: lead_submit $0.10 (lead/contact thank-you), listing_published $0.10 (listing go-live; claim title/sku/id optional) on /v1/confirm; order_placed $0.25 on POST /v1/confirm/order (order confirm/status; claim optional). Signed receipts + GET /stats. Same origin as Livecheck verify ($0.01). Not Trust Oracle / L3.",
+      "Livecheck Confirm checks whether an agent's action took effect, such as a contact form submitted or a listing published, using evidence gathered outside the agent's session. Returns confirmed, failed or unknown. $0.10 per check via x402. Intents: lead_submit, listing_published. order_placed is POST /v1/confirm/order ($0.25).",
     );
-    assert.match(CONFIRM_DESCRIPTION, /Livecheck/);
+    assert.match(CONFIRM_DESCRIPTION, /^Livecheck Confirm /);
+    assert.match(CONFIRM_DESCRIPTION, /confirmed, failed or unknown/);
+    assert.equal(CONFIRM_DESCRIPTION.startsWith(CONFIRM_PAYMENT_DESCRIPTION), true);
+    assert.ok(CONFIRM_PAYMENT_DESCRIPTION.length <= 240);
+    assert.match(CONFIRM_PAYMENT_DESCRIPTION, /^[\x20-\x7e]+$/);
+    assert.doesNotMatch(CONFIRM_PAYMENT_DESCRIPTION, /MPP/);
     assert.match(CONFIRM_DESCRIPTION, /listing_published/);
     assert.match(CONFIRM_DESCRIPTION, /order_placed/);
     assert.match(CONFIRM_DESCRIPTION, /\/v1\/confirm\/order/);
