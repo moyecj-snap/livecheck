@@ -23,7 +23,8 @@ import {
   setFreeJobRoleLookupForTests,
 } from "../src/free-job-page.js";
 import { NO_LONGER_AVAILABLE, boardTokenFromHost, lookupRole, roleLine, roleRefFor } from "../src/free-job-role.js";
-import { closeFreePageStore, freePageDbForTests, initFreePageStore } from "../src/free-job-store.js";
+import { closeFreePageStore, freePageDbForTests, initFreePageStore, readFreePageStats } from "../src/free-job-store.js";
+import { isAutomatedUa, migrateFreePageSources } from "../src/free-job-sources.js";
 import { closePaidCallStore, initPaidCallStore } from "../src/paid-call-store.js";
 import { clearAtsResponseCache } from "../src/ats-cache.js";
 
@@ -138,12 +139,12 @@ describe("free /job polish", () => {
   // ---- 1. Examples ----
   it("examples: POST buttons under the box, production links fixed, no link in any href or query", async () => {
     const page = await (await app.request("/job")).text();
-    assert.match(page, /Try one:/);
     assert.match(page, /<form class="examples" method="post" action="\/job">/);
-    assert.match(page, /<button type="submit" name="example" value="open">open job<\/button>/);
-    assert.match(page, /<button type="submit" name="example" value="filled">filled job<\/button>/);
+    assert.match(page, /<button class="try" type="submit" name="example" value="open">Try an example<\/button>/);
+    assert.match(page, /<button class="link" type="submit" name="example" value="filled">filled job<\/button>/);
     assert.equal(/href="[^"]*(stripe|gh_jid)/.test(page), false, "no example link in an href");
-    assert.equal(FREE_JOB_EXAMPLES.open.url, "https://stripe.com/jobs/search?gh_jid=8172508");
+    assert.equal(FREE_JOB_EXAMPLES.open.url, "https://stripe.com/jobs/search?gh_jid=6042172");
+    assert.equal(FREE_JOB_EXAMPLES.open.backup.url, "https://job-boards.greenhouse.io/databricks/jobs/4513122002");
     assert.equal(FREE_JOB_EXAMPLES.filled.url, "https://stripe.com/jobs/search?gh_jid=7569678");
   });
 
@@ -404,5 +405,199 @@ describe("free /job polish", () => {
       rmSync(dir, { recursive: true, force: true });
       initFreePageStore(":memory:");
     }
+  });
+
+  // ---- Launch prep: Try an example, bot filtering, check source ----
+  it("Try an example: one big button right under Check; employer and URL come from FREE_JOB_EXAMPLES", async () => {
+    const page = await (await app.request("/job")).text();
+    const check = page.indexOf('<button type="submit">Check</button>');
+    const tryIt = page.indexOf('value="open">Try an example</button>');
+    assert.ok(check > 0 && tryIt > check, "example button follows the Check button");
+    assert.ok(tryIt < page.indexOf('class="cta"'), "and comes before anything else below the box");
+    assert.match(page, /No link handy\? We&#39;ll check a real, live posting|No link handy\? We'll check a real, live posting/);
+    assert.equal(page.includes(FREE_JOB_EXAMPLES.open.url), false, "the URL is not in the page until the button is used");
+    assert.match(page, /form\.examples button\.try \{ width:100%; font-size:17px; \}/, "full-width tap target on phones");
+    // One click: the box comes back pre-filled with the example link and a verdict.
+    const result = await (await post({ example: "open" })).text();
+    assert.equal(verdictOf(result), "Open");
+    assert.match(result, new RegExp(`value="${u("/jobs/1842").replace(/[.?]/g, "\\$&")}"`));
+    assert.match(result, new RegExp(`a real check of a ${FREE_JOB_EXAMPLES.open.employer} posting`));
+  });
+
+  it("automated UAs: link previews, crawlers, headless clients; in-app browsers still count as people", () => {
+    for (const ua of [
+      "Mozilla/5.0 (compatible; ProductHunt/1.0; +https://www.producthunt.com)",
+      "Twitterbot/1.0",
+      "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+      "Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)",
+      "LinkedInBot/1.0 (compatible; Mozilla/5.0; Apache-HttpClient +http://www.linkedin.com)",
+      "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)",
+      "TelegramBot (like TwitterBot)",
+      "WhatsApp/2.23.20.0 A",
+      "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+      "Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)",
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/129.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (compatible; Iframely/1.3.1; +https://iframely.com/docs/about)",
+      "Mozilla/5.0 (compatible; Bluesky Cardyb/1.1; +mailto:support@bsky.app)",
+      "meta-externalagent/1.1 (+https://developers.facebook.com/docs/sharing/webmasters/crawler)",
+      "SomeSiteCrawler/2.0",
+      "Mozilla/5.0 (compatible; Link Preview Service)",
+      "",
+    ]) {
+      assert.equal(isAutomatedUa(ua), true, ua);
+    }
+    for (const ua of [
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+      "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 [LinkedInApp]/9.30",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 [FBAN/FBIOS;FBAV/480.0]",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Twitter for iPhone/10.60",
+    ]) {
+      assert.equal(isAutomatedUa(ua), false, ua);
+    }
+  });
+
+  it("/job/stats: launch-day views count people only; bot previews kept as a separate count per source", async () => {
+    const iphone = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
+    for (let i = 0; i < 3; i++) await app.request("/job?ref=producthunt", { headers: { "user-agent": iphone } });
+    for (const bot of ["Twitterbot/1.0", "facebookexternalhit/1.1", "Slackbot-LinkExpanding 1.0", "Mozilla/5.0 (compatible; ProductHunt/1.0)", "HeadlessChrome/129.0"]) {
+      await app.request("/job?ref=producthunt", { headers: { "user-agent": bot } });
+    }
+    const stats = readFreePageStats(now);
+    assert.equal(stats.today.views, 8, "raw total still kept");
+    assert.equal(stats.today.views_people, 3);
+    assert.equal(stats.today.views_automated, 5);
+    assert.equal(stats.today.views_people + stats.today.views_automated, stats.today.views, "buckets add up");
+    assert.deepEqual(stats.sources.by_source.today.producthunt, { views: 3, checks: 0, examples: 0, bot_views: 5 });
+    assert.deepEqual(stats.sources.today.view.ua, { browser: 3 });
+    assert.deepEqual(stats.sources.today.bot_view.ua, { agent: 1, bot: 4 });
+  });
+
+  it("events: example_clicked, link_typed, check_completed (example vs typed), per launch tag; no link or IP stored", async () => {
+    const send = (fields: Record<string, string>, ip: string) =>
+      app.request("/job?utm_source=producthunt", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", "fly-client-ip": ip, cookie: `${FREE_JOB_COOKIE}=${visitor(40)}` },
+        body: new URLSearchParams(fields).toString(),
+      });
+    assert.equal((await send({ example: "open" }, "198.51.100.41")).status, 200);
+    assert.equal((await send({ example: "open" }, "198.51.100.42")).status, 200);
+    assert.equal((await send({ example: "filled" }, "198.51.100.43")).status, 200);
+    assert.equal((await send({ url: u("/jobs/1842") }, "198.51.100.44")).status, 200);
+    const stats = readFreePageStats(now);
+    assert.deepEqual(stats.events.today, { example_clicked: 3, link_typed: 1, check_completed: { example: 3, typed: 1 } });
+    assert.deepEqual(stats.events.all_time, stats.events.today);
+    assert.equal(stats.sources.by_source.today.producthunt?.checks, 1);
+    assert.equal(stats.sources.by_source.today.producthunt?.examples, 3);
+    const dump = JSON.stringify(freePageDbForTests().prepare("SELECT * FROM free_page_sources").all());
+    const daily = JSON.stringify(freePageDbForTests().prepare("SELECT * FROM free_page_daily").all());
+    for (const forbidden of ["/", "?", "1842", "gh_jid", "stripe", "198.51.100", "127.0.0.2", FREE_JOB_COOKIE]) {
+      assert.equal(dump.includes(forbidden), false, forbidden);
+      assert.equal(daily.includes(forbidden), false, forbidden);
+    }
+  });
+
+  it("free_page_sources made with the old event list (view, check) is migrated, counts kept", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`CREATE TABLE free_page_sources (day TEXT NOT NULL CHECK (length(day) = 10), event TEXT NOT NULL CHECK (event IN ('view', 'check')), dimension TEXT NOT NULL CHECK (dimension IN ('referrer', 'utm', 'ua')), value TEXT NOT NULL CHECK (length(value) BETWEEN 1 AND 60), n INTEGER NOT NULL DEFAULT 0 CHECK (n >= 0), PRIMARY KEY (day, event, dimension, value));`);
+    db.exec("INSERT INTO free_page_sources VALUES ('2026-10-15', 'view', 'utm', 'x', 335), ('2026-10-15', 'view', 'ua', 'agent', 332)");
+    assert.throws(() => db.exec("INSERT INTO free_page_sources VALUES ('2026-10-20', 'example', 'utm', 'none', 1)"));
+    migrateFreePageSources(db);
+    db.exec("INSERT INTO free_page_sources VALUES ('2026-10-20', 'example', 'utm', 'none', 1), ('2026-10-20', 'bot_view', 'ua', 'bot', 1)");
+    const rows = db.prepare("SELECT event, value, n FROM free_page_sources ORDER BY day, event, value").all() as Array<{ event: string; value: string; n: number }>;
+    assert.deepEqual(rows.map((r) => `${r.event}/${r.value}=${Number(r.n)}`), ["view/agent=332", "view/x=335", "bot_view/bot=1", "example/none=1"]);
+    migrateFreePageSources(db); // second run is a no-op
+    assert.equal(Number((db.prepare("SELECT COUNT(*) AS n FROM free_page_sources").get() as { n: number }).n), 4);
+  });
+
+  it("example cache: 10-minute TTL shared by every visitor; hundreds of clicks, one upstream check", async () => {
+    assert.equal(EXAMPLE_TTL_MS, 10 * 60_000);
+    const pages = await Promise.all(
+      Array.from({ length: 200 }, (_, i) => post({ example: "open" }, { ip: `203.0.${Math.floor(i / 250)}.${(i % 250) + 1}`, cookie: visitor(500 + i) })),
+    );
+    assert.ok((await Promise.all(pages.map(async (r) => verdictOf(await r.text())))).every((v) => v === "Open"));
+    assert.equal(hits.filter((h) => h.startsWith("/jobs/1842")).length, 1, "one upstream check for 200 visitors");
+    now = new Date(now.getTime() + 9 * 60_000);
+    await post({ example: "open" }, { ip: "203.0.113.250" });
+    assert.equal(hits.filter((h) => h.startsWith("/jobs/1842")).length, 1, "still cached at 9 minutes");
+    now = new Date(now.getTime() + 2 * 60_000);
+    await post({ example: "open" });
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(hits.filter((h) => h.startsWith("/jobs/1842")).length, 2, "refreshed once after 10 minutes");
+  });
+
+  it("cached example hits don't use the hourly cap or the per-IP / per-cookie caps", async () => {
+    initFreePageStore(":memory:");
+    freePageDbForTests().prepare("INSERT INTO free_page_settings (key, value, updated_at) VALUES ('hourly_cap', 2, '2026-10-27T00:00:00Z')").run();
+    for (let i = 0; i < 30; i++) assert.equal((await post({ example: "open" }, { cookie: visitor(60), ip: "198.51.100.60" })).status, 200);
+    // The same cookie and IP still have all 5 free checks, and the hourly cap of 2 is untouched.
+    const first = await (await post({ url: u("/jobs/1842") }, { cookie: visitor(60), ip: "198.51.100.60" })).text();
+    assert.equal(verdictOf(first), "Open");
+    assert.match(first, /4 free checks left today\./);
+    assert.equal((await post({ url: u("/jobs/1842") }, { cookie: visitor(61), ip: "198.51.100.61" })).status, 200);
+    assert.equal((await post({ url: u("/jobs/1842") }, { cookie: visitor(62), ip: "198.51.100.62" })).status, 503, "the cap of 2 counted only typed checks");
+    assert.equal((await post({ example: "open" }, { cookie: visitor(63), ip: "198.51.100.63" })).status, 200, "examples still work when the cap is full");
+  });
+
+  it("example fallback: primary gives no clear answer -> backup; both fail -> a clear Can't tell card, never an error page", async () => {
+    setFreeJobExampleUrlsForTests({ open: u("/broken"), openBackup: u("/jobs/1842"), filled: u("/jobs/search?gh_jid=9000") });
+    const res = await post({ example: "open" });
+    assert.equal(res.status, 200);
+    const page = await res.text();
+    assert.equal(verdictOf(page), "Open");
+    assert.match(page, /a real check of a Databricks posting/);
+    assert.deepEqual(hits.filter((h) => h === "/broken" || h.startsWith("/jobs/1842")).map((h) => h.split("?")[0]), ["/broken", "/jobs/1842"]);
+
+    resetFreeJobForTests();
+    setFreeJobClockForTests(() => now);
+    setFreeJobPolicyForTests(policy());
+    setFreeJobExampleUrlsForTests({ open: u("/broken"), openBackup: u("/to-metadata"), filled: u("/jobs/search?gh_jid=9000") });
+    const both = await post({ example: "open" });
+    assert.equal(both.status, 200);
+    const text = await both.text();
+    assert.equal(verdictOf(text), "Can&#39;t tell");
+    assert.match(text, /class="result cant"/);
+
+    // A closed primary is a clear answer: shown as Closed, no backup fetch.
+    resetFreeJobForTests();
+    setFreeJobClockForTests(() => now);
+    setFreeJobPolicyForTests(policy());
+    hits.length = 0;
+    setFreeJobExampleUrlsForTests({ open: u("/gone"), openBackup: u("/jobs/1842"), filled: u("/jobs/search?gh_jid=9000") });
+    assert.equal(verdictOf(await (await post({ example: "open" })).text()), "Closed");
+    assert.equal(hits.some((h) => h.startsWith("/jobs/1842")), false);
+  });
+
+  it("ExampleCache: a failed refresh keeps the last good result for another TTL", async () => {
+    let t = 0;
+    let ok = true;
+    let calls = 0;
+    const cache = new ExampleCache<string>(async () => ({ value: ok ? `good-${++calls}` : `bad-${++calls}`, ok }), () => t, 1000, 100);
+    assert.equal((await cache.get("open")).value, "good-1");
+    ok = false;
+    t = 1500;
+    await cache.get("open"); // stale -> background refresh fails
+    await new Promise((r) => setTimeout(r, 5));
+    assert.equal((await cache.get("open")).value, "good-1", "still the good answer");
+    t = 2000;
+    await cache.get("open");
+    assert.equal(calls, 2, "no retry storm: next refresh only after a full TTL");
+  });
+
+  it("bot filter is stats-only: a bot gets the same page, the same check, and the same limits", async () => {
+    for (const ua of ["Twitterbot/1.0", "facebookexternalhit/1.1", "Mozilla/5.0 (compatible; ProductHunt/1.0)"]) {
+      const res = await app.request("/job", { headers: { "user-agent": ua } });
+      assert.equal(res.status, 200, ua);
+      assert.match(await res.text(), /<form class="check" method="post"/);
+    }
+    const botPost = (n: number) =>
+      app.request("/job", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", "fly-client-ip": "198.51.100.80", cookie: `${FREE_JOB_COOKIE}=${visitor(80)}`, "user-agent": "Twitterbot/1.0" },
+        body: new URLSearchParams({ url: u(`/jobs/1842?n=${n}`) }).toString(),
+      });
+    for (let i = 0; i < 5; i++) assert.equal(verdictOf(await (await botPost(i)).text()), "Open");
+    assert.equal((await botPost(9)).status, 429, "same 5-per-cookie limit as a browser, no stricter, no looser");
+    assert.equal(readFreePageStats(now).today.views_automated, 3);
   });
 });

@@ -13,12 +13,16 @@ import type { DatabaseSync } from "node:sqlite";
  *     anything else "other"; "none" when absent. No ':' or '/', so a URL
  *     cannot be stored.
  *   - ua: browser | bot | agent.
+ * Events: "view" = a page view by a person (browser UA); "bot_view" = a page
+ * view by a crawler, link preview, headless client or script (bot/agent UA),
+ * kept apart so launch-day views are people; "check" = a typed-link check;
+ * "example" = a "Try an example" run (cached result, no visitor link).
  * Per day, each (event, dimension) keeps at most SOURCE_DISTINCT_CAP values;
  * past that, new values count as "other". The private report also folds
  * values seen fewer than SOURCE_REPORT_MIN_COUNT times in the window into
  * "other", so one-off tokens are not shown.
  */
-export const SOURCE_EVENTS = ["view", "check"] as const;
+export const SOURCE_EVENTS = ["view", "check", "example", "bot_view"] as const;
 export const SOURCE_DIMENSIONS = ["referrer", "utm", "ua"] as const;
 export type SourceEvent = (typeof SOURCE_EVENTS)[number];
 export type SourceDimension = (typeof SOURCE_DIMENSIONS)[number];
@@ -109,8 +113,8 @@ export const SOURCE_REPORT_MIN_COUNT = 2;
 export const UTM_MAX_LENGTH = 40;
 const DOMAIN_MAX_LENGTH = 60;
 
-export const SOURCES_TABLE_SQL = `
-CREATE TABLE IF NOT EXISTS free_page_sources (
+const sourcesTableSql = (name: string) => `
+CREATE TABLE IF NOT EXISTS ${name} (
   day TEXT NOT NULL CHECK (length(day) = 10),
   event TEXT NOT NULL CHECK (event IN (${SOURCE_EVENTS.map((e) => `'${e}'`).join(", ")})),
   dimension TEXT NOT NULL CHECK (dimension IN (${SOURCE_DIMENSIONS.map((d) => `'${d}'`).join(", ")})),
@@ -119,6 +123,32 @@ CREATE TABLE IF NOT EXISTS free_page_sources (
   PRIMARY KEY (day, event, dimension, value)
 );
 `;
+export const SOURCES_TABLE_SQL = sourcesTableSql("free_page_sources");
+
+/**
+ * Create free_page_sources, or rebuild one made with an older event list
+ * (SQLite can't ALTER a CHECK). Counts are copied in one transaction.
+ */
+export function migrateFreePageSources(db: DatabaseSync): void {
+  db.exec(SOURCES_TABLE_SQL);
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'free_page_sources'").get() as
+    | { sql?: string }
+    | undefined;
+  const sql = row?.sql ?? "";
+  if (SOURCE_EVENTS.every((event) => sql.includes(`'${event}'`))) return;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec("DROP TABLE IF EXISTS free_page_sources_v2");
+    db.exec(sourcesTableSql("free_page_sources_v2"));
+    db.exec("INSERT INTO free_page_sources_v2 (day, event, dimension, value, n) SELECT day, event, dimension, value, n FROM free_page_sources");
+    db.exec("DROP TABLE free_page_sources");
+    db.exec("ALTER TABLE free_page_sources_v2 RENAME TO free_page_sources");
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
 
 const TWO_PART_SUFFIXES = new Set([
   "co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk", "ltd.uk", "plc.uk",
@@ -183,7 +213,7 @@ const AGENT_UA =
   /(chatgpt-user|claude-user|claude-web|perplexity-user|mistralai-user|gemini-user|copilot|\bagent\b|\bmcp\b|headless|playwright|puppeteer|selenium|phantomjs|curl\/|wget\/|python|httpx|aiohttp|node-fetch|undici|axios|okhttp|go-http-client|java\/|libwww|ruby|deno\/|bun\/)/i;
 /** Crawlers, link unfurlers, monitors. */
 const BOT_UA =
-  /(bot\b|bot\/|bot;|crawler|spider|slurp|facebookexternalhit|embedly|preview|unfurl|monitor|uptime|pingdom|validator|scanner|feedfetcher|whatsapp|telegram|discord)/i;
+  /(bot\b|bot\/|bot;|bot-|crawler|spider|slurp|facebookexternalhit|facebookcatalog|meta-external|embedly|iframely|preview|unfurl|monitor|uptime|pingdom|validator|scanner|feedfetcher|whatsapp|telegram|discord|producthunt|cardyb|mastodon|google-inspectiontool|googleother|google-read-aloud|lighthouse|gtmetrix|prerender|ahrefs|semrush|bytespider|vkshare)/i;
 
 /** Rough class only: the UA string itself is never stored. Agent markers win over bot, bot over browser. */
 export function uaClass(userAgent: string | null | undefined): UaClass {
@@ -193,6 +223,16 @@ export function uaClass(userAgent: string | null | undefined): UaClass {
   if (BOT_UA.test(ua)) return "bot";
   if (/^mozilla\/5\.0 \(/i.test(ua) && /(applewebkit|gecko|trident)/i.test(ua)) return "browser";
   return "agent";
+}
+
+/**
+ * Not a person at a browser: crawlers, link previews (Product Hunt, X, Slack,
+ * LinkedIn, Discord, Telegram, WhatsApp, Facebook), search bots, headless
+ * browsers, scripts and AI fetchers. These views count as bot_view, not view.
+ * A bot that sends a plain browser UA can't be told apart and counts as a view.
+ */
+export function isAutomatedUa(userAgent: string | null | undefined): boolean {
+  return uaClass(userAgent) !== "browser";
 }
 
 export type SourceValues = { referrer: string; utm: string; ua: UaClass };
@@ -278,10 +318,22 @@ export function readSourceTotalsFrom(db: DatabaseSync, sinceDay: string | null):
   return out;
 }
 
-/** "producthunt: 412 views, 1030 checks": one line per utm_source/ref value, from the folded totals. */
-export function sourceSummary(totals: SourceTotals): Record<string, { views: number; checks: number }> {
-  const out: Record<string, { views: number; checks: number }> = {};
-  for (const [value, n] of Object.entries(totals.view.utm)) (out[value] ??= { views: 0, checks: 0 }).views += n;
-  for (const [value, n] of Object.entries(totals.check.utm)) (out[value] ??= { views: 0, checks: 0 }).checks += n;
-  return Object.fromEntries(Object.entries(out).sort((a, b) => b[1].views + b[1].checks - (a[1].views + a[1].checks) || a[0].localeCompare(b[0])));
+export type SourceSummaryRow = { views: number; checks: number; examples: number; bot_views: number };
+
+/**
+ * "producthunt: 412 views, 1030 checks": one line per utm_source/ref value,
+ * from the folded totals. views = people only; checks = typed links;
+ * examples = "Try an example" runs; bot_views = automated views (excluded).
+ */
+export function sourceSummary(totals: SourceTotals): Record<string, SourceSummaryRow> {
+  const out: Record<string, SourceSummaryRow> = {};
+  const row = (value: string) => (out[value] ??= { views: 0, checks: 0, examples: 0, bot_views: 0 });
+  for (const [value, n] of Object.entries(totals.view.utm)) row(value).views += n;
+  for (const [value, n] of Object.entries(totals.check.utm)) row(value).checks += n;
+  for (const [value, n] of Object.entries(totals.example.utm)) row(value).examples += n;
+  for (const [value, n] of Object.entries(totals.bot_view.utm)) row(value).bot_views += n;
+  const people = (r: SourceSummaryRow) => r.views + r.checks + r.examples;
+  return Object.fromEntries(
+    Object.entries(out).sort((a, b) => people(b[1]) - people(a[1]) || b[1].bot_views - a[1].bot_views || a[0].localeCompare(b[0])),
+  );
 }
