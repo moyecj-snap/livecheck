@@ -51,6 +51,6 @@ primary_region = "sjc"
 
 # One paid hang took down the 256mb box. Deploys must not shrink it again.
 [[vm]]
-  memory = "1gb"
+  memory = "2gb"
   cpu_kind = "shared"
   cpus = 1
