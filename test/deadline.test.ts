@@ -47,7 +47,7 @@ describe("timeout budgets", () => {
     assert.ok(ATS_FETCH_TIMEOUT_MS < FETCH_TIMEOUT_MS);
     assert.ok(FETCH_TIMEOUT_MS < VERIFY_DEADLINE_MS);
     const fly = readFileSync(new URL("../fly.toml", import.meta.url), "utf8");
-    assert.match(fly, /memory\s*=\s*"2gb"/);
+    assert.match(fly, /memory\s*=\s*"1gb"/);
   });
 
   it("builds the live facilitator client with the shorter HTTP deadline", () => {
