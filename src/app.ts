@@ -35,6 +35,7 @@ import { discoveryHeaders, openApiDocument, wellKnownX402 } from "./discovery.js
 import { FIXTURES } from "./fixtures.js";
 import { registerFreeJobRoutes } from "./free-job-page.js";
 import { LLMS_TXT, llmsTxtHeaders } from "./llms.js";
+import { NOHUMANS_CLAIM_PATH, nohumansClaimResponse } from "./nohumans-claim.js";
 import { isInternalTestMode, withBurstProtection } from "./check-capacity.js";
 import { recordSuccessfulPaidCheck, responseRouteFromPath, withPaidCallContext } from "./paid-call.js";
 import { checkPaidVerdict } from "./receipt.js";
@@ -86,6 +87,9 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
   app.get("/llms.txt", () => {
     return new Response(LLMS_TXT, { status: 200, headers: llmsTxtHeaders() });
   });
+
+  // Free. Serves the nohumans.directory claim challenge only while NOHUMANS_CLAIM_TOKEN is set.
+  app.get(NOHUMANS_CLAIM_PATH, () => nohumansClaimResponse());
 
   app.get("/stats", async (c) => {
     const doc = statsScopeIsLocal(c.req.header("x-livecheck-stats-scope"), c.req.query("scope"))
