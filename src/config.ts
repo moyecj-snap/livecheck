@@ -92,10 +92,10 @@ export function confirmIntentPriceAtomic(intent: string): number {
 }
 /** Bazaar 402 / health confirm_description — rich copy; 402 headers stay ASCII. */
 export const CONFIRM_DESCRIPTION =
-  "Livecheck Confirm — independent side-effect verification (actor ≠ verifier). POST /v1/confirm with {url, intent} (+ optional claim). Returns confirmed|failed|unknown; thank-you fluff alone never confirmed — durable ref/id required. Intents: lead_submit $0.10 (lead/contact thank-you), listing_published $0.10 (listing go-live; claim title/sku/id optional) on /v1/confirm; order_placed $0.25 on POST /v1/confirm/order (order confirm/status; claim optional). Signed receipts + GET /stats. Same origin as Livecheck verify ($0.01). Not Trust Oracle / L3.";
+  "Livecheck Confirm checks whether an agent's action took effect, such as a contact form submitted or a listing published, using evidence gathered outside the agent's session. Returns confirmed, failed or unknown. $0.10 per check via x402. Intents: lead_submit, listing_published. order_placed is POST /v1/confirm/order ($0.25).";
 /** ASCII-only copy for x402 payment-required (purl/CDP). Keep CONFIRM_DESCRIPTION for /health. */
 export const CONFIRM_PAYMENT_DESCRIPTION =
-  "Livecheck Confirm - independent side-effect verification (actor != verifier). POST /v1/confirm with {url, intent} (+ optional claim). Returns confirmed|failed|unknown; thank-you fluff alone never confirmed - durable ref/id required. Intents: lead_submit $0.10, listing_published $0.10. order_placed is POST /v1/confirm/order ($0.25). Signed receipts + GET /stats. Same origin as Livecheck verify ($0.01). Not Trust Oracle / L3.";
+  "Livecheck Confirm checks whether an agent's action took effect, such as a contact form submitted or a listing published, using evidence gathered outside the agent's session. Returns confirmed, failed or unknown. $0.10 per check via x402.";
 /** ASCII-only 402 copy for POST /v1/confirm/order (fixed $0.25). */
 export const ORDER_PAYMENT_DESCRIPTION =
   "Livecheck Confirm order_placed - independent side-effect verification (actor != verifier). POST /v1/confirm/order with {url, intent: order_placed} (+ optional claim). Returns confirmed|failed|unknown; thank-you fluff alone never confirmed - durable order/ref/ticket id required. Fixed $0.25 USDC. lead_submit and listing_published stay on POST /v1/confirm ($0.10). Signed receipts + GET /stats. Not Trust Oracle / L3.";
@@ -217,7 +217,7 @@ export const OPENAPI_VERIFY_LISTING_TAGS = ["product-availability", "listing-sta
  * Keep this short. OPENAPI_VERIFY_DESCRIPTION is the catalog copy and is longer than CDP's 500-character resource.description cap.
  */
 export const VERIFY_DESCRIPTION =
-  "Before you scrape a job posting, Shopify or HTML product page, or eBay item, POST the specific URL you already have and Livecheck returns live, closed, or unknown plus title and signals (apply form, in-stock, sold-out, 404); not a search engine.";
+  "Live status checks for AI agents. Is this product still available or sold out (Shopify, eBay)? Is this job posting still open (Greenhouse, Lever, Ashby, Workday)? Real-time answer with evidence. $0.01 per check via x402 or Stripe MPP.";
 /**
  * x402 resource.serviceName / resource.tags on the three $0.01 verify routes.
  * Bazaar facilitators read these off the 402 / settled payload (serviceName
