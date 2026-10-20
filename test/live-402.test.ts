@@ -90,7 +90,7 @@ describe("live @x402/hono 402 (decoded payment-required)", () => {
     const resource = decoded.resource as { url?: string; description?: string };
     assert.equal(resource.url, "https://livecheck.fly.dev/v1/verify");
     assert.equal(resource.description, VERIFY_DESCRIPTION);
-    assert.match(resource.description ?? "", /not a search engine/i);
+    assert.match(resource.description ?? "", /^Live status checks for AI agents\./);
     const extensions = decoded.extensions as {
       bazaar?: { info?: { input?: { bodyType?: string; body?: { url?: string }; method?: string } } };
     };

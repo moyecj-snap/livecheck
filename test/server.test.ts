@@ -89,7 +89,7 @@ describe("HTTP surface", () => {
     const html = await res.text();
     assert.match(html, /Livecheck/);
     assert.match(html, /payment-required/);
-    assert.match(html, /Before you scrape a job posting, Shopify or HTML product page, or eBay item/);
+    assert.match(html, /Live status checks for AI agents\. Is this product still available or sold out \(Shopify, eBay\)\?/);
     assert.match(html, /\$0\.01 USDC/);
     assert.match(html, /\/stats\?format=json/);
     assert.match(html, /https:\/\/livecheck\.fly\.dev\/stats\?format=json/);
