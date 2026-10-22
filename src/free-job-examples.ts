@@ -1,6 +1,6 @@
 /**
  * The two "Try one" examples on /job. One click shows a real check of a fixed
- * Stripe posting, without using the visitor's free checks.
+ * posting, without using the visitor's free checks.
  *
  * Rate-safe for a launch spike: each example's result is cached in memory for
  * EXAMPLE_TTL_MS. When it goes stale, the next click gets the stale result
@@ -19,21 +19,26 @@
 /**
  * SWAP THE EXAMPLES HERE. `open` is the "Try an example" button on /job, so it
  * should be a long-running role at a large company. If it stops giving a clear
- * Open/Closed answer, the cache falls back to `open.backup`. Both checked live
- * 2026-10-19 with Livecheck's own verify:
- *   - Stripe "Backend Engineer, Core Technology", open since 2024-06-14
+ * Open/Closed answer, the cache falls back to `open.backup`. None of these are
+ * Stripe postings. Livecheck also accepts Stripe machine payments, and a
+ * Stripe job sample would suggest Stripe is part of the check.
+ * Checked 2026-10-22 with Livecheck's own verify (Greenhouse board API listed
+ * or missing, then the page classifier):
+ *   - Figma "Compliance Engineer", open (first published 2026-10-16)
  *   - Databricks "Senior Software Engineer - Distributed Data Systems", open
- *     since 2019-11-14 (listed in Greenhouse's databricks board API)
- * `filled` must stay closed. `employer` is shown in the result note.
+ *     since 2019-11-14 (still listed on Greenhouse's databricks board)
+ * `filled` must stay closed. It has no backup: only `open` falls back.
+ * Discord's closed posting lands on the Discord board, so the card title is
+ * "Discord". `employer` is shown in the result note.
  */
 export const FREE_JOB_EXAMPLES = {
   open: {
     label: "open job",
-    employer: "Stripe",
-    url: "https://stripe.com/jobs/search?gh_jid=6042172",
+    employer: "Figma",
+    url: "https://job-boards.greenhouse.io/figma/jobs/6223155004",
     backup: { employer: "Databricks", url: "https://job-boards.greenhouse.io/databricks/jobs/4513122002" },
   },
-  filled: { label: "filled job", employer: "Stripe", url: "https://stripe.com/jobs/search?gh_jid=7569678" },
+  filled: { label: "filled job", employer: "Discord", url: "https://job-boards.greenhouse.io/discord/jobs/8656854002" },
 } as const;
 
 export type ExampleKey = keyof typeof FREE_JOB_EXAMPLES;

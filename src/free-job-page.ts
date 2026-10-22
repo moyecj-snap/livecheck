@@ -242,8 +242,11 @@ export function resetFreeJobForTests(): void {
 /** Tests point the two examples (and optionally the open backup) at a local server. Production URLs are fixed. */
 export function setFreeJobExampleUrlsForTests(urls: Record<ExampleKey, string> & { openBackup?: string }): void {
   exampleTargets = {
-    open: [{ url: urls.open, employer: "Stripe" }, ...(urls.openBackup ? [{ url: urls.openBackup, employer: "Databricks" }] : [])],
-    filled: [{ url: urls.filled, employer: "Stripe" }],
+    open: [
+      { url: urls.open, employer: FREE_JOB_EXAMPLES.open.employer },
+      ...(urls.openBackup ? [{ url: urls.openBackup, employer: FREE_JOB_EXAMPLES.open.backup.employer }] : []),
+    ],
+    filled: [{ url: urls.filled, employer: FREE_JOB_EXAMPLES.filled.employer }],
   };
   examples = newExampleCache();
 }

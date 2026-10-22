@@ -143,9 +143,15 @@ describe("free /job polish", () => {
     assert.match(page, /<button class="try" type="submit" name="example" value="open">Try an example<\/button>/);
     assert.match(page, /<button class="link" type="submit" name="example" value="filled">filled job<\/button>/);
     assert.equal(/href="[^"]*(stripe|gh_jid)/.test(page), false, "no example link in an href");
-    assert.equal(FREE_JOB_EXAMPLES.open.url, "https://stripe.com/jobs/search?gh_jid=6042172");
+    assert.equal(FREE_JOB_EXAMPLES.open.employer, "Figma");
+    assert.equal(FREE_JOB_EXAMPLES.open.url, "https://job-boards.greenhouse.io/figma/jobs/6223155004");
+    assert.equal(FREE_JOB_EXAMPLES.open.backup.employer, "Databricks");
     assert.equal(FREE_JOB_EXAMPLES.open.backup.url, "https://job-boards.greenhouse.io/databricks/jobs/4513122002");
-    assert.equal(FREE_JOB_EXAMPLES.filled.url, "https://stripe.com/jobs/search?gh_jid=7569678");
+    assert.equal(FREE_JOB_EXAMPLES.filled.employer, "Discord");
+    assert.equal(FREE_JOB_EXAMPLES.filled.url, "https://job-boards.greenhouse.io/discord/jobs/8656854002");
+    for (const url of [FREE_JOB_EXAMPLES.open.url, FREE_JOB_EXAMPLES.open.backup.url, FREE_JOB_EXAMPLES.filled.url]) {
+      assert.equal(/stripe\.com|boards\/stripe|gh_jid=6042172|gh_jid=7569678/i.test(url), false, url);
+    }
   });
 
   it("examples don't use the 5 free checks (cookie or IP) and aren't paid calls", async () => {
@@ -293,23 +299,23 @@ describe("free /job polish", () => {
   });
 
   it("role lookup: gh_jid on a company domain asks Greenhouse's board API; only a listed job counts", async () => {
-    assert.equal(boardTokenFromHost("stripe.com"), "stripe");
+    assert.equal(boardTokenFromHost("acme.com"), "acme");
     assert.equal(boardTokenFromHost("careers.acme.co.uk"), "acme");
     assert.equal(boardTokenFromHost("localhost"), undefined);
-    assert.equal(roleRefFor("https://stripe.com/jobs/search?gh_jid=7569678")?.apiUrl, "https://boards-api.greenhouse.io/v1/boards/stripe/jobs/7569678");
-    assert.equal(roleRefFor("https://stripe.com/jobs/search?gh_jid=abc"), null);
+    assert.equal(roleRefFor("https://acme.com/jobs/search?gh_jid=4242")?.apiUrl, "https://boards-api.greenhouse.io/v1/boards/acme/jobs/4242");
+    assert.equal(roleRefFor("https://acme.com/jobs/search?gh_jid=abc"), null);
     const seen: string[] = [];
     const stub = (async (input: string | URL | Request) => {
       const url = String(input);
       seen.push(url);
       if (url.endsWith("/jobs/111")) {
-        return new Response(JSON.stringify({ id: 111, title: "Program Manager", company_name: "Stripe", absolute_url: "https://stripe.com/jobs/search?gh_jid=111" }), { status: 200 });
+        return new Response(JSON.stringify({ id: 111, title: "Program Manager", company_name: "Acme", absolute_url: "https://acme.com/jobs/search?gh_jid=111" }), { status: 200 });
       }
       return new Response(JSON.stringify({ status: 404, error: "Job not found" }), { status: 404 });
     }) as typeof fetch;
-    assert.deepEqual(await lookupRole("https://stripe.com/jobs/search?gh_jid=111", stub), { title: "Program Manager", company: "Stripe", platform: "Greenhouse" });
-    assert.equal(await lookupRole("https://stripe.com/jobs/search?gh_jid=222", stub), undefined);
-    assert.deepEqual(seen, ["https://boards-api.greenhouse.io/v1/boards/stripe/jobs/111", "https://boards-api.greenhouse.io/v1/boards/stripe/jobs/222"]);
+    assert.deepEqual(await lookupRole("https://acme.com/jobs/search?gh_jid=111", stub), { title: "Program Manager", company: "Acme", platform: "Greenhouse" });
+    assert.equal(await lookupRole("https://acme.com/jobs/search?gh_jid=222", stub), undefined);
+    assert.deepEqual(seen, ["https://boards-api.greenhouse.io/v1/boards/acme/jobs/111", "https://boards-api.greenhouse.io/v1/boards/acme/jobs/222"]);
     assert.equal(await lookupRole("https://careers.acme.test/jobs/1", stub), undefined, "no ATS reference, no lookup");
     assert.equal(seen.length, 2);
   });
