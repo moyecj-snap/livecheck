@@ -99,6 +99,25 @@ describe("ATS URL → public API", () => {
     });
     assert.equal(parseAtsJobUrl(`${ASHBY_LIVE}/application`)?.apiUrl, "https://api.ashbyhq.com/posting-api/job-board/linear");
 
+    // pathname is already percent-encoded. Encoding the segment again turned
+    // Ashby's "trunk tools" board (jobUrl uses trunk%20tools) into
+    // trunk%2520tools, which the posting API 404s.
+    const trunkTools = "https://jobs.ashbyhq.com/trunk%20tools/c82252bc-b40f-451c-ae39-e4810bf0f121";
+    assert.deepEqual(parseAtsJobUrl(trunkTools), {
+      vendor: "ashby",
+      board: "trunk tools",
+      jobId: "c82252bc-b40f-451c-ae39-e4810bf0f121",
+      apiUrl: "https://api.ashbyhq.com/posting-api/job-board/trunk%20tools",
+    });
+    assert.equal(
+      parseAtsJobUrl(`${trunkTools}/application`)?.apiUrl,
+      "https://api.ashbyhq.com/posting-api/job-board/trunk%20tools",
+    );
+    assert.equal(
+      parseAtsJobUrl("https://jobs.ashbyhq.com/trunk tools/c82252bc-b40f-451c-ae39-e4810bf0f121")?.apiUrl,
+      "https://api.ashbyhq.com/posting-api/job-board/trunk%20tools",
+    );
+
     assert.equal(
       parseAtsJobUrl(WORKDAY_LIVE)?.apiUrl,
       "https://adobe.wd5.myworkdayjobs.com/wday/cxs/adobe/external_experienced/job/San-Jose/Sr-Technology-Compliance-Product-Owner_R172124",
