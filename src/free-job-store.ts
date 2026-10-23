@@ -3,12 +3,13 @@ import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   LAUNCH_UTM_TABLE_SQL,
-  SOURCES_TABLE_SQL,
   bumpSourcesIn,
   effectiveLaunchUtmTags,
+  migrateFreePageSources,
   readSourceTotalsFrom,
   sourceSummary,
   type SourceEvent,
+  type SourceSummaryRow,
   type SourceTotals,
   type SourceValues,
 } from "./free-job-sources.js";
@@ -23,6 +24,7 @@ import {
  * are not paid calls and never touch /stats revenue buckets.
  */
 export const FREE_PAGE_METRICS = [
+  /** Every GET /job, people and bots. views = views_people + views_automated. */
   "views",
   "checks",
   "verdict_open",
@@ -35,6 +37,12 @@ export const FREE_PAGE_METRICS = [
   "invalid_url",
   "example_open",
   "example_filled",
+  /** Views from a browser UA: the launch-day "real people" number. */
+  "views_people",
+  /** Crawlers, link previews, headless clients, scripts (excluded from views_people). */
+  "views_automated",
+  /** A typed-link submission (before validation and limits). */
+  "link_typed",
 ] as const;
 
 export type FreePageMetric = (typeof FREE_PAGE_METRICS)[number];
@@ -167,7 +175,7 @@ function open(path: string): DatabaseSync {
   }
   migrateFreePageDaily(db);
   migrateFreePageSettings(db);
-  db.exec(SOURCES_TABLE_SQL);
+  migrateFreePageSources(db);
   db.exec(LAUNCH_UTM_TABLE_SQL);
   return db;
 }
@@ -179,7 +187,7 @@ export function openFreePageDbForAdmin(path: string): DatabaseSync {
   db.exec("PRAGMA busy_timeout = 5000;");
   migrateFreePageDaily(db);
   migrateFreePageSettings(db);
-  db.exec(SOURCES_TABLE_SQL);
+  migrateFreePageSources(db);
   db.exec(LAUNCH_UTM_TABLE_SQL);
   return db;
 }
@@ -288,6 +296,8 @@ function sumSince(sinceDay: string | null): FreePageCounts {
   return out;
 }
 
+export type ClickEvents = { example_clicked: number; link_typed: number; check_completed: { example: number; typed: number } };
+
 export type FreePageStats = {
   ok: true;
   service: "livecheck";
@@ -301,11 +311,13 @@ export type FreePageStats = {
   l30d: FreePageCounts;
   all_time: FreePageCounts;
   by_day: Array<{ day: string } & FreePageCounts>;
+  /** Event counts only: example clicks, typed links, completed checks split by example vs typed. */
+  events: Record<"today" | "l7d" | "l30d" | "all_time", ClickEvents>;
   /** Where views and checks came from. Totals only; private view only. */
   sources: {
     note: string;
     /** Per utm_source/ref value: views and checks, e.g. producthunt {views: 412, checks: 1030}. */
-    by_source: { today: Record<string, { views: number; checks: number }>; l7d: Record<string, { views: number; checks: number }>; l30d: Record<string, { views: number; checks: number }> };
+    by_source: { today: Record<string, SourceSummaryRow>; l7d: Record<string, SourceSummaryRow>; l30d: Record<string, SourceSummaryRow> };
     today: SourceTotals;
     l7d: SourceTotals;
     l30d: SourceTotals;
@@ -326,27 +338,37 @@ export function readFreePageStats(now = new Date()): FreePageStats {
     }
     if ((FREE_PAGE_METRICS as readonly string[]).includes(row.metric)) entry[row.metric as FreePageMetric] = Number(row.n);
   }
+  const counts = { today: sumSince(day(0)), l7d: sumSince(day(6)), l30d: sumSince(day(29)), all_time: sumSince(null) };
+  const events = (c: FreePageCounts): ClickEvents => ({
+    example_clicked: c.example_open + c.example_filled,
+    link_typed: c.link_typed,
+    // Every example click returns a result card (cached, or the fallback).
+    check_completed: { example: c.example_open + c.example_filled, typed: c.checks },
+  });
   return {
     ok: true,
     service: "livecheck",
     page: "/job",
     note:
-      "Free /job page counts only (no wallet, no payment). Not paid calls; not in /stats revenue or buckets. No URLs, IPs, or cookies are stored.",
+      "Free /job page counts only (no wallet, no payment). Not paid calls; not in /stats revenue or buckets. No URLs, IPs, or cookies are stored. views_people = browser UAs; views_automated = crawlers, link previews, headless clients and scripts (excluded from people). checks = completed typed-link checks; link_typed = typed submissions; example_* = Try an example clicks.",
     generated_at: now.toISOString().replace(/\.\d{3}Z$/, "Z"),
     persisted: db().persisted,
     day_timezone: "America/Los_Angeles",
-    today: sumSince(day(0)),
-    l7d: sumSince(day(6)),
-    l30d: sumSince(day(29)),
-    all_time: sumSince(null),
+    ...counts,
     by_day: [...byDay.values()],
+    events: {
+      today: events(counts.today),
+      l7d: events(counts.l7d),
+      l30d: events(counts.l30d),
+      all_time: events(counts.all_time),
+    },
     sources: (() => {
       const today = readSourceTotalsFrom(db().db, day(0));
       const l7d = readSourceTotalsFrom(db().db, day(6));
       const l30d = readSourceTotalsFrom(db().db, day(29));
       return {
         note:
-          "Daily totals only. referrer = Referer registrable domain (direct/self/other); utm = utm_source or ref, sanitized; ua = browser/bot/agent. Values seen fewer than 2 times in the window show as other, except launch tags (producthunt, linkedin, x, email, test, clawhub, plus any added via npm run free:launch-tags) and their domains. No IPs, URLs, cookies, or per-visit rows.",
+          "Daily totals only. view = people (browser UA); bot_view = crawlers, link previews, headless clients, scripts (not people; before this change, view included them); check = typed links; example = Try an example runs. referrer = Referer registrable domain (direct/self/other); utm = utm_source or ref, sanitized; ua = browser/bot/agent. Values seen fewer than 2 times in the window show as other, except launch tags (producthunt, linkedin, x, email, test, clawhub, plus any added via npm run free:launch-tags) and their domains. No IPs, URLs, cookies, or per-visit rows.",
         by_source: { today: sourceSummary(today), l7d: sourceSummary(l7d), l30d: sourceSummary(l30d) },
         today,
         l7d,

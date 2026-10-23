@@ -349,10 +349,17 @@ describe("free /job page", () => {
     const stats = await freeStats();
     assert.equal(stats.today.views, 5);
     assert.equal(stats.today.checks, 3);
+    // People (browser UA) and automated views (Googlebot, curl) are kept apart.
+    assert.equal(stats.today.views_people, 2);
+    assert.equal(stats.today.views_automated, 3);
     const views = stats.sources.today.view;
-    assert.deepEqual(views.referrer, { direct: 3, "ycombinator.com": 2 });
-    assert.deepEqual(views.utm, { none: 2, hn: 2, other: 1 });
-    assert.deepEqual(views.ua, { bot: 2, browser: 2, agent: 1 });
+    assert.deepEqual(views.referrer, { "ycombinator.com": 2 });
+    assert.deepEqual(views.utm, { hn: 2 });
+    assert.deepEqual(views.ua, { browser: 2 });
+    const botViews = stats.sources.today.bot_view;
+    assert.deepEqual(botViews.referrer, { direct: 3 });
+    assert.deepEqual(botViews.utm, { none: 2, other: 1 });
+    assert.deepEqual(botViews.ua, { bot: 2, agent: 1 });
     const checks = stats.sources.today.check;
     assert.deepEqual(checks.referrer, { "ycombinator.com": 2, other: 1 });
     assert.deepEqual(checks.utm, { hn: 2, other: 1 });
@@ -392,8 +399,8 @@ describe("free /job page", () => {
     assert.equal(utm.other, 1, "a non-launch one-off still folds");
     assert.equal(utm["oneoff-random"], undefined);
     assert.equal(stats.sources.today.view.referrer["producthunt.com"], 1, "launch domain shown on a single visit");
-    assert.deepEqual(stats.sources.by_source.today.producthunt, { views: 1, checks: 1 });
-    assert.deepEqual(stats.sources.by_source.today.test, { views: 1, checks: 0 });
+    assert.deepEqual(stats.sources.by_source.today.producthunt, { views: 1, checks: 1, examples: 0, bot_views: 0 });
+    assert.deepEqual(stats.sources.by_source.today.test, { views: 1, checks: 0, examples: 0, bot_views: 0 });
   });
 
   it("no new cookies and no third-party trackers: source carry is the form address only", async () => {

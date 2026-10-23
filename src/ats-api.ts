@@ -70,6 +70,18 @@ function pathParts(url: URL): string[] {
   return url.pathname.split("/").filter(Boolean);
 }
 
+/**
+ * `URL.pathname` is already percent-encoded. `encodeURIComponent` on that
+ * segment encodes `%` again (`trunk%20tools` → `trunk%2520tools`).
+ */
+function decodePathSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 function httpUrl(value: string | undefined): string | undefined {
   if (!value) return undefined;
   try {
@@ -101,9 +113,15 @@ function parseAshby(host: string, url: URL): AtsJobRef | null {
   if (host !== "jobs.ashbyhq.com") return null;
   const parts = pathParts(url);
   if (parts.length < 2 || parts.length > 3) return null;
-  const [board, jobId, tail] = parts;
-  if (!board || !jobId || !UUID.test(jobId)) return null;
+  const [encodedBoard, jobId, tail] = parts;
+  if (!encodedBoard || !jobId || !UUID.test(jobId)) return null;
   if (tail && tail.toLowerCase() !== "application") return null;
+  // Decode first. The pathname segment is already encoded, so encoding it
+  // again asks Ashby for a board that does not exist. A space in the slug
+  // ("trunk tools", seen as trunk%20tools) must stay trunk%20tools, not
+  // become trunk%2520tools.
+  const board = decodePathSegment(encodedBoard);
+  if (!board) return null;
   return {
     vendor: "ashby",
     board,

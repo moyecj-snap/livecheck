@@ -15,7 +15,7 @@ import {
   readFreePageStats,
   type FreePageSettings,
 } from "./free-job-store.js";
-import { referrerSource, registrableDomain, uaClass, utmSource } from "./free-job-sources.js";
+import { isAutomatedUa, referrerSource, registrableDomain, uaClass, utmSource, type SourceEvent } from "./free-job-sources.js";
 import { EXAMPLE_TTL_MS, ExampleCache, FREE_JOB_EXAMPLES, isExampleKey, type ExampleKey } from "./free-job-examples.js";
 import { lookupRole, roleLine, type RoleInfo } from "./free-job-role.js";
 import { queryRefundCandidateDailyFromStore } from "./paid-call-store.js";
@@ -203,15 +203,28 @@ let limiter = new FreeJobLimiter();
 let policy: FetchPolicy = DEFAULT_FETCH_POLICY;
 let totalTimeoutMs = FREE_JOB_TOTAL_TIMEOUT_MS;
 let clock: () => Date = () => new Date();
-let exampleUrls: Record<ExampleKey, string> = { open: FREE_JOB_EXAMPLES.open.url, filled: FREE_JOB_EXAMPLES.filled.url };
+type ExampleTarget = { url: string; employer: string };
+const PRODUCTION_EXAMPLES: Record<ExampleKey, ExampleTarget[]> = {
+  open: [FREE_JOB_EXAMPLES.open, FREE_JOB_EXAMPLES.open.backup],
+  filled: [FREE_JOB_EXAMPLES.filled],
+};
+let exampleTargets: Record<ExampleKey, ExampleTarget[]> = PRODUCTION_EXAMPLES;
 let roleLookup: typeof lookupRole = lookupRole;
 let examples = newExampleCache();
 
 function newExampleCache(): ExampleCache<FreeJobView> {
   return new ExampleCache<FreeJobView>(
     async (key) => {
-      const { view, ok } = await runCheck(exampleUrls[key], {});
-      return { value: { ...view, example: key } as FreeJobView, ok };
+      // Primary first; the backup only when the primary gives no clear Open/Closed.
+      let first: { value: FreeJobView; ok: boolean } | undefined;
+      for (const target of exampleTargets[key]) {
+        const { view, ok } = await runCheck(target.url, {});
+        const value = { ...view, example: key, exampleEmployer: target.employer } as FreeJobView;
+        const clear = ok && view.kind === "result" && view.label !== "Can't tell";
+        if (clear) return { value, ok: true };
+        first ??= { value, ok: false };
+      }
+      return first!;
     },
     () => clock().getTime(),
   );
@@ -222,13 +235,19 @@ export function resetFreeJobForTests(): void {
   policy = DEFAULT_FETCH_POLICY;
   totalTimeoutMs = FREE_JOB_TOTAL_TIMEOUT_MS;
   clock = () => new Date();
-  exampleUrls = { open: FREE_JOB_EXAMPLES.open.url, filled: FREE_JOB_EXAMPLES.filled.url };
+  exampleTargets = PRODUCTION_EXAMPLES;
   roleLookup = lookupRole;
   examples = newExampleCache();
 }
-/** Tests point the two examples at a local server. Production URLs are fixed. */
-export function setFreeJobExampleUrlsForTests(urls: Record<ExampleKey, string>): void {
-  exampleUrls = { ...urls };
+/** Tests point the two examples (and optionally the open backup) at a local server. Production URLs are fixed. */
+export function setFreeJobExampleUrlsForTests(urls: Record<ExampleKey, string> & { openBackup?: string }): void {
+  exampleTargets = {
+    open: [
+      { url: urls.open, employer: FREE_JOB_EXAMPLES.open.employer },
+      ...(urls.openBackup ? [{ url: urls.openBackup, employer: FREE_JOB_EXAMPLES.open.backup.employer }] : []),
+    ],
+    filled: [{ url: urls.filled, employer: FREE_JOB_EXAMPLES.filled.employer }],
+  };
   examples = newExampleCache();
 }
 export function setFreeJobRoleLookupForTests(fn: typeof lookupRole): void {
@@ -373,6 +392,8 @@ export type FreeJobView =
       evidence: string[];
       explanation?: string;
       example?: ExampleKey;
+      /** Employer of the example posting actually checked (primary or backup). */
+      exampleEmployer?: string;
     };
 
 function priceLabel(): string {
@@ -402,7 +423,7 @@ function resultHtml(view: FreeJobView, remaining: number | undefined): string {
     ${evidence}
     ${
       view.example
-        ? `<p class="muted small">Example: a real check of a Stripe posting, refreshed every ${Math.round(EXAMPLE_TTL_MS / 60_000)} minutes. It doesn't use your free checks.</p>`
+        ? `<p class="muted small">Example: a real check of a ${esc(view.exampleEmployer ?? FREE_JOB_EXAMPLES[view.example].employer)} posting, refreshed every ${Math.round(EXAMPLE_TTL_MS / 60_000)} minutes. It doesn't use your free checks.</p>`
         : ""
     }
     ${remaining !== undefined ? `<p class="muted small">${remaining} free check${remaining === 1 ? "" : "s"} left today.</p>` : ""}
@@ -419,10 +440,8 @@ export function freeJobHtml(
   const pageUrl = `${origin}${FREE_JOB_PATH}`;
   const imageUrl = `${origin}${OG_IMAGE_PATH}`;
   const examplesForm = `<form class="examples" method="post" action="${action}">
-    <span>Try one:</span>
-    <button type="submit" name="example" value="open">${esc(FREE_JOB_EXAMPLES.open.label)}</button>
-    <span aria-hidden="true">&middot;</span>
-    <button type="submit" name="example" value="filled">${esc(FREE_JOB_EXAMPLES.filled.label)}</button>
+    <button class="try" type="submit" name="example" value="open">Try an example</button>
+    <span>No link handy? We'll check a real, live posting, or a <button class="link" type="submit" name="example" value="filled">${esc(FREE_JOB_EXAMPLES.filled.label)}</button>.</span>
   </form>`;
   return `<!doctype html>
 <html lang="en">
@@ -464,8 +483,10 @@ export function freeJobHtml(
     label { position:absolute; left:-9999px; }
     input[type=url] { flex:1 1 20rem; min-width:0; font-size:1.05rem; padding:0.75rem 0.85rem; border:2px solid var(--ink); border-radius:4px; background:#fffdf8; color:var(--ink); }
     form.check button { font-family:inherit; font-size:1.05rem; padding:0.75rem 1.4rem; border:2px solid var(--ink); border-radius:4px; background:var(--ink); color:var(--paper); cursor:pointer; }
-    form.examples { margin:0.7rem 0 0; display:flex; flex-wrap:wrap; align-items:baseline; gap:0.35rem; font-size:1rem; color:var(--soft); }
-    form.examples button { font:inherit; color:var(--ink); background:none; border:0; padding:0.35rem 0.1rem; text-decoration:underline; text-underline-offset:0.15em; cursor:pointer; }
+    form.examples { margin:0.6rem 0 0; display:flex; flex-wrap:wrap; align-items:center; gap:0.4rem 0.75rem; font-size:0.94rem; color:var(--soft); }
+    form.examples button.try { font-family:inherit; font-size:1.05rem; padding:0.6rem 1.2rem; border:2px solid var(--ink); border-radius:4px; background:#fffdf8; color:var(--ink); cursor:pointer; }
+    form.examples span { flex:1 1 12rem; }
+    form.examples button.link { font:inherit; color:var(--ink); background:none; border:0; padding:0; text-decoration:underline; text-underline-offset:0.15em; cursor:pointer; }
     .result { margin:1.6rem 0; padding:1.2rem 1.3rem; border-left:8px solid var(--rule); background:#fffdf8; }
     .result.open { border-color:var(--open); } .result.closed { border-color:var(--closed); } .result.cant { border-color:var(--cant); }
     .verdict { font-size:2.6rem; font-weight:700; margin:0; line-height:1.1; }
@@ -488,6 +509,7 @@ export function freeJobHtml(
       .lede { font-size:1.05rem; }
       form.check { flex-direction:column; }
       input[type=url], form.check button { width:100%; flex:none; font-size:17px; }
+      form.examples button.try { width:100%; font-size:17px; }
       .verdict { font-size:2.3rem; }
       .result { padding:1rem 1rem; border-left-width:6px; }
     }
@@ -593,7 +615,7 @@ function sourceFormAction(source: { utm: string; referrer: string }): string {
   return query ? `${FREE_JOB_PATH}?${query}` : FREE_JOB_PATH;
 }
 
-function countSource(c: Context, event: "view" | "check", now: Date): void {
+function countSource(c: Context, event: SourceEvent, now: Date): void {
   const { utm, referrer } = carriedSource(c);
   bumpFreePageSources(event, { referrer, utm, ua: uaClass(c.req.header("user-agent")) }, now);
 }
@@ -656,15 +678,16 @@ async function runCheck(target: string, opts: { signal?: AbortSignal }): Promise
 async function handleExample(c: Context, key: ExampleKey, config: FreeJobConfig, ip: string, visitor: string) {
   const now = clock();
   bumpFreePageMetric(key === "open" ? "example_open" : "example_filled", now);
+  countSource(c, "example", now);
   let view: FreeJobView;
   try {
     view = (await examples.get(key)).value;
   } catch {
     view = {
       kind: "result",
-      url: exampleUrls[key],
+      url: exampleTargets[key][0]!.url,
       label: "Can't tell",
-      platform: platformFor(exampleUrls[key]),
+      platform: platformFor(exampleTargets[key][0]!.url),
       evidence: [],
       explanation: UNREACHABLE_COPY,
       example: key,
@@ -688,6 +711,7 @@ async function handleFreeCheck(c: Context) {
     submitted = {};
   }
   if (isExampleKey(submitted.example)) return handleExample(c, submitted.example, config, ip, visitor);
+  bumpFreePageMetric("link_typed", now);
   const raw = submitted.url;
   const typed = typeof raw === "string" ? raw.trim().slice(0, 2048) : "";
   let target: string;
@@ -750,7 +774,10 @@ export function registerFreeJobRoutes(app: Hono): void {
     const now = clock();
     const visitor = ensureVisitor(c);
     bumpFreePageMetric("views", now);
-    countSource(c, "view", now);
+    // Link previews, crawlers and headless clients are kept out of the people counts.
+    const automated = isAutomatedUa(c.req.header("user-agent"));
+    bumpFreePageMetric(automated ? "views_automated" : "views_people", now);
+    countSource(c, automated ? "bot_view" : "view", now);
     return page(c, { kind: "form" }, 200, config, limiter.remaining(clientIp(c), visitor, config, now));
   });
   app.post(FREE_JOB_PATH, async (c) => {
