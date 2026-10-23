@@ -313,6 +313,18 @@ export function verdictLabel(status: VerifyVerdict["status"] | "error"): FreeVer
 const BLOCKED_COPY = "This site blocks automated checks or needs a login, so we won't guess.";
 const UNCLEAR_COPY = "We couldn't get a clear answer from this page, so we won't guess.";
 const UNREACHABLE_COPY = "We couldn't reach this site just now, so we won't guess.";
+const BOARD_PAGE_COPY = "This is a job board page, not one posting. Open a single job and paste its link.";
+const BOT_CHECK_LINE = "Site showed a bot check (we don't bypass those)";
+
+/**
+ * A board, search, or category link, not one posting. `collection_or_category`
+ * is the same visitor mistake on /job (the evidence line already calls it a
+ * list of jobs). It often arrives with `not_a_specific_posting`, and it can
+ * also appear on its own.
+ */
+function isBoardOrList(signals: readonly string[]): boolean {
+  return signals.includes("not_a_specific_posting") || signals.includes("collection_or_category");
+}
 
 function formatDay(iso: string): string | undefined {
   const date = new Date(iso);
@@ -346,7 +358,11 @@ export function evidenceInPlainWords(signals: readonly string[], platform: strin
     else if (signal === "careers_homepage") add("Link goes to a careers home page");
     else if (signal === "not_a_specific_posting") add("This link isn't one specific job posting");
     else if (signal === "collection_or_category") add("This is a list of jobs, not one posting");
-    else if (signal === "challenge_page") add("Site showed a bot check (we don't bypass those)");
+    else if (signal === "challenge_page") {
+      // Lever boards ship a bot-management script, so challenge_page fires on
+      // the board itself. That line would say we hit a wall in front of one posting.
+      if (!isBoardOrList(signals)) add(BOT_CHECK_LINE);
+    }
     else if (signal === "loginwalled") add("Site needs a login to show the posting");
     else if (signal === "js_shell") add("Page needs JavaScript to show the posting");
     else if (signal === "ambiguous_html") add("Page didn't clearly say open or closed");
@@ -368,6 +384,9 @@ export function evidenceForVerdict(signals: readonly string[], platform: string,
 }
 
 export function cantTellCopy(signals: readonly string[]): string {
+  // Board/list copy wins over blocked and unclear. A Lever board is both
+  // not_a_specific_posting and challenge_page, and must not say we were blocked.
+  if (isBoardOrList(signals)) return BOARD_PAGE_COPY;
   if (signals.some((s) => s === "challenge_page" || s === "loginwalled" || s === "js_shell")) return BLOCKED_COPY;
   return UNCLEAR_COPY;
 }
