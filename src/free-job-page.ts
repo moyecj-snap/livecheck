@@ -313,7 +313,7 @@ export function verdictLabel(status: VerifyVerdict["status"] | "error"): FreeVer
 const BLOCKED_COPY = "This site blocks automated checks or needs a login, so we won't guess.";
 const UNCLEAR_COPY = "We couldn't get a clear answer from this page, so we won't guess.";
 const UNREACHABLE_COPY = "We couldn't reach this site just now, so we won't guess.";
-const BOARD_PAGE_COPY = "This is a job board page, not one posting. Open a single job and paste its link.";
+const BOARD_PAGE_COPY = "This page is a list of jobs, not one posting. Open a single job and paste its link.";
 const BOT_CHECK_LINE = "Site showed a bot check (we don't bypass those)";
 
 /**

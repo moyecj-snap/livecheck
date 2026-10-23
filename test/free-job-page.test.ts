@@ -163,7 +163,7 @@ function testPolicy(overrides: Partial<FetchPolicy> = {}): Partial<FetchPolicy> 
 
 const u = (path: string, host = "acme.test") => `http://${host}:${port}${path}`;
 
-const BOARD_PAGE_COPY = "This is a job board page, not one posting. Open a single job and paste its link.";
+const BOARD_PAGE_COPY = "This page is a list of jobs, not one posting. Open a single job and paste its link.";
 const BLOCKED_COPY = "This site blocks automated checks or needs a login, so we won't guess.";
 const UNCLEAR_COPY = "We couldn't get a clear answer from this page, so we won't guess.";
 const BOT_CHECK_LINE = "Site showed a bot check (we don't bypass those)";
