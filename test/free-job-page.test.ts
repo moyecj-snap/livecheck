@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { createApp } from "../src/app.js";
+import { classify } from "../src/classify.js";
 import { FIXTURES } from "../src/fixtures.js";
 import {
   BlockedTargetError,
@@ -20,6 +21,7 @@ import {
 import {
   FREE_JOB_COOKIE,
   SKILL_URL,
+  cantTellCopy,
   evidenceForVerdict,
   evidenceInPlainWords,
   freeJobLimiterKeysForTests,
@@ -29,6 +31,7 @@ import {
   setFreeJobClockForTests,
   setFreeJobPolicyForTests,
   setFreeJobTotalTimeoutForTests,
+  verdictLabel,
 } from "../src/free-job-page.js";
 import {
   closeFreePageStore,
@@ -48,6 +51,7 @@ import {
   utmSource,
 } from "../src/free-job-sources.js";
 import { DatabaseSync } from "node:sqlite";
+import type { FetchedPage } from "../src/types.js";
 
 // ---------------------------------------------------------------------------
 // Local "internet": one server on 127.0.0.2. The test policy treats 127.0.0.2
@@ -123,6 +127,9 @@ function startServer(): Promise<void> {
       holdRelease = () => html(res, 200, FIXTURES["jobs/1842"]!.body ?? "");
       return;
     }
+    if (path === "/anthropic") return html(res, 200, GREENHOUSE_BOARD_HTML);
+    if (path === "/palantir") return html(res, 200, LEVER_BOARD_HTML);
+    if (path === "/openai") return html(res, 200, ASHBY_BOARD_HTML);
     html(res, 500, "nope");
   });
   server.on("connection", (socket) => {
@@ -155,6 +162,77 @@ function testPolicy(overrides: Partial<FetchPolicy> = {}): Partial<FetchPolicy> 
 }
 
 const u = (path: string, host = "acme.test") => `http://${host}:${port}${path}`;
+
+const BOARD_PAGE_COPY = "This page is a list of jobs, not one posting. Open a single job and paste its link.";
+const BLOCKED_COPY = "This site blocks automated checks or needs a login, so we won't guess.";
+const UNCLEAR_COPY = "We couldn't get a clear answer from this page, so we won't guess.";
+const BOT_CHECK_LINE = "Site showed a bot check (we don't bypass those)";
+
+const GREENHOUSE_BOARD_HTML = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>Jobs at Anthropic</title></head>
+<body>
+  <h1>Anthropic</h1>
+  <p>Current openings</p>
+  <ul class="opening-list">
+    <li class="opening"><a href="/anthropic/jobs/11">Research Engineer</a></li>
+    <li class="opening"><a href="/anthropic/jobs/12">Product Designer</a></li>
+    <li class="opening"><a href="/anthropic/jobs/13">Recruiter</a></li>
+  </ul>
+</body>
+</html>`;
+
+/** Lever boards include Cloudflare's challenge-platform script on the board itself. */
+const LEVER_BOARD_HTML = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Palantir Careers</title>
+  <script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>
+</head>
+<body>
+  <h1>Palantir</h1>
+  <p>Browse openings.</p>
+  <ul class="opening-list">
+    <li class="opening"><a href="/palantir/eng">Engineer</a></li>
+    <li class="opening"><a href="/palantir/des">Designer</a></li>
+    <li class="opening"><a href="/palantir/pm">Program Manager</a></li>
+  </ul>
+</body>
+</html>`;
+
+const ASHBY_BOARD_HTML = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>OpenAI jobs</title></head>
+<body>
+  <h1>OpenAI</h1>
+  <p>Current openings</p>
+  <ul class="opening-list">
+    <li class="opening"><a href="/openai/jobs/11">Research Engineer</a></li>
+    <li class="opening"><a href="/openai/jobs/12">Product Designer</a></li>
+    <li class="opening"><a href="/openai/jobs/13">Recruiter</a></li>
+  </ul>
+</body>
+</html>`;
+
+function fetched(url: string, body: string): FetchedPage {
+  const title = body.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1]?.trim() ?? null;
+  const text = body
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return { requestedUrl: url, canonicalUrl: url, httpStatus: 200, title, html: body, text, redirected: false, redirectChain: [] };
+}
+
+function assertBoardExplanation(page: string, platform: string): void {
+  assert.match(page, /class="verdict">Can&#39;t tell</);
+  assert.ok(page.includes(BOARD_PAGE_COPY), platform);
+  assert.equal(page.includes("blocks automated checks"), false, platform);
+  assert.equal(page.includes("Site showed a bot check"), false, platform);
+  assert.ok(page.includes("This link isn&#39;t one specific job posting"), platform);
+  assert.match(page, new RegExp(`class="platform">${platform}</p>`));
+}
 
 const ENV_KEYS = [
   "LIVECHECK_FREE_PER_VISITOR_DAILY",
@@ -258,6 +336,66 @@ describe("free /job page", () => {
     assert.ok(hits.every((h) => h.local === PUBLIC_IP));
     const s = await freeStats();
     assert.deepEqual([s.today.checks, s.today.verdict_open, s.today.verdict_closed, s.today.verdict_cant_tell], [3, 1, 1, 1]);
+  });
+
+  describe("job board pages", () => {
+    beforeEach(() => {
+      setFreeJobPolicyForTests(
+        testPolicy({
+          resolver: async (host: string) => {
+            resolverCalls.push(host);
+            if (
+              host === "job-boards.greenhouse.io" ||
+              host === "jobs.lever.co" ||
+              host === "jobs.ashbyhq.com" ||
+              host.endsWith(".test")
+            ) {
+              return [PUBLIC_IP];
+            }
+            throw new Error("ENOTFOUND");
+          },
+        }),
+      );
+    });
+
+    it("Greenhouse board result tells the visitor to open one posting", async () => {
+      const url = `http://job-boards.greenhouse.io:${port}/anthropic`;
+      const verdict = classify(fetched(url, GREENHOUSE_BOARD_HTML));
+      assert.equal(verdict.status, "unknown");
+      assert.ok(verdict.signals.includes("not_a_specific_posting"));
+      assert.equal(verdict.signals.includes("challenge_page"), false);
+      const page = await (await form(url, { cookie: visitor(50), ip: "198.51.100.50" })).text();
+      assertBoardExplanation(page, "Greenhouse");
+    });
+
+    it("Lever board result (challenge_page + not_a_specific_posting) does not say the site blocks checks", async () => {
+      const url = `http://jobs.lever.co:${port}/palantir`;
+      const verdict = classify(fetched(url, LEVER_BOARD_HTML));
+      assert.equal(verdict.status, "unknown");
+      assert.ok(verdict.signals.includes("challenge_page"));
+      assert.ok(verdict.signals.includes("not_a_specific_posting"));
+      const page = await (await form(url, { cookie: visitor(51), ip: "198.51.100.51" })).text();
+      assertBoardExplanation(page, "Lever");
+    });
+
+    it("Ashby board result tells the visitor to open one posting", async () => {
+      const url = `http://jobs.ashbyhq.com:${port}/openai`;
+      const verdict = classify(fetched(url, ASHBY_BOARD_HTML));
+      assert.equal(verdict.status, "unknown");
+      assert.ok(verdict.signals.includes("not_a_specific_posting"));
+      assert.equal(verdict.signals.includes("challenge_page"), false);
+      const page = await (await form(url, { cookie: visitor(52), ip: "198.51.100.52" })).text();
+      assertBoardExplanation(page, "Ashby");
+    });
+
+    it("a real challenge_page on a single posting still gets the blocked explanation", async () => {
+      const url = u("/jobs/5555");
+      const page = await (await form(url, { cookie: visitor(53), ip: "198.51.100.53" })).text();
+      assert.match(page, /class="verdict">Can&#39;t tell</);
+      assert.match(page, /This site blocks automated checks or needs a login, so we won&#39;t guess\./);
+      assert.match(page, /Site showed a bot check \(we don&#39;t bypass those\)/);
+      assert.equal(page.includes(BOARD_PAGE_COPY), false);
+    });
   });
 
   it("limits: 5 per cookie, 15 per IP, per Pacific day", async () => {
@@ -653,6 +791,59 @@ describe("free /job helpers", () => {
       evidenceForVerdict(["ats_api_missing", "redirected_away_from_job", "apply form present", "no closure banner"], "Greenhouse", "Closed"),
       ["Removed from Greenhouse's jobs API", "Link now redirects away from the posting"],
     );
+  });
+
+  it("Greenhouse board (not_a_specific_posting) says to open one posting", () => {
+    const signals = ["not_a_specific_posting"];
+    assert.equal(verdictLabel("unknown"), "Can't tell");
+    assert.equal(cantTellCopy(signals), BOARD_PAGE_COPY);
+    assert.equal(cantTellCopy(signals).includes("blocks automated checks"), false);
+    assert.equal(cantTellCopy(signals).includes(UNCLEAR_COPY), false);
+    const evidence = evidenceForVerdict(signals, "Greenhouse", "Can't tell");
+    assert.equal(evidence.includes(BOT_CHECK_LINE), false);
+    assert.ok(evidence.includes("This link isn't one specific job posting"));
+  });
+
+  it("Lever board (challenge_page + not_a_specific_posting) prefers the board sentence over blocked copy", () => {
+    const signals = ["challenge_page", "not_a_specific_posting"];
+    assert.equal(verdictLabel("unknown"), "Can't tell");
+    assert.equal(cantTellCopy(signals), BOARD_PAGE_COPY);
+    assert.equal(cantTellCopy(signals).includes("blocks automated checks"), false);
+    const evidence = evidenceForVerdict(signals, "Lever", "Can't tell");
+    assert.equal(evidence.includes(BOT_CHECK_LINE), false);
+    assert.equal(evidenceInPlainWords(signals, "Lever").includes(BOT_CHECK_LINE), false);
+    assert.ok(evidence.includes("This link isn't one specific job posting"));
+    assert.equal(cantTellCopy(["loginwalled", "not_a_specific_posting"]), BOARD_PAGE_COPY);
+    assert.equal(cantTellCopy(["js_shell", "not_a_specific_posting"]), BOARD_PAGE_COPY);
+  });
+
+  it("Ashby board (not_a_specific_posting) says to open one posting", () => {
+    const signals = ["not_a_specific_posting"];
+    assert.equal(verdictLabel("unknown"), "Can't tell");
+    assert.equal(cantTellCopy(signals), BOARD_PAGE_COPY);
+    assert.equal(cantTellCopy(signals).includes("blocks automated checks"), false);
+    assert.equal(cantTellCopy(signals).includes(UNCLEAR_COPY), false);
+    assert.equal(evidenceForVerdict(signals, "Ashby", "Can't tell").includes(BOT_CHECK_LINE), false);
+  });
+
+  it("collection_or_category is the same list-not-a-posting case, and still beats the bot-check line", () => {
+    assert.equal(cantTellCopy(["collection_or_category"]), BOARD_PAGE_COPY);
+    const signals = ["collection_or_category", "challenge_page"];
+    assert.equal(cantTellCopy(signals), BOARD_PAGE_COPY);
+    assert.equal(cantTellCopy(signals).includes("blocks automated checks"), false);
+    const evidence = evidenceForVerdict(signals, "Company careers page", "Can't tell");
+    assert.equal(evidence.includes(BOT_CHECK_LINE), false);
+    assert.ok(evidence.includes("This is a list of jobs, not one posting"));
+  });
+
+  it("a challenge_page on a single posting still gets the blocked explanation and the bot-check line", () => {
+    const signals = ["challenge_page"];
+    assert.equal(verdictLabel("unknown"), "Can't tell");
+    assert.equal(cantTellCopy(signals), BLOCKED_COPY);
+    assert.deepEqual(evidenceForVerdict(signals, "Greenhouse", "Can't tell"), [BOT_CHECK_LINE]);
+    assert.equal(cantTellCopy(["ambiguous_html"]), UNCLEAR_COPY);
+    assert.equal(cantTellCopy(["loginwalled"]), BLOCKED_COPY);
+    assert.equal(cantTellCopy(["js_shell"]), BLOCKED_COPY);
   });
 
   it("address policy: private, loopback, link-local, CGNAT, Fly 6PN, metadata, mapped, NAT64, 6to4", async () => {
