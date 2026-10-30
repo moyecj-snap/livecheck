@@ -1,4 +1,5 @@
 import { lookupAtsJob, combinePageAndAts, parseAtsJobUrl, verdictFromAtsWithoutPage } from "./ats-api.js";
+import { roleRefFor } from "./free-job-role.js";
 import { CHECK_TIMEOUT_SIGNAL, FETCH_TIMEOUT_MS, MAX_BODY_BYTES, PRICE_USD, USER_AGENT } from "./config.js";
 import { classify } from "./classify.js";
 import { DeadlineError, isAbortLike, linkedAbort, resolveDeadlineMs, withDeadline } from "./deadline.js";
@@ -171,7 +172,9 @@ async function verifyUrlWithin(
     }
     logEbayAdapterDisabled();
   }
-  const ats = options.atsApi ? parseAtsJobUrl(url) : null;
+  // Company careers embeds (Figma and others) pass the Greenhouse id as gh_jid
+  // instead of a boards.greenhouse.io URL. roleRefFor resolves that id.
+  const ats = options.atsApi ? parseAtsJobUrl(url) ?? roleRefFor(url) : null;
   if (!ats) {
     const page = await fetchPage(url, fetcher, { signal });
     return classify(page, now);
