@@ -330,13 +330,11 @@ function isBoardOrList(signals: readonly string[]): boolean {
 }
 
 /**
- * Paid /v1/verify, /v1/verify/job, and /v1/verify/listing.
- * Same board/list detection as the free /job page. A product collection is
- * not a job board. A posting that redirected onto a board already has a
- * closed/unknown answer, so it does not get the "pass one posting" line.
- * Live and closed stay as they are: this sentence is only for "can't tell"
- * because the URL was never one posting. A 200 with that verdict is still
- * a real answer, so the usual charge applies.
+ * Message on a paid 200, after the page was fetched. A board whose URL shape
+ * is obvious never reaches here: that request is rejected before payment.
+ * A product collection is not a job board. A posting that redirected onto a
+ * board already has a closed or unknown answer, so it does not get this line.
+ * Finding a board only after the fetch is still a real $0.01 answer.
  */
 export function boardPageApiMessage(verdict: { status: string; signals: readonly string[] }): string | undefined {
   if (verdict.status !== "unknown") return undefined;

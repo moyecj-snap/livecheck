@@ -32,8 +32,9 @@ import { isEbayAdapterEnabled } from "./ebay.js";
 import { demoHtml } from "./demo-page.js";
 import { DEMO_THANK_YOU_PATH, demoThankYouHtml } from "./demo-thank-you.js";
 import { discoveryHeaders, openApiDocument, wellKnownX402 } from "./discovery.js";
+import { isBoardUrlShape } from "./classify.js";
 import { FIXTURES } from "./fixtures.js";
-import { boardPageApiMessage, registerFreeJobRoutes } from "./free-job-page.js";
+import { BOARD_PAGE_API_MESSAGE, boardPageApiMessage, registerFreeJobRoutes } from "./free-job-page.js";
 import { LLMS_TXT, llmsTxtHeaders } from "./llms.js";
 import { NOHUMANS_CLAIM_PATH, nohumansClaimResponse } from "./nohumans-claim.js";
 import { isInternalTestMode, withBurstProtection } from "./check-capacity.js";
@@ -69,6 +70,8 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
   app.use(withWatchPayerContext());
   // Outside the payment gate so facilitator.settle still sees the request signal.
   app.use(withSettleAbortContext());
+  // Before x402 and MPP. A board URL we can see from the string is not a check.
+  app.use(rejectBoardUrlBeforePayment());
   // Verify routes: 503 before facilitator when full, and test mode skips x402.
   app.use(withBurstProtection(paymentGate));
 
@@ -206,6 +209,46 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
   return app;
 }
 
+const VERIFY_PAID_PATHS = new Set(["/v1/verify", "/v1/verify/job", "/v1/verify/listing"]);
+
+/**
+ * Greenhouse, Lever, or Ashby with no job id, or another board shape in the
+ * URL itself. Returned before the payment gate, so there is no 402, no
+ * settlement, and no paid_calls row. A board found only after fetch (a
+ * redirect, or a list page whose URL was not this shape) is still charged.
+ */
+function rejectBoardUrlBeforePayment(): MiddlewareHandler {
+  return async (c, next) => {
+    const path = c.req.path.replace(/\/+$/, "") || "/";
+    if (c.req.method !== "POST" || !VERIFY_PAID_PATHS.has(path)) return next();
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return next();
+    }
+    const raw = typeof body === "object" && body !== null ? (body as { url?: unknown }).url : undefined;
+    if (typeof raw !== "string") return next();
+    let href: string;
+    try {
+      href = parseTargetUrl(raw);
+    } catch {
+      return next();
+    }
+    if (!isBoardUrlShape(href)) return next();
+    return c.json(
+      {
+        error: "board_url",
+        message: BOARD_PAGE_API_MESSAGE,
+        billed: false,
+        price_usd: 0,
+      },
+      400,
+      { "cache-control": "no-store" },
+    );
+  };
+}
+
 async function handlePaidVerify(c: Context) {
   let body: unknown;
   try {
@@ -230,9 +273,8 @@ async function handlePaidVerify(c: Context) {
         user_agent: c.req.header("user-agent"),
       });
     }
-    // Board/index URLs are a real "can't tell" (HTTP 200), not a 4xx.
-    // x402 settles only under 400, and MPP refunds a handler status >= 400,
-    // so a 4xx here would skip the charge or log a refund for an honest answer.
+    // A board we only learn about after the fetch (redirect, or a list page
+    // whose URL was not an obvious board) is a real answer and stays $0.01.
     const message = boardPageApiMessage(verdict);
     return c.json(withWatchHint({ ...verdict, route, ...(message ? { message } : {}) }));
   } catch (error) {

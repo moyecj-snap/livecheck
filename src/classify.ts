@@ -201,6 +201,41 @@ function looksLikeSpecificJobUrl(url: string): boolean {
   return !/^(search|board|list|index)$/i.test(posting[1]);
 }
 
+const JOB_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A job board we can see from the URL string alone, before any fetch.
+ * Greenhouse, Lever, and Ashby with no job id in the path, a careers or jobs
+ * index, a Greenhouse job-board embed, or a LinkedIn jobs search. A numeric
+ * `gh_jid` is a job id even when the path is a careers page, so it is not
+ * rejected here.
+ */
+export function isBoardUrlShape(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  if (/[?&]gh_jid=\d+\b/i.test(url.search)) return false;
+  const host = url.hostname.toLowerCase();
+  const path = url.pathname.replace(/\/+$/, "") || "/";
+  const parts = path.split("/").filter(Boolean);
+  if (host.endsWith("greenhouse.io")) {
+    const token = url.searchParams.get("token")?.trim() ?? "";
+    if (/\/embed\/job_app/i.test(path) && /^\d+$/.test(token)) return false;
+    return !/\/jobs\/\d+/.test(path);
+  }
+  if (host.endsWith("lever.co") || host.endsWith("ashbyhq.com")) {
+    return !parts.some((part) => JOB_UUID.test(part));
+  }
+  if (/^\/(careers|jobs)$/i.test(path)) return true;
+  if (path.includes("/job_board") || path.includes("/embed/job_board")) return true;
+  if (isLinkedInHost(host) && /\/jobs(\/|$)/.test(path) && !/\/jobs\/view\//.test(path)) return true;
+  return false;
+}
+
 function looksLikeBoardOrSearchUrl(url: string): boolean {
   const { host, path, search } = extractHostPath(url);
   const q = search.toLowerCase();

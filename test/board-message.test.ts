@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { serve } from "@hono/node-server";
 import { createApp } from "../src/app.js";
+import { isBoardUrlShape } from "../src/classify.js";
 import { BOARD_PAGE_API_MESSAGE, boardPageApiMessage } from "../src/free-job-page.js";
 import { PRICE_USD } from "../src/config.js";
+import { closePaidCallStore, initPaidCallStore, listPaidCallRows } from "../src/paid-call-store.js";
 
 const BOARD_HTML = `<!doctype html><html><head><title>Acme Careers</title></head><body>
   <h1>Open roles</h1>
@@ -61,13 +63,40 @@ describe("boardPageApiMessage", () => {
   });
 });
 
+describe("isBoardUrlShape", () => {
+  it("is true for Greenhouse, Lever, and Ashby boards with no job id", () => {
+    assert.equal(isBoardUrlShape("https://boards.greenhouse.io/acme"), true);
+    assert.equal(isBoardUrlShape("https://job-boards.greenhouse.io/acme"), true);
+    assert.equal(isBoardUrlShape("https://boards.greenhouse.io/acme/jobs"), true);
+    assert.equal(isBoardUrlShape("https://jobs.lever.co/acme"), true);
+    assert.equal(isBoardUrlShape("https://jobs.eu.lever.co/acme"), true);
+    assert.equal(isBoardUrlShape("https://jobs.ashbyhq.com/linear"), true);
+    assert.equal(isBoardUrlShape("https://jobs.ashbyhq.com/linear/jobs"), true);
+    assert.equal(isBoardUrlShape("https://example.com/careers"), true);
+  });
+
+  it("is false for a posting, including one that only later redirects", () => {
+    assert.equal(isBoardUrlShape("https://boards.greenhouse.io/acme/jobs/1842"), false);
+    assert.equal(isBoardUrlShape("https://job-boards.greenhouse.io/embed/job_app?for=acme&token=1842"), false);
+    assert.equal(isBoardUrlShape("https://jobs.lever.co/acme/16a1b500-13fe-4c22-ad89-372093b462da"), false);
+    assert.equal(isBoardUrlShape("https://jobs.ashbyhq.com/linear/d3bc1ced-3ce4-4086-a050-555055dbb1ff"), false);
+    assert.equal(isBoardUrlShape("https://www.figma.com/careers?gh_jid=6223155004"), false);
+    assert.equal(isBoardUrlShape("https://shop.example/collections/rings"), false);
+  });
+});
+
 describe("paid routes say when the URL is a board", () => {
   const app = createApp();
   let origin = "";
   let close: () => void = () => {};
   const originalFetch = globalThis.fetch;
 
+  let paidDb: ReturnType<typeof initPaidCallStore>["db"] | undefined;
+
   before(async () => {
+    const opened = initPaidCallStore(":memory:");
+    assert.equal(opened.ok, true);
+    if (opened.ok) paidDb = opened.db;
     await new Promise<void>((resolve) => {
       const server = serve({ fetch: app.fetch, port: 0, hostname: "127.0.0.1" }, (info) => {
         origin = `http://127.0.0.1:${info.port}`;
@@ -91,6 +120,7 @@ describe("paid routes say when the URL is a board", () => {
   after(() => {
     globalThis.fetch = originalFetch;
     close();
+    closePaidCallStore();
   });
 
   async function paid(path: string, url: string) {
@@ -109,21 +139,88 @@ describe("paid routes say when the URL is a board", () => {
     return { status: res.status, body };
   }
 
-  it("returns 200 with the board sentence on verify, verify/job, and verify/listing", async () => {
-    for (const path of ["/v1/verify", "/v1/verify/job", "/v1/verify/listing"]) {
-      const { status, body } = await paid(path, "https://example.com/careers");
-      assert.equal(status, 200, path);
-      assert.equal(body.status, "unknown", path);
-      assert.equal(body.message, BOARD_PAGE_API_MESSAGE, path);
-      assert.equal(body.price_usd, PRICE_USD, path);
-      assert.ok(body.signals?.includes("not_a_specific_posting"), path);
+  async function post(path: string, url: string, headers: Record<string, string> = {}) {
+    const logs: string[] = [];
+    const write = console.log;
+    console.log = (...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+      write(...args);
+    };
+    try {
+      const res = await originalFetch(`${origin}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify({ url }),
+      });
+      const body = (await res.json()) as {
+        error?: string;
+        status?: string;
+        message?: string;
+        billed?: boolean;
+        price_usd?: number;
+        signals?: string[];
+        route?: string;
+      };
+      return { status: res.status, paymentRequired: res.headers.get("payment-required"), body, logs };
+    } finally {
+      console.log = write;
     }
-    const lever = await paid("/v1/verify/job", "https://jobs.lever.co/acme");
-    assert.equal(lever.status, 200);
-    assert.equal(lever.body.message, BOARD_PAGE_API_MESSAGE);
-    const greenhouse = await paid("/v1/verify", "https://boards.greenhouse.io/acme");
-    assert.equal(greenhouse.status, 200);
-    assert.equal(greenhouse.body.message, BOARD_PAGE_API_MESSAGE);
+  }
+
+  it("rejects a Greenhouse, Lever, or Ashby board before payment", async () => {
+    assert.ok(paidDb);
+    const beforeRows = listPaidCallRows(paidDb).length;
+    const beforeStats = await originalFetch(`${origin}/stats`);
+    const beforeDoc = (await beforeStats.json()) as {
+      traffic: { all: { payers: { l7d: { calls: number }; l30d: { calls: number } } }; revenue: { all: { l7d_usd: number; l30d_usd: number } } };
+    };
+
+    const cases = [
+      ["/v1/verify", "https://boards.greenhouse.io/acme"],
+      ["/v1/verify/job", "https://jobs.lever.co/acme"],
+      ["/v1/verify/listing", "https://jobs.ashbyhq.com/linear"],
+      ["/v1/verify", "https://example.com/careers"],
+    ] as const;
+    for (const [path, url] of cases) {
+      const unpaid = await post(path, url);
+      assert.equal(unpaid.status, 400, url);
+      assert.equal(unpaid.paymentRequired, null, url);
+      assert.equal(unpaid.body.error, "board_url", url);
+      assert.equal(unpaid.body.message, BOARD_PAGE_API_MESSAGE, url);
+      assert.equal(unpaid.body.billed, false, url);
+      assert.equal(unpaid.body.price_usd, 0, url);
+      assert.equal(unpaid.logs.some((line) => line.includes("livecheck.paid_call")), false, url);
+
+      const withMock = await post(path, url, { "x-livecheck-mock": "1" });
+      assert.equal(withMock.status, 400, url);
+      assert.equal(withMock.body.billed, false, url);
+      assert.equal(withMock.logs.some((line) => line.includes("livecheck.paid_call")), false, url);
+    }
+
+    assert.equal(listPaidCallRows(paidDb).length, beforeRows);
+    const afterStats = await originalFetch(`${origin}/stats`);
+    const afterDoc = (await afterStats.json()) as typeof beforeDoc;
+    assert.deepEqual(afterDoc.traffic.all.payers, beforeDoc.traffic.all.payers);
+    assert.deepEqual(afterDoc.traffic.revenue, beforeDoc.traffic.revenue);
+  });
+
+  it("still charges when a posting URL redirects to a board", async () => {
+    assert.ok(paidDb);
+    const beforeRows = listPaidCallRows(paidDb).length;
+    const posting = `${origin}/fixtures/jobs/9901`;
+    const unpaid = await post("/v1/verify", posting);
+    assert.equal(unpaid.status, 402);
+    assert.ok(unpaid.paymentRequired);
+    assert.equal(unpaid.body.message, undefined);
+
+    const paidRedirect = await post("/v1/verify/job", posting, { "x-livecheck-mock": "1" });
+    assert.equal(paidRedirect.status, 200);
+    assert.equal(paidRedirect.body.price_usd, PRICE_USD);
+    assert.equal(paidRedirect.body.billed, undefined);
+    assert.equal(paidRedirect.body.status, "closed");
+    assert.ok(paidRedirect.body.signals?.includes("redirected_to_board"));
+    assert.equal(paidRedirect.logs.some((line) => line.includes("livecheck.paid_call")), true);
+    assert.equal(listPaidCallRows(paidDb).length, beforeRows + 1);
   });
 
   it("does not add the sentence to a single posting or a product collection", async () => {
