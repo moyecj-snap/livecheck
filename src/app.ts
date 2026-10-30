@@ -33,7 +33,7 @@ import { demoHtml } from "./demo-page.js";
 import { DEMO_THANK_YOU_PATH, demoThankYouHtml } from "./demo-thank-you.js";
 import { discoveryHeaders, openApiDocument, wellKnownX402 } from "./discovery.js";
 import { FIXTURES } from "./fixtures.js";
-import { registerFreeJobRoutes } from "./free-job-page.js";
+import { boardPageApiMessage, registerFreeJobRoutes } from "./free-job-page.js";
 import { LLMS_TXT, llmsTxtHeaders } from "./llms.js";
 import { NOHUMANS_CLAIM_PATH, nohumansClaimResponse } from "./nohumans-claim.js";
 import { isInternalTestMode, withBurstProtection } from "./check-capacity.js";
@@ -230,7 +230,11 @@ async function handlePaidVerify(c: Context) {
         user_agent: c.req.header("user-agent"),
       });
     }
-    return c.json(withWatchHint({ ...verdict, route }));
+    // Board/index URLs are a real "can't tell" (HTTP 200), not a 4xx.
+    // x402 settles only under 400, and MPP refunds a handler status >= 400,
+    // so a 4xx here would skip the charge or log a refund for an honest answer.
+    const message = boardPageApiMessage(verdict);
+    return c.json(withWatchHint({ ...verdict, route, ...(message ? { message } : {}) }));
   } catch (error) {
     if (error instanceof VerifyError) {
       return c.json({ error: error.message }, error.status as 400 | 502 | 504);

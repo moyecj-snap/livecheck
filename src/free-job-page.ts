@@ -314,6 +314,9 @@ const BLOCKED_COPY = "This site blocks automated checks or needs a login, so we 
 const UNCLEAR_COPY = "We couldn't get a clear answer from this page, so we won't guess.";
 const UNREACHABLE_COPY = "We couldn't reach this site just now, so we won't guess.";
 const BOARD_PAGE_COPY = "This page is a list of jobs, not one posting. Open a single job and paste its link.";
+/** Same fact as BOARD_PAGE_COPY, for a JSON caller who passes a URL rather than pasting into /job. */
+export const BOARD_PAGE_API_MESSAGE =
+  "This URL is a job board or careers index, not a single posting. Pass the URL of one job posting.";
 const BOT_CHECK_LINE = "Site showed a bot check (we don't bypass those)";
 
 /**
@@ -324,6 +327,26 @@ const BOT_CHECK_LINE = "Site showed a bot check (we don't bypass those)";
  */
 function isBoardOrList(signals: readonly string[]): boolean {
   return signals.includes("not_a_specific_posting") || signals.includes("collection_or_category");
+}
+
+/**
+ * Paid /v1/verify, /v1/verify/job, and /v1/verify/listing.
+ * Same board/list detection as the free /job page. A product collection is
+ * not a job board. A posting that redirected onto a board already has a
+ * closed/unknown answer, so it does not get the "pass one posting" line.
+ * Live and closed stay as they are: this sentence is only for "can't tell"
+ * because the URL was never one posting. A 200 with that verdict is still
+ * a real answer, so the usual charge applies.
+ */
+export function boardPageApiMessage(verdict: { status: string; signals: readonly string[] }): string | undefined {
+  if (verdict.status !== "unknown") return undefined;
+  if (verdict.signals.includes("redirected_to_board") || verdict.signals.includes("redirected_away_from_job")) {
+    return undefined;
+  }
+  if (verdict.signals.includes("ats_api_listed")) return undefined;
+  const jobBoard = verdict.signals.includes("not_a_specific_posting") || verdict.signals.includes("careers_homepage");
+  if (!jobBoard) return undefined;
+  return BOARD_PAGE_API_MESSAGE;
 }
 
 function formatDay(iso: string): string | undefined {

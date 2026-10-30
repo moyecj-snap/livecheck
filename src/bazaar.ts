@@ -61,6 +61,11 @@ export const VERIFY_OUTPUT_SCHEMA = {
     signals: { type: "array", items: { type: "string" } },
     confidence: { type: "number" },
     price_usd: { type: "number" },
+    message: {
+      type: "string",
+      description:
+        "Set when the URL is a job board or careers index instead of one posting. Ask for a single posting URL. Omitted on live and closed answers.",
+    },
     route: {
       type: "string",
       description:
