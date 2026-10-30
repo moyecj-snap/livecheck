@@ -2095,11 +2095,17 @@ function starterKeysHtml(doc: StatsDocument): string {
   const cap = keys.daily_cap_hit
     ? `<p class="warning" role="alert"><strong>Daily free-key cap hit.</strong> ${keys.daily_cap_used} free-key checks today, cap ${keys.daily_cap}. The cap was not raised.</p>`
     : "";
-  const on = keys.enabled ? "on" : "off";
+  const stop = keys.emergency_stop
+    ? `<p class="warning" role="alert"><strong>Emergency stop is on.</strong> Every starter key is off until <code>keys:set emergency_stop 0</code>.</p>`
+    : "";
+  const wind = keys.wind_down
+    ? `<p class="honesty">Wind-down is on. Sign-up is closed. Unexpired keys keep working until they expire. <code>keys:set wind_down 0</code> opens sign-up again.</p>`
+    : "";
   const l7 = keys.l7d;
   const l30 = keys.l30d;
-  return `${cap}<h2>Starter keys</h2>
-  <p class="muted">${escHtml(keys.note)} Enabled: ${on}. Daily cap ${keys.daily_cap} (${keys.daily_cap_used} used today${keys.daily_cap_hit ? ", cap hit" : ""}).</p>
+  return `${cap}${stop}<h2>Starter keys</h2>
+  ${wind}
+  <p class="muted">${escHtml(keys.note)} Emergency stop: ${keys.emergency_stop ? "on" : "off"}. Wind-down: ${keys.wind_down ? "on" : "off"}. Daily cap ${keys.daily_cap} (${keys.daily_cap_used} used today${keys.daily_cap_hit ? ", cap hit" : ""}).</p>
   <p class="muted">L7d: ${l7.issued} issued, ${l7.activated} activated, ${l7.reached_20} with 20+ checks, ${l7.free_checks} free checks, ${l7.out_of_credit} out of credit. L30d: ${l30.issued} issued, ${l30.activated} activated, ${l30.reached_20} with 20+ checks, ${l30.free_checks} free checks, ${l30.out_of_credit} out of credit.</p>`;
 }
 

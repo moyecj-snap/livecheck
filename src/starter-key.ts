@@ -12,7 +12,17 @@ import { CHECK_TIMEOUT_SIGNAL } from "./config.js";
 
 export const GITHUB_OAUTH_CLIENT_ID_ENV = "GITHUB_OAUTH_CLIENT_ID";
 export const GITHUB_OAUTH_CLIENT_SECRET_ENV = "GITHUB_OAUTH_CLIENT_SECRET";
-export const STARTER_KEYS_ENABLED_ENV = "LIVECHECK_STARTER_KEYS_ENABLED";
+
+/** Same address as the free /job page and the OpenAPI contact. */
+export const STARTER_KEY_CONTACT_EMAIL = "moyecj@gmail.com";
+
+export const EMERGENCY_STOP_MESSAGE =
+  "Starter keys are stopped. This is an emergency stop: every key is off until it is turned back on.";
+
+export const WIND_DOWN_MESSAGE =
+  "Starter key sign-up is closed. Existing keys keep working until they expire.";
+
+export const OUT_OF_CHECKS_MESSAGE = `This starter key has used its free checks. Pay with a wallet (x402 on Base or MPP on Tempo) by calling this route without the key, or reply to get a top-up link: ${STARTER_KEY_CONTACT_EMAIL}.`;
 
 export const STARTER_KEY_CALLBACK_PATH = "/keys/callback";
 export const STARTER_KEY_PAGE_PATH = "/keys";
@@ -32,7 +42,17 @@ const KEY_ID_RE = /^k_[a-f0-9]{16}$/;
 const BEARER_RE = /^Bearer\s+(lc_live_[A-Za-z0-9_-]{40,90})$/i;
 
 export const STARTER_KEY_SETTINGS = {
-  enabled: { min: 0, max: 1, fallback: 1 },
+  /**
+   * 1 stops every key immediately, including ones that have not expired.
+   * For abuse, a cost spike, or a bug. Overrides wind_down. Default off.
+   * Live: `keys:set emergency_stop 1`. No env var and no redeploy.
+   */
+  emergency_stop: { min: 0, max: 1, fallback: 0 },
+  /**
+   * 1 closes /keys sign-up. Unexpired keys keep their remaining checks
+   * until they expire. Default off. Live: `keys:set wind_down 1`.
+   */
+  wind_down: { min: 0, max: 1, fallback: 0 },
   /** Free answers per UTC day, all keys. Operator-adjustable. Never raised by code. */
   daily_check_cap: { min: 0, max: 1_000_000, fallback: 2_000 },
   per_key_daily_checks: { min: 1, max: 100_000, fallback: 200 },
@@ -53,8 +73,10 @@ export type StarterSettingKey = keyof typeof STARTER_KEY_SETTINGS;
 export type StarterKeySettings = Partial<Record<StarterSettingKey, number>>;
 
 export type StarterKeyLimits = {
-  enabled: boolean;
-  envForcedOff: boolean;
+  /** Every key stops immediately. Overrides wind-down. */
+  emergencyStop: boolean;
+  /** No new keys. Existing unexpired keys still run. */
+  windDown: boolean;
   dailyCheckCap: number;
   perKeyDailyChecks: number;
   perKeyPerMinute: number;
@@ -63,12 +85,6 @@ export type StarterKeyLimits = {
   freeAllowance: number;
   abuseMinSamples: number;
 };
-
-const OFF = new Set(["0", "off", "false", "no"]);
-
-export function starterKeysForceDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return OFF.has(env[STARTER_KEYS_ENABLED_ENV]?.trim().toLowerCase() ?? "");
-}
 
 export function githubOauthConfig(
   env: NodeJS.ProcessEnv = process.env,
@@ -88,12 +104,9 @@ export function parseStarterKeySetting(key: unknown, raw: unknown): { key: Start
     throw new Error(`unknown setting ${String(key)}; use one of: ${Object.keys(STARTER_KEY_SETTINGS).join(", ")}`);
   }
   const text = typeof raw === "number" ? String(raw) : String(raw ?? "").trim().toLowerCase();
+  const flag = STARTER_KEY_SETTINGS[key].min === 0 && STARTER_KEY_SETTINGS[key].max === 1;
   const value =
-    key === "enabled" && (text === "on" || text === "true")
-      ? 1
-      : key === "enabled" && (text === "off" || text === "false")
-        ? 0
-        : Number(text);
+    flag && (text === "on" || text === "true") ? 1 : flag && (text === "off" || text === "false") ? 0 : Number(text);
   const { min, max } = STARTER_KEY_SETTINGS[key];
   if (!Number.isInteger(value) || value < min || value > max) {
     throw new Error(`${key} must be a whole number from ${min} to ${max}, got ${String(raw)}`);
@@ -101,20 +114,16 @@ export function parseStarterKeySetting(key: unknown, raw: unknown): { key: Start
   return { key, value };
 }
 
-export function resolveStarterKeyLimits(
-  settings: StarterKeySettings,
-  env: NodeJS.ProcessEnv = process.env,
-): StarterKeyLimits {
+export function resolveStarterKeyLimits(settings: StarterKeySettings): StarterKeyLimits {
   const pick = (key: StarterSettingKey): number => {
     const value = settings[key];
     const spec = STARTER_KEY_SETTINGS[key];
     if (value === undefined || !Number.isInteger(value) || value < spec.min || value > spec.max) return spec.fallback;
     return value;
   };
-  const envForcedOff = starterKeysForceDisabled(env);
   return {
-    enabled: !envForcedOff && pick("enabled") === 1,
-    envForcedOff,
+    emergencyStop: pick("emergency_stop") === 1,
+    windDown: pick("wind_down") === 1,
     dailyCheckCap: pick("daily_check_cap"),
     perKeyDailyChecks: pick("per_key_daily_checks"),
     perKeyPerMinute: pick("per_key_per_minute"),

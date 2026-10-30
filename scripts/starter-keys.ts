@@ -3,7 +3,8 @@
  * next request. No deploy, no restart.
  *
  *   npm run --silent keys:list
- *   npm run --silent keys:set -- enabled 0
+ *   npm run --silent keys:set -- emergency_stop 1
+ *   npm run --silent keys:set -- wind_down 1
  *   npm run --silent keys:set -- daily_check_cap 2000
  *   npm run --silent keys:revoke -- k_0123abcd0123abcd
  *   npm run --silent keys:cleanup
@@ -11,11 +12,18 @@
  *   npm run --silent keys:followups -- --mark k_0123abcd0123abcd
  *
  * On Fly:
- *   fly ssh console -a livecheck -C "npm run --silent keys:set -- enabled 0"
+ *   fly ssh console -a livecheck -C "npm run --silent keys:set -- emergency_stop 1"
+ *   fly ssh console -a livecheck -C "npm run --silent keys:set -- wind_down 1"
+ *
+ * Both switches are rows in api_key_settings. The next request sees them.
+ * No Fly secret and no restart.
+ *   emergency_stop 1  every key stops immediately (abuse, cost, or a bug).
+ *                     Overrides wind_down. Set 0 to turn keys back on.
+ *   wind_down 1       /keys sign-up closes. Unexpired keys keep their
+ *                     remaining checks until they expire. Set 0 to reopen.
  *
  * daily_check_cap can be raised only by this command. Nothing in the server
- * raises it. enabled 0 (or LIVECHECK_STARTER_KEYS_ENABLED=0) turns every
- * free key off immediately.
+ * raises it.
  *
  * Options: --db <path> (default PAID_CALL_DB_PATH, else /data/paid-calls.sqlite
  * on Fly), --json. The DB file must already exist; this never creates one.
@@ -159,7 +167,7 @@ try {
     console.log(JSON.stringify(body));
   } else if (command !== "cleanup") {
     console.log(
-      `effective: enabled=${limits.enabled} env_off=${limits.envForcedOff} daily_check_cap=${limits.dailyCheckCap} per_key_daily=${limits.perKeyDailyChecks} per_minute=${limits.perKeyPerMinute} issuance_per_ip=${limits.issuancePerIp} issuance_per_day=${limits.issuancePerDay} free_allowance=${limits.freeAllowance} abuse_min_samples=${limits.abuseMinSamples}`,
+      `effective: emergency_stop=${limits.emergencyStop} wind_down=${limits.windDown} daily_check_cap=${limits.dailyCheckCap} per_key_daily=${limits.perKeyDailyChecks} per_minute=${limits.perKeyPerMinute} issuance_per_ip=${limits.issuancePerIp} issuance_per_day=${limits.issuancePerDay} free_allowance=${limits.freeAllowance} abuse_min_samples=${limits.abuseMinSamples}`,
     );
     console.log(
       `today: free_checks=${stats.daily_cap_used} cap=${stats.daily_cap} cap_hit=${stats.daily_cap_hit} (cap is never raised automatically)`,

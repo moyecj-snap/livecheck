@@ -138,7 +138,7 @@ if (!starter.available) {
   console.warn("starter keys: paid-calls store is not open, so keys cannot be issued");
 } else {
   console.log(
-    `starter keys: enabled=${starter.enabled} env_off=${starter.env_forced_off} daily_cap=${starter.daily_cap} oauth=${oauth ? "configured" : "missing"} callback=${starterKeyCallbackUrl()}`,
+    `starter keys: emergency_stop=${starter.emergency_stop} wind_down=${starter.wind_down} daily_cap=${starter.daily_cap} oauth=${oauth ? "configured" : "missing"} callback=${starterKeyCallbackUrl()}`,
   );
 }
 

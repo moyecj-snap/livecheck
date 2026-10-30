@@ -10,6 +10,7 @@ import {
   apiKeyDb,
   deleteExpiredStarterKeys,
   issueStarterKey,
+  migrateApiKeyStore,
   listFollowups,
   listStarterKeys,
   markFollowupDrafted,
@@ -33,9 +34,12 @@ import { setGithubFetchForTests } from "../src/starter-key-page.js";
 import {
   GITHUB_OAUTH_CLIENT_ID_ENV,
   GITHUB_OAUTH_CLIENT_SECRET_ENV,
+  EMERGENCY_STOP_MESSAGE,
+  OUT_OF_CHECKS_MESSAGE,
+  STARTER_KEY_CONTACT_EMAIL,
   STARTER_KEY_CONTACT_LABEL,
   STARTER_KEY_PRIVACY_LINE,
-  STARTER_KEYS_ENABLED_ENV,
+  WIND_DOWN_MESSAGE,
   cardFundedPayer,
   classifyStarterSpend,
   githubAccountTooYoung,
@@ -138,7 +142,8 @@ describe("starter key store", () => {
     closePaidCallStore();
   });
   beforeEach(() => {
-    delete process.env[STARTER_KEYS_ENABLED_ENV];
+    setStarterKeySetting(db(), "emergency_stop", 0, now);
+    setStarterKeySetting(db(), "wind_down", 0, now);
   });
 
   it("stores the hash, username, and id, and not the secret, email, or account birth date", () => {
@@ -302,6 +307,81 @@ describe("starter key store", () => {
     assert.equal(listFollowups(db(), later).some((row) => row.id === issued.id), false);
   });
 
+  it("emergency stop and wind-down are independent, and emergency stop wins", () => {
+    const live = issue({ githubId: "9101", login: "livekey", ip: "ip:swlive" });
+    const expired = issue({ githubId: "9102", login: "oldkey", ip: "ip:swold" });
+    db()
+      .prepare(`UPDATE api_keys SET expires_at = ? WHERE id = ?`)
+      .run(isoStamp(new Date(now.getTime() - 1000)), expired.id);
+    const issueNew = (id: string) =>
+      issueStarterKey(
+        db(),
+        {
+          githubId: id,
+          githubLogin: `n${id}`,
+          accountCreatedAt: "2020-01-01T00:00:00Z",
+          contactOptIn: false,
+          ipSubject: `ip:${id}`,
+        },
+        now,
+      );
+    const use = (token: string) => {
+      const result = reserveStarterCall(db(), token, now);
+      if (result.ok) finishStarterCall(db(), result.key.id, { charge: false, blocked: false }, now);
+      return result;
+    };
+    try {
+      setStarterKeySetting(db(), "emergency_stop", 0, now);
+      setStarterKeySetting(db(), "wind_down", 0, now);
+      assert.equal(issueNew("9110").ok, true);
+      assert.equal(use(live.plaintext).ok, true);
+      const openExpired = use(expired.plaintext);
+      assert.equal(openExpired.ok, false);
+      if (!openExpired.ok) assert.equal(openExpired.error, "starter_key_expired");
+
+      setStarterKeySetting(db(), "emergency_stop", 1, now);
+      const emergencyIssue = issueNew("9111");
+      assert.equal(emergencyIssue.ok, false);
+      if (!emergencyIssue.ok) assert.equal(emergencyIssue.error, "emergency_stop");
+      const emergencyUse = use(live.plaintext);
+      assert.equal(emergencyUse.ok, false);
+      if (!emergencyUse.ok) assert.equal(emergencyUse.error, "starter_keys_emergency_stop");
+      const emergencyExpired = use(expired.plaintext);
+      assert.equal(emergencyExpired.ok, false);
+      if (!emergencyExpired.ok) assert.equal(emergencyExpired.error, "starter_keys_emergency_stop");
+
+      setStarterKeySetting(db(), "emergency_stop", 0, now);
+      setStarterKeySetting(db(), "wind_down", 1, now);
+      const windIssue = issueNew("9112");
+      assert.equal(windIssue.ok, false);
+      if (!windIssue.ok) {
+        assert.equal(windIssue.error, "wind_down");
+        assert.equal(windIssue.message, WIND_DOWN_MESSAGE);
+      }
+      assert.equal(use(live.plaintext).ok, true);
+      const windExpired = use(expired.plaintext);
+      assert.equal(windExpired.ok, false);
+      if (!windExpired.ok) assert.equal(windExpired.error, "starter_key_expired");
+
+      setStarterKeySetting(db(), "emergency_stop", 1, now);
+      const bothIssue = issueNew("9113");
+      assert.equal(bothIssue.ok, false);
+      if (!bothIssue.ok) {
+        assert.equal(bothIssue.error, "emergency_stop");
+        assert.equal(bothIssue.message, EMERGENCY_STOP_MESSAGE);
+      }
+      const bothUse = use(live.plaintext);
+      assert.equal(bothUse.ok, false);
+      if (!bothUse.ok) assert.equal(bothUse.error, "starter_keys_emergency_stop");
+      const bothExpired = use(expired.plaintext);
+      assert.equal(bothExpired.ok, false);
+      if (!bothExpired.ok) assert.equal(bothExpired.error, "starter_keys_emergency_stop");
+    } finally {
+      setStarterKeySetting(db(), "emergency_stop", 0, now);
+      setStarterKeySetting(db(), "wind_down", 0, now);
+    }
+  });
+
   it("hits the global cap without raising it", () => {
     const capNow = new Date("2026-11-02T12:00:00Z");
     setStarterKeySetting(db(), "daily_check_cap", 1, capNow);
@@ -332,6 +412,29 @@ describe("starter key store", () => {
       setStarterKeySetting(db(), "daily_check_cap", 2000, capNow);
     }
   });
+
+  it("turns an old enabled 0 row into emergency_stop without a restart", () => {
+    const database = db();
+    database.exec("DROP TABLE api_key_settings");
+    database.exec(`CREATE TABLE api_key_settings (
+      key TEXT PRIMARY KEY CHECK (key IN ('enabled', 'daily_check_cap')),
+      value INTEGER NOT NULL,
+      updated_at TEXT NOT NULL
+    )`);
+    database
+      .prepare(`INSERT INTO api_key_settings (key, value, updated_at) VALUES ('enabled', 0, '2026-10-30T00:00:00Z')`)
+      .run();
+    database
+      .prepare(`INSERT INTO api_key_settings (key, value, updated_at) VALUES ('daily_check_cap', 1500, '2026-10-30T00:00:00Z')`)
+      .run();
+    migrateApiKeyStore(database);
+    const limits = starterKeyLimits(database);
+    assert.equal(limits.emergencyStop, true);
+    assert.equal(limits.windDown, false);
+    assert.equal(limits.dailyCheckCap, 1500);
+    setStarterKeySetting(database, "emergency_stop", 0, now);
+    setStarterKeySetting(database, "daily_check_cap", 2000, now);
+  });
 });
 
 describe("starter key HTTP", () => {
@@ -350,8 +453,9 @@ describe("starter key HTTP", () => {
   beforeEach(() => {
     process.env[GITHUB_OAUTH_CLIENT_ID_ENV] = CLIENT_ID;
     process.env[GITHUB_OAUTH_CLIENT_SECRET_ENV] = CLIENT_SECRET;
-    delete process.env[STARTER_KEYS_ENABLED_ENV];
     delete process.env[TEST_MODE_SECRET_ENV];
+    setStarterKeySetting(db(), "emergency_stop", 0);
+    setStarterKeySetting(db(), "wind_down", 0);
     delete process.env.LIVECHECK_PUBLIC_URL;
     setGithubFetchForTests(null);
     setStarterKeyClockForTests(null);
@@ -371,7 +475,6 @@ describe("starter key HTTP", () => {
     setCheckConcurrencyForTests(null);
     setCheckQueueMaxForTests(null);
     resetCheckSlotsForTests();
-    delete process.env[STARTER_KEYS_ENABLED_ENV];
     delete process.env[TEST_MODE_SECRET_ENV];
   });
 
@@ -515,13 +618,15 @@ describe("starter key HTTP", () => {
     assert.equal(second.status, 402);
     const body = (await second.json()) as { error: string; message: string };
     assert.equal(body.error, "out_of_checks");
+    assert.equal(body.message, OUT_OF_CHECKS_MESSAGE);
     assert.match(body.message, /wallet/i);
     assert.match(body.message, /reply to get a top-up link/);
+    assert.match(body.message, new RegExp(STARTER_KEY_CONTACT_EMAIL));
     assert.equal(used(plaintext), 1);
     setStarterKeySetting(db(), "free_allowance", 200);
   });
 
-  it("enforces the per-key minute and daily limits and the kill switch", async () => {
+  it("enforces the per-key minute and daily limits", async () => {
     setStarterKeySetting(db(), "per_key_per_minute", 2);
     setStarterKeySetting(db(), "per_key_daily_checks", 5);
     const app = createApp();
@@ -542,16 +647,41 @@ describe("starter key HTTP", () => {
     assert.equal(used(plaintext), 2);
 
     setStarterKeySetting(db(), "per_key_daily_checks", 200);
-    setStarterKeySetting(db(), "enabled", 0);
-    const off = await verify(app, plaintext, "https://example.com/e");
-    assert.equal(off.status, 403);
-    assert.equal(((await off.json()) as { error: string }).error, "starter_keys_disabled");
-    setStarterKeySetting(db(), "enabled", 1);
-    process.env[STARTER_KEYS_ENABLED_ENV] = "0";
-    const envOff = await verify(app, plaintext, "https://example.com/f");
-    assert.equal(envOff.status, 403);
     assert.equal(used(plaintext), 2);
-    delete process.env[STARTER_KEYS_ENABLED_ENV];
+  });
+
+  it("closes sign-up on wind-down and stops every key on emergency stop", async () => {
+    const app = createApp();
+    const { plaintext } = await signIn(app, { id: 19, login: "keeper", created_at: "2020-01-01T00:00:00Z" });
+    globalThis.fetch = async () => html(LIVE_HTML, 200);
+    try {
+      setStarterKeySetting(db(), "wind_down", 1);
+      const windPage = await (await app.request("/keys")).text();
+      assert.match(windPage, /Starter key sign-up is closed\. Existing keys keep working until they expire\./);
+      assert.equal((await verify(app, plaintext, "https://example.com/still")).status, 200);
+      const closed = await app.request("/keys/start", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "",
+      });
+      assert.equal(closed.status, 403);
+      assert.match(await closed.text(), /sign-up is closed/);
+
+      setStarterKeySetting(db(), "emergency_stop", 1);
+      const stopPage = await (await app.request("/keys")).text();
+      assert.match(stopPage, /emergency stop/i);
+      assert.doesNotMatch(stopPage, /Existing keys keep working/);
+      const stopped = await verify(app, plaintext, "https://example.com/stopped");
+      assert.equal(stopped.status, 403);
+      assert.equal(((await stopped.json()) as { error: string }).error, "starter_keys_emergency_stop");
+      db().prepare(`UPDATE api_keys SET expires_at = ? WHERE key_sha256 = ?`).run("2020-01-01T00:00:00Z", hashStarterKey(plaintext));
+      const expired = await verify(app, plaintext, "https://example.com/expired");
+      assert.equal(expired.status, 403);
+      assert.equal(((await expired.json()) as { error: string }).error, "starter_keys_emergency_stop");
+    } finally {
+      setStarterKeySetting(db(), "emergency_stop", 0);
+      setStarterKeySetting(db(), "wind_down", 0);
+    }
   });
 
   it("shares the verify concurrency slots and does not spend a credit on 503", async () => {
@@ -600,16 +730,19 @@ describe("starter key HTTP", () => {
 });
 
 describe("keys script", () => {
-  it("sets the kill switch in an existing paid-calls file", async () => {
+  it("sets the emergency stop in an existing paid-calls file", async () => {
     const dir = mkdtempSync(join(tmpdir(), "starter-keys-"));
     const path = join(dir, "paid-calls.sqlite");
     initPaidCallStore(path);
     closePaidCallStore();
-    const { stdout } = await execFileAsync("npx", ["tsx", "scripts/starter-keys.ts", "set", "enabled", "0", "--db", path, "--json"], {
-      cwd: process.cwd(),
-    });
-    const body = JSON.parse(stdout) as { limits: { enabled: boolean } };
-    assert.equal(body.limits.enabled, false);
+    const { stdout } = await execFileAsync(
+      "npx",
+      ["tsx", "scripts/starter-keys.ts", "set", "emergency_stop", "1", "--db", path, "--json"],
+      { cwd: process.cwd() },
+    );
+    const body = JSON.parse(stdout) as { limits: { emergencyStop: boolean; windDown: boolean } };
+    assert.equal(body.limits.emergencyStop, true);
+    assert.equal(body.limits.windDown, false);
   });
 });
 

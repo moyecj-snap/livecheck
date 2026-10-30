@@ -1,10 +1,14 @@
 import { DatabaseSync } from "node:sqlite";
 import {
+  EMERGENCY_STOP_MESSAGE,
+  OUT_OF_CHECKS_MESSAGE,
   STARTER_KEY_RETENTION_MS,
   STARTER_KEY_SETTINGS,
   STARTER_KEY_TTL_MS,
+  WIND_DOWN_MESSAGE,
   githubAccountTooYoung,
   hashStarterKey,
+  isStarterSettingKey,
   isoStamp,
   newStarterKeyId,
   newStarterKeySecret,
@@ -143,8 +147,8 @@ export type StarterKeyWindow = {
 
 export type StarterKeyStats = {
   available: boolean;
-  enabled: boolean;
-  env_forced_off: boolean;
+  emergency_stop: boolean;
+  wind_down: boolean;
   daily_cap: number;
   daily_cap_used: number;
   daily_cap_hit: boolean;
@@ -177,8 +181,51 @@ export function migrateApiKeyStore(db: DatabaseSync): void {
   db.exec(DAILY_SQL);
   db.exec(MINUTE_SQL);
   db.exec(HOUR_SQL);
-  db.exec(SETTINGS_SQL);
+  migrateApiKeySettings(db);
   db.exec(CAP_HITS_SQL);
+}
+
+/**
+ * The settings CHECK lists the live keys. Rebuild when it still has the
+ * old single `enabled` switch so `emergency_stop` and `wind_down` can be set
+ * without a deploy. An `enabled` 0 row becomes emergency_stop 1.
+ */
+function migrateApiKeySettings(db: DatabaseSync): void {
+  db.exec(SETTINGS_SQL);
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'api_key_settings'").get() as
+    | { sql?: string }
+    | undefined;
+  const sql = row?.sql ?? "";
+  if (sql.includes("'emergency_stop'") && sql.includes("'wind_down'")) return;
+  const old = db.prepare(`SELECT key, value, updated_at FROM api_key_settings`).all() as Array<{
+    key: string;
+    value: number | bigint;
+    updated_at: string;
+  }>;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec("DROP TABLE api_key_settings");
+    db.exec(SETTINGS_SQL);
+    const insert = db.prepare(`INSERT INTO api_key_settings (key, value, updated_at) VALUES (?, ?, ?)`);
+    let emergency = false;
+    for (const item of old) {
+      if (item.key === "enabled") {
+        if (num(item.value) === 0) emergency = true;
+        continue;
+      }
+      if (!isStarterSettingKey(item.key)) continue;
+      insert.run(item.key, num(item.value), item.updated_at);
+    }
+    if (emergency) insert.run("emergency_stop", 1, new Date().toISOString().replace(/\.\d{3}Z$/, "Z"));
+    db.exec("COMMIT");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // already closed
+    }
+    throw error;
+  }
 }
 
 function num(value: unknown): number {
@@ -303,8 +350,8 @@ export function readStarterKeySettings(db: DatabaseSync): StarterKeySettings {
   return out;
 }
 
-export function starterKeyLimits(db: DatabaseSync, env: NodeJS.ProcessEnv = process.env): StarterKeyLimits {
-  return resolveStarterKeyLimits(readStarterKeySettings(db), env);
+export function starterKeyLimits(db: DatabaseSync): StarterKeyLimits {
+  return resolveStarterKeyLimits(readStarterKeySettings(db));
 }
 
 export function setStarterKeySetting(
@@ -371,15 +418,8 @@ export function issueStarterKey(db: DatabaseSync, input: IssueInput, now = new D
   }
   return withTx(db, () => {
     const limits = starterKeyLimits(db);
-    if (!limits.enabled) {
-      return { ok: false, error: "disabled", message: "Starter keys are turned off." };
-    }
-    if (githubAccountTooYoung(input.accountCreatedAt, now)) {
-      return {
-        ok: false,
-        error: "account_too_young",
-        message: "This GitHub account is under 7 days old. A starter key is available once the account is 7 days old.",
-      };
+    if (limits.emergencyStop) {
+      return { ok: false, error: "emergency_stop", message: EMERGENCY_STOP_MESSAGE };
     }
     const nowIso = isoStamp(now);
     const existing = rowFrom(
@@ -393,6 +433,16 @@ export function issueStarterKey(db: DatabaseSync, input: IssueInput, now = new D
         db.prepare(`UPDATE api_keys SET contact_opt_in = 1 WHERE id = ?`).run(existing.id);
       }
       return existingMessage(existing, nowIso);
+    }
+    if (limits.windDown) {
+      return { ok: false, error: "wind_down", message: WIND_DOWN_MESSAGE };
+    }
+    if (githubAccountTooYoung(input.accountCreatedAt, now)) {
+      return {
+        ok: false,
+        error: "account_too_young",
+        message: "This GitHub account is under 7 days old. A starter key is available once the account is 7 days old.",
+      };
     }
     const day = utcDay(now);
     const ipCount = readDaily(db, day, input.ipSubject, "issued");
@@ -456,8 +506,8 @@ export function reserveStarterCall(db: DatabaseSync, token: string, now = new Da
     if (row.status === "revoked") {
       return { ok: false, status: 401 as const, error: "starter_key_revoked", message: "This starter key was revoked." };
     }
-    if (!limits.enabled) {
-      return { ok: false, status: 403 as const, error: "starter_keys_disabled", message: "Starter keys are turned off." };
+    if (limits.emergencyStop) {
+      return { ok: false, status: 403 as const, error: "starter_keys_emergency_stop", message: EMERGENCY_STOP_MESSAGE };
     }
     if (row.status === "suspended") {
       return { ok: false, status: 403 as const, error: "starter_key_suspended", message: "This starter key is suspended." };
@@ -484,8 +534,7 @@ export function reserveStarterCall(db: DatabaseSync, token: string, now = new Da
         ok: false,
         status: 402 as const,
         error: "out_of_checks",
-        message:
-          "This starter key has used its free checks. Pay with a wallet (x402 on Base or MPP on Tempo) by calling this route without the key, or reply to get a top-up link.",
+        message: OUT_OF_CHECKS_MESSAGE,
         freeUsed: row.free_used,
         freeAllowance: row.free_allowance,
       };
@@ -677,8 +726,8 @@ export function queryStarterKeyStats(db: DatabaseSync, now = new Date()): Starte
   const l30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   return {
     available: true,
-    enabled: limits.enabled,
-    env_forced_off: limits.envForcedOff,
+    emergency_stop: limits.emergencyStop,
+    wind_down: limits.windDown,
     daily_cap: limits.dailyCheckCap,
     daily_cap_used: used,
     daily_cap_hit: capHitOn(db, day),
@@ -692,8 +741,8 @@ export function starterKeyStats(now = new Date()): StarterKeyStats {
   if (!bound) {
     return {
       available: false,
-      enabled: false,
-      env_forced_off: false,
+      emergency_stop: false,
+      wind_down: false,
       daily_cap: STARTER_KEY_SETTINGS.daily_check_cap.fallback,
       daily_cap_used: 0,
       daily_cap_hit: false,
@@ -709,8 +758,8 @@ export function starterKeyStats(now = new Date()): StarterKeyStats {
     console.warn(`[starter_keys] stats read failed: ${reason}`);
     return {
       available: false,
-      enabled: false,
-      env_forced_off: false,
+      emergency_stop: false,
+      wind_down: false,
       daily_cap: STARTER_KEY_SETTINGS.daily_check_cap.fallback,
       daily_cap_used: 0,
       daily_cap_hit: false,

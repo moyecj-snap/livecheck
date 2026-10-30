@@ -174,20 +174,29 @@ Env (Fly secrets, not in git):
 # Craig registers the GitHub OAuth app. Callback URL:
 #   https://livecheck.fly.dev/keys/callback
 fly secrets set GITHUB_OAUTH_CLIENT_ID=... GITHUB_OAUTH_CLIENT_SECRET=...
-# Kill switch. 0 disables every free key. Unset uses the live table (default on).
-# fly secrets set LIVECHECK_STARTER_KEYS_ENABLED=0
 ```
 
-Live knobs (no deploy), in the paid-calls SQLite file:
+The switches are not Fly secrets. They are rows in the paid-calls SQLite file, read on the next request. No deploy and no restart.
 
 ```bash
 npm run --silent keys:list
-npm run --silent keys:set -- enabled 0
+# Emergency stop. Every key, including unexpired ones, stops immediately.
+# For abuse, a cost spike, or a bug. Overrides wind-down.
+npm run --silent keys:set -- emergency_stop 1
+npm run --silent keys:set -- emergency_stop 0
+# Wind-down. /keys sign-up closes. Unexpired keys keep their remaining
+# checks until they expire. Use this to end the trial without breaking
+# builders who already integrated.
+npm run --silent keys:set -- wind_down 1
+npm run --silent keys:set -- wind_down 0
+
 npm run --silent keys:set -- daily_check_cap 2000
 npm run --silent keys:revoke -- k_0123abcd0123abcd
 npm run --silent keys:cleanup
 npm run --silent keys:followups
 ```
+
+On Fly, the same commands over ssh, for example `fly ssh console -a livecheck -C "npm run --silent keys:set -- emergency_stop 1"`. `GET /stats` shows both switches. An out-of-checks answer still points at the wallet path and says to reply to get a top-up link at moyecj@gmail.com.
 
 `daily_check_cap` (default 2000) is the global free-check cap. The server never raises it. Hitting it logs `starter_keys: DAILY CAP HIT` and sets `starter_keys.daily_cap_hit` on `GET /stats`. Other limits: 3 new keys per IP per day, 50 new keys per day, 60 calls/minute and 200 checks/day per key. Key calls use the same verify concurrency slots as wallet calls. More than half blocked targets in an hour, after 10 outcomes, suspends the key. `keys:revoke` stops it on the next call.
 

@@ -4,10 +4,12 @@ import { getCookie, setCookie } from "hono/cookie";
 import { apiKeyDb, issueStarterKey, starterKeyLimits } from "./api-key-store.js";
 import { publicOrigin } from "./public-url.js";
 import {
+  EMERGENCY_STOP_MESSAGE,
   STARTER_KEY_CALLBACK_PATH,
   STARTER_KEY_CONTACT_LABEL,
   STARTER_KEY_PAGE_PATH,
   STARTER_KEY_PRIVACY_LINE,
+  WIND_DOWN_MESSAGE,
   githubOauthConfig,
   starterKeyIpSubject,
   starterKeyNow,
@@ -93,9 +95,9 @@ function shell(title: string, body: string): string {
 </html>`;
 }
 
-function formBody(options: { oauth: boolean; enabled: boolean }): string {
+function formBody(options: { oauth: boolean; closed?: string }): string {
   const reasons: string[] = [];
-  if (!options.enabled) reasons.push("Starter keys are turned off.");
+  if (options.closed) reasons.push(options.closed);
   if (!options.oauth) reasons.push("GitHub sign-in is not configured on this server yet.");
   const disabled = reasons.length > 0 ? " disabled" : "";
   const extra = reasons.length ? `<p class="note">${reasons.map((line) => esc(line)).join(" ")}</p>` : "";
@@ -189,19 +191,23 @@ async function fetchProfile(token: string): Promise<GithubProfile | undefined> {
   return { id: String(body.id), login: body.login, createdAt: body.created_at };
 }
 
-function keysEnabled(): boolean {
+/** Emergency stop wins. Otherwise wind-down closes sign-up only. */
+function signupClosedMessage(): string | undefined {
   const db = apiKeyDb();
-  if (!db) return true;
+  if (!db) return undefined;
   try {
-    return starterKeyLimits(db).enabled;
+    const limits = starterKeyLimits(db);
+    if (limits.emergencyStop) return EMERGENCY_STOP_MESSAGE;
+    if (limits.windDown) return WIND_DOWN_MESSAGE;
+    return undefined;
   } catch {
-    return true;
+    return undefined;
   }
 }
 
 export function registerStarterKeyRoutes(app: Hono): void {
   app.get(STARTER_KEY_PAGE_PATH, (c) => {
-    return page(c, shell("Starter key", formBody({ oauth: Boolean(githubOauthConfig()), enabled: keysEnabled() })));
+    return page(c, shell("Starter key", formBody({ oauth: Boolean(githubOauthConfig()), closed: signupClosedMessage() })));
   });
 
   app.post(`${STARTER_KEY_PAGE_PATH}/start`, async (c) => {
@@ -211,7 +217,8 @@ export function registerStarterKeyRoutes(app: Hono): void {
     }
     const db = apiKeyDb();
     if (!db) return page(c, shell("Starter key", `<p class="note">Starter keys are not available on this process.</p>`), 503);
-    if (!starterKeyLimits(db).enabled) return page(c, shell("Starter key", `<p class="note">Starter keys are turned off.</p>`), 403);
+    const closed = signupClosedMessage();
+    if (closed) return page(c, shell("Starter key", `<p class="note">${esc(closed)}</p>`), 403);
     const body = await c.req.parseBody();
     const opted = body.contact === "yes";
     const state = randomBytes(32).toString("base64url");
@@ -268,7 +275,7 @@ export function registerStarterKeyRoutes(app: Hono): void {
     );
     if (!issued.ok) {
       const status =
-        issued.error === "account_too_young" || issued.error === "disabled"
+        issued.error === "account_too_young" || issued.error === "emergency_stop" || issued.error === "wind_down"
           ? 403
           : issued.error === "ip_limited" || issued.error === "global_limited"
             ? 429
