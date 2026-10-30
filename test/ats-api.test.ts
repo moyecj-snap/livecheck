@@ -280,6 +280,23 @@ describe("page × API combine", () => {
     }
   });
 
+  it("a 404 or a redirect to the board stays closed when the API still lists the job", () => {
+    const gone = classified(GREENHOUSE_LIVE, "<html><title>Not found</title><body>Not found</body></html>", 404);
+    assert.equal(gone.status, "closed");
+    const combined404 = combinePageAndAts(gone, listed({ title: "Still indexed" }));
+    assert.equal(combined404.status, "closed");
+    assert.ok(combined404.signals.includes("http_404"));
+    assert.ok(combined404.signals.includes(ATS_API_LISTED));
+
+    const redirected = classified(GREENHOUSE_LIVE, APPLY_PAGE);
+    redirected.status = "closed";
+    redirected.signals = ["redirected_to_board", "ats_empty_state"];
+    const combinedBoard = combinePageAndAts(redirected, listed());
+    assert.equal(combinedBoard.status, "closed");
+    assert.ok(combinedBoard.signals.includes("redirected_to_board"));
+    assert.ok(combinedBoard.signals.includes(ATS_API_LISTED));
+  });
+
   it("closed + listed is unknown and keeps both signals", () => {
     const page = classified(GREENHOUSE_LIVE, CLOSED_COPY);
     assert.equal(page.status, "closed");
@@ -324,6 +341,17 @@ describe("verifyUrl ATS integration", () => {
       return response.clone();
     };
   }
+
+  it("a Greenhouse posting 404 stays closed when the board API still lists the id", async () => {
+    const verdict = await verifyUrl(GREENHOUSE_LIVE, routed({
+      [GREENHOUSE_LIVE]: htmlResponse("<html><title>Not found</title><body>Not found</body></html>", 404),
+      [refOf(GREENHOUSE_LIVE).apiUrl]: jsonResponse(fixture("greenhouse-job.json")),
+    }), new Date(), { atsApi: true });
+    assert.equal(verdict.status, "closed");
+    assert.equal(verdict.http_status, 404);
+    assert.ok(verdict.signals.includes("http_404"));
+    assert.ok(verdict.signals.includes(ATS_API_LISTED));
+  });
 
   it("promotes an Ashby JS shell when the board lists the job", async () => {
     const verdict = await verifyUrl(ASHBY_LIVE, routed({

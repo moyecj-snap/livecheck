@@ -487,7 +487,8 @@ function postedSignal(iso: string | undefined): string[] {
  * - live + listed → live, high confidence
  * - unknown without challenge_page (JS shell / blank) + listed → live + ats_api_listed
  * - any non-challenge page + missing → closed + ats_api_missing
- * - closed + listed → unknown, page closed signals and ats_api_listed
+ * - 404, 410, or redirected_to_board + listed → still closed
+ * - other closed copy + listed → unknown, page closed signals and ats_api_listed
  * - challenge_page + listed/missing → answered from the API (page never bypassed)
  * - unavailable leaves the HTML verdict untouched
  */
@@ -509,6 +510,19 @@ export function combinePageAndAts(page: VerifyVerdict, api: AtsLookup): VerifyVe
 
   const posted = postedSignal(api.postedAt);
   if (page.status === "closed") {
+    // A 404/410 or a redirect onto the board is closed even when the API
+    // still lists the id. Closure copy alone still disagrees with a listing.
+    const hardClosed = page.signals.some(
+      (signal) => signal === "http_404" || signal === "http_410" || signal === "redirected_to_board",
+    );
+    if (hardClosed) {
+      return {
+        ...page,
+        status: "closed",
+        confidence: Math.max(page.confidence, 0.9),
+        signals: dedupe([ATS_API_LISTED, ...page.signals, ...posted]),
+      };
+    }
     return {
       ...page,
       status: "unknown",
