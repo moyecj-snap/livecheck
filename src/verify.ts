@@ -23,6 +23,41 @@ export type FetchPageOptions = {
   signal?: AbortSignal;
 };
 
+/** One wait before a second LinkedIn fetch. Tests set this to 0. */
+export const LINKEDIN_429_DELAY_MS = 1_000;
+let linkedIn429DelayMs = LINKEDIN_429_DELAY_MS;
+
+export function setLinkedIn429DelayForTests(ms: number | null): void {
+  linkedIn429DelayMs = ms ?? LINKEDIN_429_DELAY_MS;
+}
+
+function isLinkedInPage(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "linkedin.com" || host.endsWith(".linkedin.com");
+  } catch {
+    return false;
+  }
+}
+
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      const error = new Error("aborted");
+      error.name = "AbortError";
+      reject(error);
+    };
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export class VerifyError extends Error {
   status: number;
   constructor(message: string, status = 400) {
@@ -98,15 +133,20 @@ export async function fetchPage(
   const linked = linkedAbort(timeoutMs, options.signal);
   const redirectChain: string[] = [];
   try {
-    const response = await fetcher(url, {
-      method: "GET",
-      redirect: "follow",
+    const fetchInit = {
+      method: "GET" as const,
+      redirect: "follow" as const,
       signal: linked.signal,
       headers: {
         accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
         "user-agent": USER_AGENT,
       },
-    });
+    };
+    let response = await fetcher(url, fetchInit);
+    if (response.status === 429 && isLinkedInPage(url)) {
+      await delay(linkedIn429DelayMs, options.signal);
+      response = await fetcher(url, fetchInit);
+    }
 
     const canonicalUrl = response.url || url;
     if (canonicalUrl !== url) redirectChain.push(canonicalUrl);

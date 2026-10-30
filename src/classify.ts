@@ -314,6 +314,19 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
     signals.push(`http_${page.httpStatus}`);
     status = "closed";
     confidence = 0.95;
+  } else if (page.httpStatus === 429) {
+    signals.push("http_429");
+    return {
+      url: page.requestedUrl,
+      canonical_url: page.canonicalUrl,
+      status: "unknown",
+      http_status: 429,
+      checked_at: checkedAt.toISOString().replace(/\.\d{3}Z$/, "Z"),
+      ...(page.title ? { title: page.title } : {}),
+      signals,
+      confidence: 0.45,
+      price_usd: PRICE_USD,
+    };
   }
 
   const closedPhrase = includesPhrase(text, CLOSED_PHRASES);
