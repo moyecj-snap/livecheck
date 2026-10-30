@@ -14,9 +14,10 @@ import type { VerifyVerdict } from "./types.js";
  *
  * No API keys. These are the vendors' public board endpoints.
  * Greenhouse, Lever, and Workday are fetched as one posting by id.
- * Ashby's public API is the whole board; that JSON is cached per company for
- * 5 minutes so jobs at the same company share one fetch. Single-posting
- * responses are cached on the posting URL for the same TTL.
+ * Ashby is fetched as one posting (public ApiJobPosting GraphQL). If that
+ * call is unavailable, the whole-board JSON is the fallback and is cached
+ * per company for 5 minutes. Single-posting responses are cached on the
+ * posting URL for the same TTL.
  * Network errors, timeouts, and HTTP 5xx are "unavailable", never "missing".
  * A bot-challenge page is not promoted to live. No Cloudflare or reCAPTCHA bypass.
  */
@@ -39,10 +40,12 @@ export type AtsVendor = "ashby" | "workday" | "lever" | "greenhouse";
 
 export type AtsJobRef = {
   vendor: AtsVendor;
-  /** Public board request. GET, no credentials. */
+  /** Public board request. GET, no credentials, except Ashby's single-posting GraphQL POST. */
   apiUrl: string;
   jobId: string;
   board: string;
+  method?: "GET" | "POST";
+  body?: string;
 };
 
 export type AtsLookup =
@@ -122,11 +125,30 @@ function parseAshby(host: string, url: URL): AtsJobRef | null {
   // become trunk%2520tools.
   const board = decodePathSegment(encodedBoard);
   if (!board) return null;
+  // The hosted page loads one posting from this public GraphQL operation.
+  // The fragment is only a cache key; fetch strips it. The whole-board JSON
+  // is the fallback when this call is unavailable.
   return {
     vendor: "ashby",
     board,
     jobId,
-    apiUrl: `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(board)}`,
+    method: "POST",
+    body: JSON.stringify({
+      operationName: "ApiJobPosting",
+      variables: { organizationHostedJobsPageName: board, jobPostingId: jobId },
+      query:
+        "query ApiJobPosting($organizationHostedJobsPageName: String!, $jobPostingId: String!) { jobPosting(organizationHostedJobsPageName: $organizationHostedJobsPageName, jobPostingId: $jobPostingId) { id title isListed } }",
+    }),
+    apiUrl: `https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobPosting#${encodeURIComponent(board)}/${encodeURIComponent(jobId)}`,
+  };
+}
+
+function ashbyBoardRef(ref: AtsJobRef): AtsJobRef {
+  return {
+    vendor: "ashby",
+    board: ref.board,
+    jobId: ref.jobId,
+    apiUrl: `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(ref.board)}`,
   };
 }
 
@@ -266,8 +288,25 @@ function listed(input: {
   };
 }
 
+function interpretAshbyGraphql(status: number, text: string, jobId: string): AtsLookup | null {
+  const payload = asRecord(parseJson(text));
+  const data = asRecord(payload?.data);
+  if (!data || !("jobPosting" in data)) return null;
+  if (data.jobPosting == null) return { outcome: "missing", httpStatus: status };
+  const row = asRecord(data.jobPosting);
+  if (!row) return { outcome: "unavailable" };
+  const id = typeof row.id === "string" ? row.id : "";
+  if (id && id.toLowerCase() !== jobId.toLowerCase()) return { outcome: "unavailable" };
+  return listed({
+    httpStatus: status,
+    title: typeof row.title === "string" ? row.title : undefined,
+  });
+}
+
 function interpretAshby(status: number, text: string, truncated: boolean, jobId: string): AtsLookup {
   if (status === 404 || status === 410) return { outcome: "missing", httpStatus: status };
+  const graphql = interpretAshbyGraphql(status, text, jobId);
+  if (graphql) return graphql;
   if (status < 200 || status >= 300) return { outcome: "unavailable" };
   if (looksLikeBotChallenge(text)) return { outcome: "unavailable" };
   const needle = jobId.toLowerCase();
@@ -422,14 +461,16 @@ async function loadAtsResponse(
   // shared board fetch that other in-flight checks are waiting on.
   const linked = linkedAbort(timeoutMs);
   try {
-    const response = await fetcher(ref.apiUrl, {
-      method: "GET",
+    const response = await fetcher(ref.apiUrl.split("#")[0] ?? ref.apiUrl, {
+      method: ref.method ?? "GET",
       redirect: "follow",
       signal: linked.signal,
       headers: {
         accept: "application/json",
         "user-agent": USER_AGENT,
+        ...(ref.body ? { "content-type": "application/json" } : {}),
       },
+      ...(ref.body ? { body: ref.body } : {}),
     });
     const { text, truncated } = await readCappedText(response, maxBytes);
     const body = { status: response.status, text, truncated };
@@ -456,8 +497,19 @@ export async function lookupAtsJob(
     if (cached) return interpretAtsResponse(ref, cached.status, cached.text, cached.truncated);
     const loaded = await joinAtsFetch(key, () => loadAtsResponse(ref, fetcher, timeoutMs, maxBytes));
     if (options.signal?.aborted) throw new DeadlineError(resolveDeadlineMs());
-    if (!loaded) return { outcome: "unavailable" };
-    return interpretAtsResponse(ref, loaded.status, loaded.text, loaded.truncated);
+    if (!loaded) {
+      if (ref.vendor === "ashby" && ref.apiUrl.includes("non-user-graphql")) {
+        return lookupAtsJob(ashbyBoardRef(ref), fetcher, options);
+      }
+      return { outcome: "unavailable" };
+    }
+    const interpreted = interpretAtsResponse(ref, loaded.status, loaded.text, loaded.truncated);
+    const singlePosting = ref.vendor === "ashby" && ref.apiUrl.includes("non-user-graphql");
+    const graphqlAnswer = loaded.text.includes("jobPosting");
+    if (singlePosting && (interpreted.outcome === "unavailable" || (interpreted.outcome === "missing" && !graphqlAnswer))) {
+      return lookupAtsJob(ashbyBoardRef(ref), fetcher, options);
+    }
+    return interpreted;
   } catch (error) {
     if (error instanceof DeadlineError || options.signal?.aborted) {
       throw error instanceof DeadlineError ? error : new DeadlineError(resolveDeadlineMs());
