@@ -546,15 +546,15 @@ export function freeJobHtml(
   </form>
   ${examplesForm}
   ${resultHtml(view, options.remaining)}
-  <p class="muted small">Free: ${options.perDay} checks per day, no wallet, no signup. We don't store the links you check.</p>
+  <p class="muted small">Free: ${options.perDay} checks per day, no wallet, no signup. We don't store the links you check. These limits are separate from a starter key.</p>
   <section class="cta">
-    <p><strong>Building an AI agent?</strong> Same check by API: <code>POST /v1/verify/job</code>, ${priceLabel()} per call, no account or API key.
+    <p><strong>Building an AI agent?</strong> Same check by API: <code>POST /v1/verify/job</code>. A wallet pays ${priceLabel()}. A free starter key is at <a href="/keys">/keys</a>.
     &rarr; <a href="${FREE_JOB_PATH}/go/docs">Docs</a> &middot; <a href="${FREE_JOB_PATH}/go/skill">Agent skill</a></p>
   </section>
 </main>
 <footer class="site"><div class="wrap">
   <p>${esc(HOW_IT_WORKS)}</p>
-  <nav><a href="${FREE_JOB_PATH}/go/docs">Docs</a><a href="${FREE_JOB_PATH}/go/skill">Agent skill</a><a href="mailto:${CONTACT_EMAIL}">Contact</a></nav>
+  <nav><a href="${FREE_JOB_PATH}/go/docs">Docs</a><a href="${FREE_JOB_PATH}/go/skill">Agent skill</a><a href="/keys">Starter key</a><a href="mailto:${CONTACT_EMAIL}">Contact</a></nav>
 </div></footer>
 </body>
 </html>`;

@@ -34,6 +34,7 @@ import { DEMO_THANK_YOU_PATH, demoThankYouHtml } from "./demo-thank-you.js";
 import { discoveryHeaders, openApiDocument, wellKnownX402 } from "./discovery.js";
 import { FIXTURES } from "./fixtures.js";
 import { registerFreeJobRoutes } from "./free-job-page.js";
+import { registerStarterKeyRoutes } from "./starter-key-page.js";
 import { LLMS_TXT, llmsTxtHeaders } from "./llms.js";
 import { NOHUMANS_CLAIM_PATH, nohumansClaimResponse } from "./nohumans-claim.js";
 import { isInternalTestMode, withBurstProtection } from "./check-capacity.js";
@@ -188,6 +189,8 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
 
   // Free "Is this job still open?" page (Product Hunt). Not a paid route.
   registerFreeJobRoutes(app);
+  // GitHub starter keys. Not a paid route. Free checks never write paid_calls.
+  registerStarterKeyRoutes(app);
 
   app.post("/v1/verify", handlePaidVerify);
   app.post("/v1/verify/job", handlePaidVerify);

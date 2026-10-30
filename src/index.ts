@@ -15,12 +15,27 @@ import { sentinelBenchesLoadInfo } from "./sentinel-stats-benches.js";
 import { formatListenBinding, listenHttp } from "./listen.js";
 import { initWatchStore } from "./watch-store.js";
 import { initFreePageStore } from "./free-job-store.js";
+import { starterKeyCallbackUrl } from "./starter-key-page.js";
+import { starterKeyStats, sweepStarterKeys } from "./api-key-store.js";
+import { githubOauthConfig } from "./starter-key.js";
 
 loadDotEnvIfPresent();
 
 const store = initPaidCallStore();
 if (store.ok) {
   console.log(`paid_call retention: sqlite ${store.path}`);
+  const removed = sweepStarterKeys();
+  if (removed > 0) console.log(`starter_keys: deleted ${removed} key records 90 days after expiry`);
+  const timer = setInterval(() => {
+    try {
+      const n = sweepStarterKeys();
+      if (n > 0) console.log(`starter_keys: deleted ${n} key records 90 days after expiry`);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`starter_keys: cleanup failed (${reason})`);
+    }
+  }, 24 * 60 * 60 * 1000);
+  timer.unref();
 } else {
   console.warn(
     `paid_call retention: stdout-only (${store.reason}). CoS interim: npm run paid-call:cos -- --from-logs`,
@@ -115,6 +130,16 @@ if (isEbayAdapterEnabled()) {
   console.log("eBay adapter: Browse availability enabled.");
 } else {
   logEbayAdapterDisabled();
+}
+
+const starter = starterKeyStats();
+const oauth = githubOauthConfig();
+if (!starter.available) {
+  console.warn("starter keys: paid-calls store is not open, so keys cannot be issued");
+} else {
+  console.log(
+    `starter keys: enabled=${starter.enabled} env_off=${starter.env_forced_off} daily_cap=${starter.daily_cap} oauth=${oauth ? "configured" : "missing"} callback=${starterKeyCallbackUrl()}`,
+  );
 }
 
 const onFly = Boolean(process.env.FLY_APP_NAME?.trim());

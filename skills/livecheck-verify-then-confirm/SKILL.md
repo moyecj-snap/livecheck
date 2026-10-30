@@ -37,6 +37,10 @@ The `skills` CLI may warn that it wants Node `>=22.20.0`. Node `20.19` still wor
 
 Verify's unpaid 402 offers both rails. Each charges exactly $0.01. Send one credential. MPP method is tempo/charge: USDC.e on Tempo (chain 4217). Stripe pays Tempo gas. With MPP (Tempo): Paid answers, including the checked link, are kept for 24 hours so retries are safe, then deleted. Confirm is x402 only.
 
+## Starter key (no wallet)
+
+`GET https://livecheck.fly.dev/keys` signs in with GitHub (public profile, no email) and shows `lc_live_…` once. Send `Authorization: Bearer lc_live_…` on `POST /v1/verify`, `/v1/verify/job`, and `/v1/verify/listing` only. 200 checks over 30 days. A real answer spends one check (`unknown` included). Errors and a “this is a job board, not one posting” message do not. Confirm, `/v1/check`, and Sentinel stay wallet-only. The free `/job` page limits are separate. When the free checks are gone, the route returns 402: pay with a wallet on the same route without the key, or reply to get a top-up link.
+
 - OpenAPI: https://livecheck.fly.dev/openapi.json
 - Stats: https://livecheck.fly.dev/stats
 - Discovery: Coinbase x402 Bazaar — search `livecheck` returns **both** tools

@@ -12,6 +12,7 @@ import {
 } from "./docs-example-url.js";
 import { graderWallets, testerWallets } from "./grader-wallets.js";
 import { internalWallets } from "./internal-wallets.js";
+import { starterKeyStats, type StarterKeyStats } from "./api-key-store.js";
 import { PAID_CALL_ROUTES } from "./paid-call.js";
 import {
   emptyRouteCounts,
@@ -320,6 +321,7 @@ export type StatsDocument = {
   sentinel: SentinelStats;
   benches: ConfirmBenches;
   store: StatsStoreScope;
+  starter_keys: StarterKeyStats;
   notes: string[];
 };
 
@@ -1781,6 +1783,12 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
   const scoped30: ConfirmIntentCounts | undefined = confirmWindows?.l30d;
   const unscoped = { l7d: scoped7?.unscoped ?? 0, l30d: scoped30?.unscoped ?? 0 };
   const notes = statsNotes(unscoped, LOCAL_VOLUME_NOTE, "volume");
+  const starterKeys = starterKeyStats(now);
+  if (starterKeys.daily_cap_hit) {
+    notes.push(
+      `STARTER KEYS: daily free-key cap hit (${starterKeys.daily_cap_used}/${starterKeys.daily_cap}). Not raised. This is the operator flag for the nightly note.`,
+    );
+  }
   const wallets = internalWallets();
   const graders = graderWallets();
   const testers = testerWallets();
@@ -1868,6 +1876,7 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
     sentinel: buildSentinelStats(watchAll, oneShotChecks),
     benches: loadConfirmBenches(),
     store: buildStoreScope(unscoped),
+    starter_keys: starterKeys,
     notes,
   };
 }
@@ -2081,6 +2090,19 @@ function graderHtml(doc: StatsDocument): string {
   return `${label} ${graders.wallets_configured} wallets configured. ${graders.calls.l7d} L7d / ${graders.calls.l30d} L30d paid calls (${payers(graders.unique_payers.l7d)} / ${payers(graders.unique_payers.l30d)} unique payers${revenueSuffix(graders.revenue)}). These rows stay in All and are omitted from External.`;
 }
 
+function starterKeysHtml(doc: StatsDocument): string {
+  const keys = doc.starter_keys;
+  const cap = keys.daily_cap_hit
+    ? `<p class="warning" role="alert"><strong>Daily free-key cap hit.</strong> ${keys.daily_cap_used} free-key checks today, cap ${keys.daily_cap}. The cap was not raised.</p>`
+    : "";
+  const on = keys.enabled ? "on" : "off";
+  const l7 = keys.l7d;
+  const l30 = keys.l30d;
+  return `${cap}<h2>Starter keys</h2>
+  <p class="muted">${escHtml(keys.note)} Enabled: ${on}. Daily cap ${keys.daily_cap} (${keys.daily_cap_used} used today${keys.daily_cap_hit ? ", cap hit" : ""}).</p>
+  <p class="muted">L7d: ${l7.issued} issued, ${l7.activated} activated, ${l7.reached_20} with 20+ checks, ${l7.free_checks} free checks, ${l7.out_of_credit} out of credit. L30d: ${l30.issued} issued, ${l30.activated} activated, ${l30.reached_20} with 20+ checks, ${l30.free_checks} free checks, ${l30.out_of_credit} out of credit.</p>`;
+}
+
 export function statsHtml(doc: StatsDocument): string {
   const lead = doc.intents.lead_submit;
   const listing = doc.intents.listing_published;
@@ -2117,6 +2139,7 @@ export function statsHtml(doc: StatsDocument): string {
 </head>
 <body>
   <h1>Livecheck stats</h1>
+  ${starterKeysHtml(doc)}
   ${reconciliationHtml(doc)}
   <p class="honesty"><strong>${escHtml(doc.traffic.label)}</strong> ${escHtml(doc.traffic.note)}</p>
   <p class="muted">${internalHtml(doc)}</p>

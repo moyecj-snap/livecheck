@@ -27,6 +27,7 @@ import {
   type SentinelPaidVerdict,
   type VerifyPaidStatus,
 } from "./paid-call.js";
+import { bindApiKeyDb, unbindApiKeyDb } from "./api-key-store.js";
 import { INTERNAL_USER_AGENT_PREFIX } from "./internal-wallets.js";
 import type { TestTrafficWallet } from "./test-traffic.js";
 import { listActiveTestWallets, migrateTestWalletStore } from "./test-wallet-store.js";
@@ -576,9 +577,11 @@ export function initPaidCallStore(path = defaultPaidCallDbPath()): StoreState {
   closePaidCallStore();
   try {
     const db = prepareDatabase(path);
+    bindApiKeyDb(db);
     state = { ok: true, path, db };
     return state;
   } catch (error) {
+    unbindApiKeyDb();
     const reason = error instanceof Error ? error.message : String(error);
     state = { ok: false, path, reason };
     return state;
@@ -586,6 +589,7 @@ export function initPaidCallStore(path = defaultPaidCallDbPath()): StoreState {
 }
 
 export function closePaidCallStore(): void {
+  unbindApiKeyDb();
   if (state?.ok) {
     try {
       state.db.close();
