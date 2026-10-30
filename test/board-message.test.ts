@@ -73,6 +73,10 @@ describe("isBoardUrlShape", () => {
     assert.equal(isBoardUrlShape("https://jobs.ashbyhq.com/linear"), true);
     assert.equal(isBoardUrlShape("https://jobs.ashbyhq.com/linear/jobs"), true);
     assert.equal(isBoardUrlShape("https://example.com/careers"), true);
+    assert.equal(isBoardUrlShape("https://company.com/careers/"), true);
+    assert.equal(isBoardUrlShape("https://company.com/jobs/?utm_source=x"), true);
+    assert.equal(isBoardUrlShape("https://acme.wd5.myworkdayjobs.com/External"), true);
+    assert.equal(isBoardUrlShape("https://acme.wd5.myworkdayjobs.com/en-US/External"), true);
   });
 
   it("is false for a posting, including one that only later redirects", () => {
@@ -82,6 +86,22 @@ describe("isBoardUrlShape", () => {
     assert.equal(isBoardUrlShape("https://jobs.ashbyhq.com/linear/d3bc1ced-3ce4-4086-a050-555055dbb1ff"), false);
     assert.equal(isBoardUrlShape("https://www.figma.com/careers?gh_jid=6223155004"), false);
     assert.equal(isBoardUrlShape("https://shop.example/collections/rings"), false);
+    assert.equal(isBoardUrlShape("https://company.com/careers/senior-engineer"), false);
+    assert.equal(isBoardUrlShape("https://company.com/jobs/12345"), false);
+    assert.equal(isBoardUrlShape("https://company.com/careers/jobs/backend-dev"), false);
+    assert.equal(isBoardUrlShape("https://company.com/jobs/view/abc"), false);
+    assert.equal(isBoardUrlShape("https://company.com/careers?gh_jid=6223155004"), false);
+    assert.equal(
+      isBoardUrlShape("https://acme.wd5.myworkdayjobs.com/External/job/Remote/Senior-Engineer_R12345"),
+      false,
+    );
+    assert.equal(
+      isBoardUrlShape("https://acme.wd5.myworkdayjobs.com/en-US/External/job/Remote/Senior-Engineer_R12345"),
+      false,
+    );
+    assert.equal(isBoardUrlShape("https://shop.example.com/products/widget"), false);
+    assert.equal(isBoardUrlShape("https://example.myshopify.com/products/widget"), false);
+    assert.equal(isBoardUrlShape("https://www.ebay.com/itm/1234567890"), false);
   });
 });
 
@@ -202,6 +222,65 @@ describe("paid routes say when the URL is a board", () => {
     const afterDoc = (await afterStats.json()) as typeof beforeDoc;
     assert.deepEqual(afterDoc.traffic.all.payers, beforeDoc.traffic.all.payers);
     assert.deepEqual(afterDoc.traffic.revenue, beforeDoc.traffic.revenue);
+  });
+
+  it("bare /careers and /jobs are free; deeper career paths are 402", async () => {
+    for (const url of ["https://company.com/careers", "https://company.com/jobs/", "https://company.com/careers?utm_source=x"]) {
+      const free = await post("/v1/verify", url);
+      assert.equal(free.status, 400, url);
+      assert.equal(free.paymentRequired, null, url);
+      assert.equal(free.body.error, "board_url", url);
+      assert.equal(free.body.billed, false, url);
+    }
+    for (const url of [
+      "https://company.com/careers/senior-engineer",
+      "https://company.com/jobs/12345",
+      "https://company.com/careers/jobs/backend-dev",
+      "https://company.com/jobs/view/abc",
+      "https://company.com/careers?gh_jid=6223155004",
+    ]) {
+      const charged = await post("/v1/verify", url);
+      assert.equal(charged.status, 402, url);
+      assert.ok(charged.paymentRequired, url);
+      assert.notEqual(charged.body.error, "board_url", url);
+    }
+  });
+
+  it("Workday site index is free and a /job/ posting is 402", async () => {
+    for (const url of [
+      "https://acme.wd5.myworkdayjobs.com/External",
+      "https://acme.wd5.myworkdayjobs.com/en-US/External",
+    ]) {
+      const free = await post("/v1/verify/job", url);
+      assert.equal(free.status, 400, url);
+      assert.equal(free.paymentRequired, null, url);
+      assert.equal(free.body.message, BOARD_PAGE_API_MESSAGE, url);
+      assert.equal(free.body.billed, false, url);
+      assert.equal(free.body.price_usd, 0, url);
+    }
+    for (const url of [
+      "https://acme.wd5.myworkdayjobs.com/External/job/Remote/Senior-Engineer_R12345",
+      "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Remote/Senior-Engineer_R12345",
+    ]) {
+      const charged = await post("/v1/verify/job", url);
+      assert.equal(charged.status, 402, url);
+      assert.ok(charged.paymentRequired, url);
+      assert.notEqual(charged.body.error, "board_url", url);
+    }
+  });
+
+  it("Shopify and eBay product URLs are 402, and collections stay on the paid path", async () => {
+    for (const url of [
+      "https://shop.example.com/products/widget",
+      "https://example.myshopify.com/products/widget",
+      "https://www.ebay.com/itm/1234567890",
+      "https://shop.example/collections/rings",
+    ]) {
+      const charged = await post("/v1/verify/listing", url);
+      assert.equal(charged.status, 402, url);
+      assert.ok(charged.paymentRequired, url);
+      assert.notEqual(charged.body.error, "board_url", url);
+    }
   });
 
   it("still charges when a posting URL redirects to a board", async () => {

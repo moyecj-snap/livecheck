@@ -212,8 +212,9 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
 const VERIFY_PAID_PATHS = new Set(["/v1/verify", "/v1/verify/job", "/v1/verify/listing"]);
 
 /**
- * Greenhouse, Lever, or Ashby with no job id, or another board shape in the
- * URL itself. Returned before the payment gate, so there is no 402, no
+ * Greenhouse, Lever, or Ashby with no job id, a Workday site index, the bare
+ * /careers or /jobs page, or another board shape in the URL itself.
+ * Returned before the payment gate, so there is no 402, no
  * settlement, and no paid_calls row. A board found only after fetch (a
  * redirect, or a list page whose URL was not this shape) is still charged.
  */

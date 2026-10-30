@@ -205,10 +205,11 @@ const JOB_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
 
 /**
  * A job board we can see from the URL string alone, before any fetch.
- * Greenhouse, Lever, and Ashby with no job id in the path, a careers or jobs
- * index, a Greenhouse job-board embed, or a LinkedIn jobs search. A numeric
- * `gh_jid` is a job id even when the path is a careers page, so it is not
- * rejected here.
+ * Greenhouse, Lever, and Ashby with no job id in the path; a Workday site
+ * index with no `/job/` posting; the bare `/careers` or `/jobs` index only
+ * (trailing slash or query is fine; a numeric `gh_jid` is a job id); a
+ * Greenhouse job-board embed; or a LinkedIn jobs search.
+ * `/careers/senior-engineer` and `/jobs/12345` are not this shape.
  */
 export function isBoardUrlShape(raw: string): boolean {
   let url: URL;
@@ -230,10 +231,20 @@ export function isBoardUrlShape(raw: string): boolean {
   if (host.endsWith("lever.co") || host.endsWith("ashbyhq.com")) {
     return !parts.some((part) => JOB_UUID.test(part));
   }
+  if (isWorkdayBoardHost(host)) {
+    const jobAt = parts.findIndex((part) => part.toLowerCase() === "job");
+    const hasPosting = jobAt >= 0 && jobAt < parts.length - 1;
+    return !hasPosting && parts.length > 0;
+  }
+  // Bare index only. `/careers/role` and `/jobs/12345` are not boards from the path.
   if (/^\/(careers|jobs)$/i.test(path)) return true;
   if (path.includes("/job_board") || path.includes("/embed/job_board")) return true;
   if (isLinkedInHost(host) && /\/jobs(\/|$)/.test(path) && !/\/jobs\/view\//.test(path)) return true;
   return false;
+}
+
+function isWorkdayBoardHost(host: string): boolean {
+  return host.endsWith(".myworkdayjobs.com") || /^wd\d+\.myworkdaysite\.com$/.test(host);
 }
 
 function looksLikeBoardOrSearchUrl(url: string): boolean {
