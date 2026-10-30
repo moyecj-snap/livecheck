@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { Context, Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import { ATS_API_LISTED, ATS_API_MISSING, ATS_NOT_IN_PUBLIC_FEED, parseAtsJobUrl } from "./ats-api.js";
+import { ROBOTS_DISALLOWED_MESSAGE, ROBOTS_DISALLOWED_SIGNAL } from "./robots.js";
 import { PRICE_USD } from "./config.js";
 import { BlockedTargetError, DEFAULT_FETCH_POLICY, guardedFetch, vetTarget, type FetchPolicy } from "./free-job-guard.js";
 import {
@@ -368,6 +369,7 @@ export function evidenceInPlainWords(signals: readonly string[], platform: strin
     else if (signal === "js_shell") add("Page needs JavaScript to show the posting");
     else if (signal === "ambiguous_html") add("Page didn't clearly say open or closed");
     else if (signal === "check_timeout") add("The site took too long to answer");
+    else if (signal === ROBOTS_DISALLOWED_SIGNAL) add("robots.txt disallows this check");
   }
   return out;
 }
@@ -385,6 +387,8 @@ export function evidenceForVerdict(signals: readonly string[], platform: string,
 }
 
 export function cantTellCopy(signals: readonly string[]): string {
+  // We never fetched the page, so this is not a board and not a bot wall.
+  if (signals.includes(ROBOTS_DISALLOWED_SIGNAL)) return ROBOTS_DISALLOWED_MESSAGE;
   // Board/list copy wins over blocked and unclear. A Lever board is both
   // not_a_specific_posting and challenge_page, and must not say we were blocked.
   if (isBoardOrList(signals)) return BOARD_PAGE_COPY;

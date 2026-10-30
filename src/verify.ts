@@ -1,6 +1,7 @@
 import { lookupAtsJob, combinePageAndAts, parseAtsJobUrl, verdictFromAtsWithoutPage } from "./ats-api.js";
 import { CHECK_TIMEOUT_SIGNAL, FETCH_TIMEOUT_MS, MAX_BODY_BYTES, PRICE_USD, USER_AGENT } from "./config.js";
 import { classify } from "./classify.js";
+import { robotsAllows } from "./robots.js";
 import { DeadlineError, isAbortLike, linkedAbort, resolveDeadlineMs, withDeadline } from "./deadline.js";
 import { isEbayAdapterEnabled, logEbayAdapterDisabled, parseEbayItemUrl, verifyEbayItem } from "./ebay.js";
 import { stripTrackingParams } from "./tracking-params.js";
@@ -95,6 +96,29 @@ export async function fetchPage(
   fetcher: typeof fetch = fetch,
   options: FetchPageOptions = {},
 ): Promise<FetchedPage> {
+  let robots: Awaited<ReturnType<typeof robotsAllows>>;
+  try {
+    robots = await robotsAllows(url, fetcher, { signal: options.signal });
+  } catch (error) {
+    if (error instanceof DeadlineError || options.signal?.aborted) {
+      throw error instanceof DeadlineError ? error : new DeadlineError(resolveDeadlineMs());
+    }
+    throw error;
+  }
+  if (!robots.allowed) {
+    return {
+      requestedUrl: url,
+      canonicalUrl: url,
+      httpStatus: 0,
+      title: null,
+      html: "",
+      text: "",
+      redirected: false,
+      redirectChain: [],
+      robotsDisallowed: true,
+    };
+  }
+
   const timeoutMs = options.timeoutMs ?? FETCH_TIMEOUT_MS;
   const linked = linkedAbort(timeoutMs, options.signal);
   const redirectChain: string[] = [];
@@ -174,6 +198,23 @@ async function verifyUrlWithin(
     logEbayAdapterDisabled();
   }
   const ats = options.atsApi ? parseAtsJobUrl(url) : null;
+  const robots = await robotsAllows(url, fetcher, { signal });
+  if (!robots.allowed) {
+    return classify(
+      {
+        requestedUrl: url,
+        canonicalUrl: url,
+        httpStatus: 0,
+        title: null,
+        html: "",
+        text: "",
+        redirected: false,
+        redirectChain: [],
+        robotsDisallowed: true,
+      },
+      now,
+    );
+  }
   if (!ats) {
     const page = await fetchPage(url, fetcher, { signal });
     return classify(page, now);
