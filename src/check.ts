@@ -21,6 +21,7 @@ import type {
   SourceStatus,
   TextDiffParams,
 } from "./types.js";
+import { stripTrackingParams } from "./tracking-params.js";
 import { VerifyError, fetchPage, parseTargetUrl, verifyUrl } from "./verify.js";
 
 export const CHECK_INTENT = "check" as const;
@@ -214,7 +215,7 @@ export function parseCheckTarget(raw: unknown): CheckTarget {
   }
   let url: string;
   try {
-    url = parseTargetUrl(raw.url);
+    url = stripTrackingParams(parseTargetUrl(raw.url));
   } catch (error) {
     const message = error instanceof VerifyError ? error.message : "url must be an absolute http(s) URL.";
     throw new CheckError("invalid_target", message, 400);

@@ -10,6 +10,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { stripTrackingParams } from "../src/tracking-params.js";
 import { verifyUrl } from "../src/verify.js";
 
 type Expected = "live" | "closed" | "unknown";
@@ -35,7 +36,7 @@ async function main(): Promise<void> {
   let liveToClosed = 0;
 
   for (const item of plate.items) {
-    const verdict = await verifyUrl(item.url, fetch, new Date(), { atsApi: true, deadlineMs: 20000 });
+    const verdict = await verifyUrl(stripTrackingParams(item.url), fetch, new Date(), { atsApi: true, deadlineMs: 20000 });
     const got = verdict.status;
     if (got === "live") live += 1;
     else if (got === "closed") closed += 1;
