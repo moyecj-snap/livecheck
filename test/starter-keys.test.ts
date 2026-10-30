@@ -40,8 +40,10 @@ import {
   STARTER_KEY_CONTACT_LABEL,
   STARTER_KEY_PRIVACY_LINE,
   WIND_DOWN_MESSAGE,
+  BOARD_URL_SHAPE_MESSAGE,
   cardFundedPayer,
   classifyStarterSpend,
+  isBoardUrlShape,
   githubAccountTooYoung,
   hashStarterKey,
   isoStamp,
@@ -82,7 +84,7 @@ function issue(partial: { githubId?: string; login?: string; ip?: string; optIn?
 }
 
 describe("starter key rules", () => {
-  it("charges a real answer, including can't-tell, and not errors, timeouts, or board URLs", () => {
+  it("charges a real answer, including a board found after fetch, and not errors or timeouts", () => {
     assert.deepEqual(classifyStarterSpend(200, { status: "live", signals: ["apply form present"], http_status: 200 }), {
       charge: true,
       blocked: false,
@@ -97,11 +99,11 @@ describe("starter key rules", () => {
     });
     assert.deepEqual(
       classifyStarterSpend(200, { status: "unknown", signals: ["not_a_specific_posting"], http_status: 200 }),
-      { charge: false, blocked: false },
+      { charge: true, blocked: false },
     );
     assert.deepEqual(
       classifyStarterSpend(200, { status: "unknown", signals: ["collection_or_category", "challenge_page"], http_status: 200 }),
-      { charge: false, blocked: false },
+      { charge: true, blocked: true },
     );
     assert.deepEqual(
       classifyStarterSpend(200, { status: "unknown", signals: [CHECK_TIMEOUT_SIGNAL], http_status: 0 }),
@@ -115,6 +117,19 @@ describe("starter key rules", () => {
       true,
     );
     assert.equal(classifyStarterSpend(200, { status: "unknown", signals: ["loginwalled"], http_status: 200 }).charge, true);
+  });
+
+  it("sees a Greenhouse, Lever, or Ashby board from the URL, and not a posting id", () => {
+    assert.equal(isBoardUrlShape("https://boards.greenhouse.io/acme"), true);
+    assert.equal(isBoardUrlShape("https://job-boards.greenhouse.io/figma"), true);
+    assert.equal(isBoardUrlShape("https://boards.greenhouse.io/acme/jobs/1842"), false);
+    assert.equal(isBoardUrlShape("https://jobs.lever.co/figma"), true);
+    assert.equal(isBoardUrlShape("https://jobs.lever.co/figma/01234567-89ab-cdef-0123-456789abcdef"), false);
+    assert.equal(isBoardUrlShape("https://jobs.ashbyhq.com/notion"), true);
+    assert.equal(isBoardUrlShape("https://jobs.ashbyhq.com/notion/01234567-89ab-cdef-0123-456789abcdef"), false);
+    assert.equal(isBoardUrlShape("https://example.com/careers"), true);
+    assert.equal(isBoardUrlShape("https://example.com/careers?gh_jid=1842"), false);
+    assert.equal(isBoardUrlShape("https://example.com/company/about"), false);
   });
 
   it("treats a GitHub account under 7 days as too young, and exactly 7 days as old enough", () => {
@@ -533,9 +548,11 @@ describe("starter key HTTP", () => {
     const app = createApp();
     const { plaintext } = await signIn(app, { id: 11, login: "payer", created_at: "2020-01-01T00:00:00Z" });
     const before = reconciliation();
+    let fetches = 0;
     globalThis.fetch = async (input) => {
+      fetches += 1;
       const url = requestUrl(input);
-      if (url.endsWith("/careers")) return html(FIXTURES.careers.body ?? "", 200);
+      if (url.includes("/openings?")) return html(FIXTURES.careers.body ?? "", 200);
       if (url.endsWith("/missing")) return html(GONE_HTML, 404);
       if (url.endsWith("/private")) return html(LOGIN_HTML, 200);
       if (url.endsWith("/down")) throw new Error("connection reset");
@@ -549,27 +566,43 @@ describe("starter key HTTP", () => {
     assert.equal(liveBody.status, "live");
     assert.equal(used(plaintext), 1);
 
-    const board = await verify(app, plaintext, "https://example.com/careers");
-    assert.equal(board.status, 200);
-    const boardBody = (await board.json()) as { signals: string[] };
-    assert.ok(boardBody.signals.includes("not_a_specific_posting"));
+    const beforeShape = fetches;
+    const shaped = await verify(app, plaintext, "https://boards.greenhouse.io/acme");
+    assert.equal(shaped.status, 400);
+    const shapedBody = (await shaped.json()) as { error: string; message: string; billed: boolean; price_usd: number };
+    assert.equal(shapedBody.error, "board_url");
+    assert.equal(shapedBody.message, BOARD_URL_SHAPE_MESSAGE);
+    assert.equal(shapedBody.billed, false);
+    assert.equal(shapedBody.price_usd, 0);
+    assert.equal(fetches, beforeShape);
     assert.equal(used(plaintext), 1);
+    const lever = await verify(app, plaintext, "https://jobs.lever.co/figma");
+    assert.equal(lever.status, 400);
+    const ashby = await verify(app, plaintext, "https://jobs.ashbyhq.com/notion");
+    assert.equal(ashby.status, 400);
+    assert.equal(used(plaintext), 1);
+
+    const fetchedBoard = await verify(app, plaintext, "https://example.com/openings?q=engineer");
+    assert.equal(fetchedBoard.status, 200);
+    const fetchedBody = (await fetchedBoard.json()) as { signals: string[] };
+    assert.ok(fetchedBody.signals.includes("not_a_specific_posting"));
+    assert.equal(used(plaintext), 2);
 
     const closed = await verify(app, plaintext, "https://example.com/missing");
     assert.equal(closed.status, 200);
     assert.equal(((await closed.json()) as { status: string }).status, "closed");
-    assert.equal(used(plaintext), 2);
+    assert.equal(used(plaintext), 3);
 
     const cantTell = await verify(app, plaintext, "https://example.com/private");
     assert.equal(cantTell.status, 200);
     const cantBody = (await cantTell.json()) as { status: string; signals: string[] };
     assert.equal(cantBody.status, "unknown");
     assert.ok(cantBody.signals.includes("loginwalled"));
-    assert.equal(used(plaintext), 3);
+    assert.equal(used(plaintext), 4);
 
     const down = await verify(app, plaintext, "https://example.com/down");
     assert.equal(down.status, 502);
-    assert.equal(used(plaintext), 3);
+    assert.equal(used(plaintext), 4);
 
     const bad = await app.request("/v1/verify", {
       method: "POST",
@@ -577,7 +610,7 @@ describe("starter key HTTP", () => {
       body: "{",
     });
     assert.equal(bad.status, 400);
-    assert.equal(used(plaintext), 3);
+    assert.equal(used(plaintext), 4);
 
     assert.equal(logs.some((line) => line.includes(PAID_CALL_EVENT)), false);
     assert.deepEqual(reconciliation(), before);

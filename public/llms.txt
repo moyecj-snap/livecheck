@@ -4,7 +4,7 @@
 
 Verify routes are POST /v1/verify, POST /v1/verify/job, and POST /v1/verify/listing. The unpaid 402 offers both x402 (Base USDC) and MPP (Tempo USDC.e). Each charges exactly $0.01. MPP method is tempo/charge: USDC.e on Tempo (chain 4217). Stripe pays Tempo gas. With MPP (Tempo): Paid answers, including the checked link, are kept for 24 hours so retries are safe, then deleted. Check, watch, renew, chain top-up, and confirm stay x402 (Base USDC) only.
 
-A free starter key (GitHub sign-in, public profile, no email) can call POST /v1/verify, POST /v1/verify/job, and POST /v1/verify/listing: 200 checks over 30 days. Get one at https://livecheck.fly.dev/keys and send Authorization: Bearer lc_live_…. A real answer spends one check, including unknown. Errors and a job-board URL (not one posting) do not. Confirm, Sentinel (/v1/check, /v1/watch), and the free /job page limits are unchanged. Wallet payments stay the same.
+A free starter key (GitHub sign-in, public profile, no email) can call POST /v1/verify, POST /v1/verify/job, and POST /v1/verify/listing: 200 checks over 30 days. Get one at https://livecheck.fly.dev/keys and send Authorization: Bearer lc_live_…. A real answer spends one check, including unknown, and including a board found only after the fetch. Errors do not. A Greenhouse, Lever, or Ashby URL with no job id is rejected free. Confirm, Sentinel (/v1/check, /v1/watch), and the free /job page limits are unchanged. Wallet payments stay the same.
 
 ## When to use
 - Before recommending or buying a product: is this listing still available?

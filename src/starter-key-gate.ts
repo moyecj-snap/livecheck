@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Context, Next } from "hono";
-import { apiKeyDb, finishStarterCall, reserveStarterCall } from "./api-key-store.js";
-import { classifyStarterSpend, starterKeyNow } from "./starter-key.js";
+import { apiKeyDb, authorizeStarterKey, finishStarterCall, reserveStarterCall } from "./api-key-store.js";
+import { BOARD_URL_SHAPE_MESSAGE, classifyStarterSpend, isBoardUrlShape, starterKeyNow } from "./starter-key.js";
+import { parseTargetUrl } from "./verify.js";
 
 /**
  * A valid `Authorization: Bearer lc_live_…` on a verify route runs inside
@@ -34,6 +35,23 @@ function deny(
   return c.json(body, status);
 }
 
+/** URL string is a board. No fetch. Body stays cached for the handler when this is false. */
+async function requestIsBoardShape(c: Context): Promise<boolean> {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return false;
+  }
+  const raw = typeof body === "object" && body !== null ? (body as { url?: unknown }).url : undefined;
+  if (typeof raw !== "string") return false;
+  try {
+    return isBoardUrlShape(parseTargetUrl(raw));
+  } catch {
+    return false;
+  }
+}
+
 async function spendFromResponse(res: Response | undefined): Promise<{ charge: boolean; blocked: boolean }> {
   if (!res) return { charge: false, blocked: false };
   if (res.status !== 200) return { charge: false, blocked: false };
@@ -55,6 +73,19 @@ export async function runStarterKeyAdmission(c: Context, next: Next, token: stri
   const db = apiKeyDb();
   if (!db) {
     return deny(c, 503, "starter_keys_unavailable", "Starter keys are not available on this process.");
+  }
+  if (await requestIsBoardShape(c)) {
+    const auth = authorizeStarterKey(db, token, starterKeyNow());
+    if (!auth.ok) {
+      return deny(c, auth.status, auth.error, auth.message, {
+        retryAfter: auth.retryAfter,
+        freeUsed: auth.freeUsed,
+        freeAllowance: auth.freeAllowance,
+      });
+    }
+    c.header("cache-control", "no-store");
+    c.header("x-livecheck-starter-key", "1");
+    return c.json({ error: "board_url", message: BOARD_URL_SHAPE_MESSAGE, billed: false, price_usd: 0 }, 400);
   }
   const reserved = reserveStarterCall(db, token, starterKeyNow());
   if (!reserved.ok) {

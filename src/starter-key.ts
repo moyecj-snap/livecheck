@@ -4,10 +4,13 @@ import { CHECK_TIMEOUT_SIGNAL } from "./config.js";
 /**
  * Phase 1 starter keys. GitHub OAuth, no email, no card top-up.
  *
- * A free check spends one credit only for a real verify answer. Errors,
- * timeouts, and board-URL messages do not. Free checks write no paid_calls
- * row. Phase 2 (not built) would add paid_left and a paid_calls row with
- * payer `key:<id>`, which traffic-buckets treats as external.
+ * A free check spends one credit only for a real verify answer. Errors and
+ * timeouts do not. A Greenhouse, Lever, or Ashby board (or other board
+ * shape) visible from the URL alone is rejected before the fetch and does
+ * not spend a credit. A board found only after the fetch is a real answer.
+ * Free checks write no paid_calls row. Phase 2 (not built) would add
+ * paid_left and a paid_calls row with payer `key:<id>`, which
+ * traffic-buckets treats as external.
  */
 
 export const GITHUB_OAUTH_CLIENT_ID_ENV = "GITHUB_OAUTH_CLIENT_ID";
@@ -23,6 +26,47 @@ export const WIND_DOWN_MESSAGE =
   "Starter key sign-up is closed. Existing keys keep working until they expire.";
 
 export const OUT_OF_CHECKS_MESSAGE = `This starter key has used its free checks. Pay with a wallet (x402 on Base or MPP on Tempo) by calling this route without the key, or reply to get a top-up link: ${STARTER_KEY_CONTACT_EMAIL}.`;
+
+/** Same wording as the paid-route board rejection (PR #52). */
+export const BOARD_URL_SHAPE_MESSAGE =
+  "This URL is a job board or careers index, not a single posting. Pass the URL of one job posting.";
+
+const JOB_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A job board visible from the URL string alone, before any fetch.
+ * Same rule as classify.ts `isBoardUrlShape` on the board-message branch:
+ * Greenhouse, Lever, or Ashby with no job id, a careers or jobs index, a
+ * Greenhouse job-board embed, or a LinkedIn jobs search. A numeric `gh_jid`
+ * is a job id, so that URL is not rejected here.
+ */
+export function isBoardUrlShape(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  if (/[?&]gh_jid=\d+\b/i.test(url.search)) return false;
+  const host = url.hostname.toLowerCase();
+  const path = url.pathname.replace(/\/+$/, "") || "/";
+  const parts = path.split("/").filter(Boolean);
+  if (host.endsWith("greenhouse.io")) {
+    const token = url.searchParams.get("token")?.trim() ?? "";
+    if (/\/embed\/job_app/i.test(path) && /^\d+$/.test(token)) return false;
+    return !/\/jobs\/\d+/.test(path);
+  }
+  if (host.endsWith("lever.co") || host.endsWith("ashbyhq.com")) {
+    return !parts.some((part) => JOB_UUID.test(part));
+  }
+  if (/^\/(careers|jobs)$/i.test(path)) return true;
+  if (path.includes("/job_board") || path.includes("/embed/job_board")) return true;
+  if ((host === "linkedin.com" || host.endsWith(".linkedin.com")) && /\/jobs(\/|$)/.test(path) && !/\/jobs\/view\//.test(path)) {
+    return true;
+  }
+  return false;
+}
 
 export const STARTER_KEY_CALLBACK_PATH = "/keys/callback";
 export const STARTER_KEY_PAGE_PATH = "/keys";
@@ -187,31 +231,25 @@ export function isCardFundedPayer(payer: string | null | undefined): boolean {
 export type StarterSpend = { charge: boolean; blocked: boolean };
 
 /**
- * Charge only a real answer: HTTP 200 with live, closed, or unknown
- * ("can't tell"). Our errors, check timeouts, and board-URL messages
- * (not a specific posting / a collection) do not spend a credit.
+ * Charge a real answer: HTTP 200 with live, closed, or unknown ("can't
+ * tell"), including a board we only learned about after fetching. Our
+ * errors and check timeouts do not spend a credit. A board visible from
+ * the URL string is rejected before this runs.
  *
  * Blocked, for auto-suspend, is a challenge, a login wall, or target
  * HTTP 401/403/429. A 404/410 closed posting is a real answer, not abuse.
- * Board-URL messages are not abuse.
  */
 export function classifyStarterSpend(status: number, body: unknown): StarterSpend {
   if (status !== 200 || body === null || typeof body !== "object") return { charge: false, blocked: false };
   const record = body as { status?: unknown; signals?: unknown; http_status?: unknown };
   const signals = Array.isArray(record.signals) ? record.signals.filter((item): item is string => typeof item === "string") : [];
   const httpStatus = typeof record.http_status === "number" ? record.http_status : 0;
-  const board = signals.includes("not_a_specific_posting") || signals.includes("collection_or_category");
   const timeout = signals.includes(CHECK_TIMEOUT_SIGNAL);
   const verdict = record.status;
   const real = verdict === "live" || verdict === "closed" || verdict === "unknown";
   const blocked =
-    !board &&
-    (signals.includes("challenge_page") ||
-      signals.includes("loginwalled") ||
-      httpStatus === 401 ||
-      httpStatus === 403 ||
-      httpStatus === 429);
-  return { charge: real && !board && !timeout, blocked };
+    signals.includes("challenge_page") || signals.includes("loginwalled") || httpStatus === 401 || httpStatus === 403 || httpStatus === 429;
+  return { charge: real && !timeout, blocked };
 }
 
 let clock: () => Date = () => new Date();

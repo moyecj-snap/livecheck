@@ -498,24 +498,37 @@ function lookupByHash(db: DatabaseSync, token: string): ApiKeyRow | undefined {
   );
 }
 
+/** Key status only. Does not count a call or reserve a credit. */
+function denyStarterKey(row: ApiKeyRow | undefined, limits: StarterKeyLimits, now: Date): ReserveResult | undefined {
+  if (!row) return { ok: false, status: 401, error: "invalid_api_key", message: "Unknown starter key." };
+  if (row.status === "revoked") {
+    return { ok: false, status: 401, error: "starter_key_revoked", message: "This starter key was revoked." };
+  }
+  if (limits.emergencyStop) {
+    return { ok: false, status: 403, error: "starter_keys_emergency_stop", message: EMERGENCY_STOP_MESSAGE };
+  }
+  if (row.status === "suspended") {
+    return { ok: false, status: 403, error: "starter_key_suspended", message: "This starter key is suspended." };
+  }
+  if (row.expires_at <= isoStamp(now)) {
+    return { ok: false, status: 403, error: "starter_key_expired", message: "This starter key has expired." };
+  }
+  return undefined;
+}
+
+/** Whether this key may be used right now. Does not spend a credit or a rate-limit slot. */
+export function authorizeStarterKey(db: DatabaseSync, token: string, now = new Date()): ReserveResult | { ok: true; key: ApiKeyRow } {
+  const limits = starterKeyLimits(db);
+  const row = lookupByHash(db, token);
+  return denyStarterKey(row, limits, now) ?? { ok: true, key: row as ApiKeyRow };
+}
+
 export function reserveStarterCall(db: DatabaseSync, token: string, now = new Date()): ReserveResult {
   return withTx(db, () => {
     const limits = starterKeyLimits(db);
     const row = lookupByHash(db, token);
-    if (!row) return { ok: false, status: 401 as const, error: "invalid_api_key", message: "Unknown starter key." };
-    if (row.status === "revoked") {
-      return { ok: false, status: 401 as const, error: "starter_key_revoked", message: "This starter key was revoked." };
-    }
-    if (limits.emergencyStop) {
-      return { ok: false, status: 403 as const, error: "starter_keys_emergency_stop", message: EMERGENCY_STOP_MESSAGE };
-    }
-    if (row.status === "suspended") {
-      return { ok: false, status: 403 as const, error: "starter_key_suspended", message: "This starter key is suspended." };
-    }
-    const nowIso = isoStamp(now);
-    if (row.expires_at <= nowIso) {
-      return { ok: false, status: 403 as const, error: "starter_key_expired", message: "This starter key has expired." };
-    }
+    const denied = denyStarterKey(row, limits, now);
+    if (denied || !row) return denied ?? { ok: false, status: 401, error: "invalid_api_key", message: "Unknown starter key." };
     const minute = utcMinute(now);
     const calls = bumpMinute(db, minute, row.id);
     if (calls > limits.perKeyPerMinute) {
