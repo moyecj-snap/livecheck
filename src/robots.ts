@@ -13,23 +13,23 @@ import { USER_AGENT } from "./config.js";
  * as an allow and the next check tries again.
  *
  * Lenient is the public API. The lookup waits at most 500ms, inside the
- * caller's page timeout and the whole-check deadline. If robots.txt cannot be
- * fetched (network error, that 500ms, HTTP 5xx, 429, or any other status that
- * is not handled below), the check proceeds. A down robots.txt must not turn
- * a real posting into "can't tell".
+ * caller's page timeout and the whole-check deadline. Strict is for audits
+ * and pilots that promised robots.txt compliance. It waits at most 5s, still
+ * inside those same budgets.
  *
- * Strict is for audits and pilots that promised robots.txt compliance. The
- * lookup waits at most 5s, still inside those same budgets. Timeout, network
- * error, HTTP 5xx, 429, and any other status that is not a robots file skip
- * the page and the ATS lookup. The verdict is unknown, signal
- * robots_unavailable, message "robots.txt unavailable".
+ * Any HTTP 4xx except 429 means no robots.txt is available, in both modes, so
+ * the URL is allowed and that allow is cached for an hour. This includes 401,
+ * 403, 404, and 410. The older "401/403 is disallow-all" reading of RFC 9309
+ * is not what Google follows now.
  *
- * Both modes: HTTP 404 means there is no file, so the URL is allowed and that
- * is cached. Strict mode treats HTTP 410 the same way (gone, no rules) and
- * caches the allow. Lenient mode leaves 410 on the fail-open path, uncached.
- * HTTP 401 and 403 are disallow-all for that origin, matching RFC 9309: a
- * forbidden robots.txt means do not fetch the site. That decision is cached
- * for the same hour in both modes.
+ * HTTP 429, 5xx, a timeout, or a network error means robots.txt is temporarily
+ * unreachable, and that result is not cached. Strict mode skips the page and
+ * the ATS lookup and returns unknown with signal robots_unavailable and
+ * message "robots.txt unavailable". Lenient mode fetches the page. A down
+ * robots.txt must not turn a live-API posting into "can't tell".
+ *
+ * HTTP 200 is parsed and the matching rule is followed. A Disallow still
+ * skips the page.
  */
 
 export type RobotsMode = "strict" | "lenient";
@@ -295,17 +295,13 @@ export async function robotsAllows(
   pending.catch(() => undefined);
   try {
     const response = await Promise.race([pending, timed]);
-    if (response.status === 404 || (mode === "strict" && response.status === 410)) {
+    if (response.status >= 400 && response.status <= 499 && response.status !== 429) {
+      // No robots.txt (401, 403, 404, 410, and every other 4xx except 429).
       cacheSet(key, "allow");
       return { allowed: true };
     }
-    if (response.status === 401 || response.status === 403) {
-      cacheSet(key, "disallow");
-      return disallowedVerdict();
-    }
     if (response.status < 200 || response.status >= 300) {
-      // Lenient: 5xx, 429, 410, and anything else unexpected fail open, uncached.
-      // Strict: no rules file, so skip. Do not cache that as an allow.
+      // 429 and 5xx: unreachable. Strict skips; lenient fail-opens. Do not cache.
       if (mode === "strict") return unavailableVerdict();
       return { allowed: true };
     }

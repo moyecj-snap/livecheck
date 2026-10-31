@@ -123,21 +123,72 @@ describe("robots.txt fetch policy", () => {
     assert.equal(robotsCacheSizeForTests(), 0);
   });
 
-  it("caches a 404 as allow and a 403 as disallow-all", async () => {
-    let calls = 0;
-    const missing: typeof fetch = async () => {
-      calls += 1;
-      return new Response("missing", { status: 404 });
-    };
-    assert.equal((await robotsAllows("https://none.example/jobs/1", missing)).allowed, true);
-    assert.equal((await robotsAllows("https://none.example/jobs/2", missing)).allowed, true);
-    assert.equal(calls, 1);
+  it("allows and caches 401, 403, 404, and 410 in both modes", async () => {
+    const page = "<html><title>Engineer</title><body><a>Apply now</a></body></html>";
+    for (const mode of ["lenient", "strict"] as const) {
+      for (const status of [401, 403, 404, 410]) {
+        clearRobotsCacheForTests();
+        const seen: string[] = [];
+        let robotsFetches = 0;
+        const fetcher: typeof fetch = async (input) => {
+          const url = requestUrl(input);
+          seen.push(url);
+          if (url.endsWith("/robots.txt")) {
+            robotsFetches += 1;
+            return new Response("nope", { status });
+          }
+          return new Response(page, { status: 200 });
+        };
+        const origin = `https://${mode}-${status}.example`;
+        const first = await verifyUrl(`${origin}/jobs/1`, fetcher, new Date(), { robotsMode: mode });
+        const second = await verifyUrl(`${origin}/jobs/2`, fetcher, new Date(), { robotsMode: mode });
+        assert.equal(first.signals.includes(ROBOTS_DISALLOWED_SIGNAL), false, `${mode} ${status}`);
+        assert.equal(first.signals.includes(ROBOTS_UNAVAILABLE_SIGNAL), false, `${mode} ${status}`);
+        assert.equal(second.signals.includes(ROBOTS_UNAVAILABLE_SIGNAL), false, `${mode} ${status}`);
+        assert.ok(seen.includes(`${origin}/jobs/1`), `${mode} ${status} fetches the page`);
+        assert.ok(seen.includes(`${origin}/jobs/2`), `${mode} ${status} fetches the page`);
+        assert.equal(robotsFetches, 1, `${mode} ${status} is cached as allow`);
+        assert.equal(robotsCacheSizeForTests(), 1);
+      }
+    }
+  });
 
-    clearRobotsCacheForTests();
-    const forbidden: typeof fetch = async () => new Response("no", { status: 403 });
-    const blocked = await robotsAllows("https://private.example/jobs/1", forbidden);
-    assert.equal(blocked.allowed, false);
-    if (!blocked.allowed) assert.equal(blocked.message, ROBOTS_DISALLOWED_MESSAGE);
+  it("skips 429 and 5xx in strict and carries on in lenient", async () => {
+    const page = "<html><title>Engineer</title><body><a>Apply now</a></body></html>";
+    for (const status of [429, 503]) {
+      for (const mode of ["lenient", "strict"] as const) {
+        clearRobotsCacheForTests();
+        const seen: string[] = [];
+        let robotsFetches = 0;
+        const fetcher: typeof fetch = async (input) => {
+          const url = requestUrl(input);
+          seen.push(url);
+          if (url.endsWith("/robots.txt")) {
+            robotsFetches += 1;
+            return new Response("nope", { status });
+          }
+          return new Response(page, { status: 200 });
+        };
+        const origin = `https://${mode}-unreachable-${status}.example`;
+        const first = await verifyUrl(`${origin}/jobs/1`, fetcher, new Date(), { robotsMode: mode });
+        const second = await verifyUrl(`${origin}/jobs/2`, fetcher, new Date(), { robotsMode: mode });
+        assert.equal(robotsFetches, 2, `${mode} ${status} is not cached`);
+        assert.equal(robotsCacheSizeForTests(), 0);
+        if (mode === "strict") {
+          assert.equal(first.status, "unknown");
+          assert.equal(first.message, ROBOTS_UNAVAILABLE_MESSAGE);
+          assert.deepEqual(first.signals, [ROBOTS_UNAVAILABLE_SIGNAL]);
+          assert.deepEqual(second.signals, [ROBOTS_UNAVAILABLE_SIGNAL]);
+          assert.equal(seen.includes(`${origin}/jobs/1`), false, `${mode} ${status} skips the page`);
+          assert.equal(seen.includes(`${origin}/jobs/2`), false);
+        } else {
+          assert.equal(first.signals.includes(ROBOTS_UNAVAILABLE_SIGNAL), false);
+          assert.equal(second.signals.includes(ROBOTS_UNAVAILABLE_SIGNAL), false);
+          assert.ok(seen.includes(`${origin}/jobs/1`), `${mode} ${status} fetches the page`);
+          assert.ok(seen.includes(`${origin}/jobs/2`));
+        }
+      }
+    }
   });
 
   it("returns can't tell and does not fetch the page when the URL is disallowed", async () => {
@@ -263,65 +314,6 @@ describe("strict robots.txt", () => {
     assert.equal(verdict.signals.includes(ROBOTS_UNAVAILABLE_SIGNAL), false);
   });
 
-  it("strict and HTTP 503 skips the page and is not cached", async () => {
-    const seen: string[] = [];
-    const fetcher: typeof fetch = async (input) => {
-      const url = requestUrl(input);
-      seen.push(url);
-      if (url.endsWith("/robots.txt")) return new Response("down", { status: 503 });
-      return new Response(APPLY_PAGE, { status: 200 });
-    };
-    const verdict = await verifyUrl("https://down.example/jobs/1", fetcher, new Date(), { robotsMode: "strict" });
-    assert.equal(verdict.message, ROBOTS_UNAVAILABLE_MESSAGE);
-    assert.deepEqual(seen, ["https://down.example/robots.txt"]);
-    assert.equal(robotsCacheSizeForTests(), 0);
-    await verifyUrl("https://down.example/jobs/1", fetcher, new Date(), { robotsMode: "strict" });
-    assert.equal(seen.filter((url) => url.endsWith("/robots.txt")).length, 2);
-  });
-
-  it("strict and 404 checks the page, and strict 410 checks the page and caches the allow", async () => {
-    const seen: string[] = [];
-    const fetcher: typeof fetch = async (input) => {
-      const url = requestUrl(input);
-      seen.push(url);
-      if (url.endsWith("/robots.txt")) return new Response("missing", { status: 404 });
-      return new Response(APPLY_PAGE, { status: 200 });
-    };
-    const missing = await verifyUrl("https://none.example/jobs/1", fetcher, new Date(), { robotsMode: "strict" });
-    assert.equal(missing.signals.includes(ROBOTS_UNAVAILABLE_SIGNAL), false);
-    assert.equal(missing.signals.includes(ROBOTS_DISALLOWED_SIGNAL), false);
-    assert.ok(seen.includes("https://none.example/jobs/1"));
-
-    seen.length = 0;
-    clearRobotsCacheForTests();
-    const goneFetcher: typeof fetch = async (input) => {
-      const url = requestUrl(input);
-      seen.push(url);
-      if (url.endsWith("/robots.txt")) return new Response("gone", { status: 410 });
-      return new Response(APPLY_PAGE, { status: 200 });
-    };
-    await verifyUrl("https://gone.example/jobs/1", goneFetcher, new Date(), { robotsMode: "strict" });
-    await verifyUrl("https://gone.example/jobs/2", goneFetcher, new Date(), { robotsMode: "strict" });
-    assert.deepEqual(seen.filter((url) => url.endsWith("/robots.txt")), ["https://gone.example/robots.txt"]);
-    assert.ok(seen.includes("https://gone.example/jobs/1"));
-    assert.ok(seen.includes("https://gone.example/jobs/2"));
-  });
-
-  it("lenient still checks the page on 410 and does not cache that response", async () => {
-    const seen: string[] = [];
-    const fetcher: typeof fetch = async (input) => {
-      const url = requestUrl(input);
-      seen.push(url);
-      if (url.endsWith("/robots.txt")) return new Response("gone", { status: 410 });
-      return new Response(APPLY_PAGE, { status: 200 });
-    };
-    await verifyUrl("https://lenient-gone.example/jobs/1", fetcher, new Date(), { robotsMode: "lenient" });
-    await verifyUrl("https://lenient-gone.example/jobs/2", fetcher, new Date());
-    assert.equal(seen.filter((url) => url.endsWith("/robots.txt")).length, 2);
-    assert.ok(seen.includes("https://lenient-gone.example/jobs/1"));
-    assert.ok(seen.includes("https://lenient-gone.example/jobs/2"));
-  });
-
   it("strict and a disallow skips the page and the ATS lookup", async () => {
     const seen: string[] = [];
     const fetcher: typeof fetch = async (input) => {
@@ -336,39 +328,6 @@ describe("strict robots.txt", () => {
     assert.deepEqual(verdict.signals, [ROBOTS_DISALLOWED_SIGNAL]);
     assert.equal(seen.some((url) => url.includes("boards-api.greenhouse.io")), false);
     assert.equal(seen.includes(GREENHOUSE), false);
-  });
-
-  it("strict treats HTTP 403 as disallow-all and caches it", async () => {
-    const seen: string[] = [];
-    const fetcher: typeof fetch = async (input) => {
-      const url = requestUrl(input);
-      seen.push(url);
-      if (url.endsWith("/robots.txt")) return new Response("no", { status: 403 });
-      return new Response(APPLY_PAGE, { status: 200 });
-    };
-    const first = await verifyUrl("https://private.example/jobs/1", fetcher, new Date(), { robotsMode: "strict" });
-    const second = await verifyUrl("https://private.example/jobs/2", fetcher, new Date(), { robotsMode: "strict" });
-    assert.equal(first.message, ROBOTS_DISALLOWED_MESSAGE);
-    assert.equal(second.message, ROBOTS_DISALLOWED_MESSAGE);
-    assert.deepEqual(seen, ["https://private.example/robots.txt"]);
-    assert.equal(robotsCacheSizeForTests(), 1);
-  });
-
-  it("lenient still fetches the page when robots.txt returns 503", async () => {
-    const seen: string[] = [];
-    const fetcher: typeof fetch = async (input) => {
-      const url = requestUrl(input);
-      seen.push(url);
-      if (url.endsWith("/robots.txt")) return new Response("down", { status: 503 });
-      return new Response(APPLY_PAGE, { status: 200 });
-    };
-    const explicit = await verifyUrl("https://lenient-down.example/jobs/1", fetcher, new Date(), { robotsMode: "lenient" });
-    const implicit = await verifyUrl("https://lenient-down.example/jobs/2", fetcher, new Date());
-    assert.equal(explicit.signals.includes(ROBOTS_UNAVAILABLE_SIGNAL), false);
-    assert.equal(implicit.signals.includes(ROBOTS_UNAVAILABLE_SIGNAL), false);
-    assert.ok(seen.includes("https://lenient-down.example/jobs/1"));
-    assert.ok(seen.includes("https://lenient-down.example/jobs/2"));
-    assert.equal(robotsCacheSizeForTests(), 0);
   });
 
   it("POST /v1/verify ignores a caller robotsMode and stays lenient", async () => {
