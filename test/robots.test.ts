@@ -265,7 +265,9 @@ describe("robots.txt fetch policy", () => {
     const first = await verifyUrl("https://jobs.example/jobs/9", fetcher);
     const duringRobots = seen.filter((url) => url !== "https://jobs.example/jobs/9");
     assert.equal(first.signals.includes(ROBOTS_DISALLOWED_SIGNAL), false);
-    assert.ok(seen.includes("https://jobs.example/jobs/9"));
+    // Six redirects means no robots.txt: allowed, so the page is checked.
+    assert.ok(seen.includes("https://jobs.example/jobs/9"), "the page is checked");
+    assert.equal(seen.includes("https://cdn.example/robots/6"), false, "the 6th redirect is not fetched");
     assert.deepEqual(duringRobots, [
       "https://jobs.example/robots.txt",
       "https://cdn.example/robots/1",
