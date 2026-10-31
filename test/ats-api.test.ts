@@ -92,31 +92,26 @@ function listed(partial: Partial<Extract<AtsLookup, { outcome: "listed" }>> = {}
 
 describe("ATS URL → public API", () => {
   it("maps Ashby, Workday, Lever, then Greenhouse posting URLs", () => {
-    assert.deepEqual(parseAtsJobUrl(ASHBY_LIVE), {
-      vendor: "ashby",
-      board: "linear",
-      jobId: "d3bc1ced-3ce4-4086-a050-555055dbb1ff",
-      apiUrl: "https://api.ashbyhq.com/posting-api/job-board/linear",
-    });
-    assert.equal(parseAtsJobUrl(`${ASHBY_LIVE}/application`)?.apiUrl, "https://api.ashbyhq.com/posting-api/job-board/linear");
+    const ashby = parseAtsJobUrl(ASHBY_LIVE);
+    assert.equal(ashby?.vendor, "ashby");
+    assert.equal(ashby?.board, "linear");
+    assert.equal(ashby?.jobId, "d3bc1ced-3ce4-4086-a050-555055dbb1ff");
+    assert.equal(ashby?.method, "POST");
+    assert.match(ashby?.apiUrl ?? "", /non-user-graphql\?op=ApiJobPosting#linear\/d3bc1ced-3ce4-4086-a050-555055dbb1ff$/);
+    assert.equal(parseAtsJobUrl(`${ASHBY_LIVE}/application`)?.apiUrl, ashby?.apiUrl);
 
     // pathname is already percent-encoded. Encoding the segment again turned
     // Ashby's "trunk tools" board (jobUrl uses trunk%20tools) into
     // trunk%2520tools, which the posting API 404s.
     const trunkTools = "https://jobs.ashbyhq.com/trunk%20tools/c82252bc-b40f-451c-ae39-e4810bf0f121";
-    assert.deepEqual(parseAtsJobUrl(trunkTools), {
-      vendor: "ashby",
-      board: "trunk tools",
-      jobId: "c82252bc-b40f-451c-ae39-e4810bf0f121",
-      apiUrl: "https://api.ashbyhq.com/posting-api/job-board/trunk%20tools",
-    });
-    assert.equal(
-      parseAtsJobUrl(`${trunkTools}/application`)?.apiUrl,
-      "https://api.ashbyhq.com/posting-api/job-board/trunk%20tools",
-    );
+    const trunk = parseAtsJobUrl(trunkTools);
+    assert.equal(trunk?.board, "trunk tools");
+    assert.equal(trunk?.jobId, "c82252bc-b40f-451c-ae39-e4810bf0f121");
+    assert.match(trunk?.body ?? "", /"organizationHostedJobsPageName":"trunk tools"/);
+    assert.equal(parseAtsJobUrl(`${trunkTools}/application`)?.apiUrl, trunk?.apiUrl);
     assert.equal(
       parseAtsJobUrl("https://jobs.ashbyhq.com/trunk tools/c82252bc-b40f-451c-ae39-e4810bf0f121")?.apiUrl,
-      "https://api.ashbyhq.com/posting-api/job-board/trunk%20tools",
+      trunk?.apiUrl,
     );
 
     assert.equal(
