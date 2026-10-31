@@ -333,7 +333,9 @@ describe("robots.txt fetch policy", () => {
       const duringRobots = seen.filter((url) => url !== page);
       assert.equal(first.signals.includes(ROBOTS_DISALLOWED_SIGNAL), false);
       assert.equal(first.signals.includes(ROBOTS_UNAVAILABLE_SIGNAL), false);
-      assert.ok(seen.includes(page), `${mode} still checks the page`);
+      // Six redirects means no robots.txt: allowed, so the page is checked.
+      assert.ok(seen.includes(page), `${mode} checks the page`);
+      assert.equal(seen.includes(`https://cdn.example/${mode}/robots/6`), false, `${mode} does not fetch the 6th redirect`);
       assert.deepEqual(duringRobots, [
         `https://${host}/robots.txt`,
         `https://cdn.example/${mode}/robots/1`,
