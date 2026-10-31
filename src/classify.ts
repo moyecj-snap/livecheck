@@ -201,6 +201,52 @@ function looksLikeSpecificJobUrl(url: string): boolean {
   return !/^(search|board|list|index)$/i.test(posting[1]);
 }
 
+const JOB_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A job board we can see from the URL string alone, before any fetch.
+ * Greenhouse, Lever, and Ashby with no job id in the path; a Workday site
+ * index with no `/job/` posting; the bare `/careers` or `/jobs` index only
+ * (trailing slash or query is fine; a numeric `gh_jid` is a job id); a
+ * Greenhouse job-board embed; or a LinkedIn jobs search.
+ * `/careers/senior-engineer` and `/jobs/12345` are not this shape.
+ */
+export function isBoardUrlShape(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  if (/[?&]gh_jid=\d+\b/i.test(url.search)) return false;
+  const host = url.hostname.toLowerCase();
+  const path = url.pathname.replace(/\/+$/, "") || "/";
+  const parts = path.split("/").filter(Boolean);
+  if (host.endsWith("greenhouse.io")) {
+    const token = url.searchParams.get("token")?.trim() ?? "";
+    if (/\/embed\/job_app/i.test(path) && /^\d+$/.test(token)) return false;
+    return !/\/jobs\/\d+/.test(path);
+  }
+  if (host.endsWith("lever.co") || host.endsWith("ashbyhq.com")) {
+    return !parts.some((part) => JOB_UUID.test(part));
+  }
+  if (isWorkdayBoardHost(host)) {
+    const jobAt = parts.findIndex((part) => part.toLowerCase() === "job");
+    const hasPosting = jobAt >= 0 && jobAt < parts.length - 1;
+    return !hasPosting && parts.length > 0;
+  }
+  // Bare index only. `/careers/role` and `/jobs/12345` are not boards from the path.
+  if (/^\/(careers|jobs)$/i.test(path)) return true;
+  if (path.includes("/job_board") || path.includes("/embed/job_board")) return true;
+  if (isLinkedInHost(host) && /\/jobs(\/|$)/.test(path) && !/\/jobs\/view\//.test(path)) return true;
+  return false;
+}
+
+function isWorkdayBoardHost(host: string): boolean {
+  return host.endsWith(".myworkdayjobs.com") || /^wd\d+\.myworkdaysite\.com$/.test(host);
+}
+
 function looksLikeBoardOrSearchUrl(url: string): boolean {
   const { host, path, search } = extractHostPath(url);
   const q = search.toLowerCase();
