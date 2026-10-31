@@ -8,39 +8,52 @@ import { USER_AGENT } from "./config.js";
  * api.lever.co, api.eu.lever.co, boards-api.greenhouse.io,
  * boards-api.eu.greenhouse.io, and Workday `/wday/cxs/`.
  *
- * Cache: one parsed file per origin, kept for one hour.
+ * Cache: one parsed file per origin, kept for one hour. The cache is shared
+ * by both modes. A failure is never stored, so a strict miss is not remembered
+ * as an allow and the next check tries again.
  *
- * The lookup waits at most 500ms, and that wait is inside the caller's page
- * timeout and the whole-check deadline. It does not add a second budget on
- * top.
+ * Lenient is the public API. The lookup waits at most 500ms, inside the
+ * caller's page timeout and the whole-check deadline. Strict is for audits
+ * and pilots that promised robots.txt compliance. It waits at most 5s, still
+ * inside those same budgets.
  *
  * RFC 9309 §2.3.1.3: an HTTP 4xx other than 429 means robots.txt is
- * unavailable, so the URL is allowed and that allow is cached for an hour.
- * This includes 401, 403, 404, and 410.
+ * unavailable, in both modes, so the URL is allowed and that allow is cached
+ * for an hour. This includes 401, 403, 404, and 410.
  *
  * RFC 9309 §2.3.1.2: follow at least five redirects, even across hosts.
  * More than five is §2.3.1.3 unavailable (allowed, cached), not a fetch of
  * the next hop. The rules of a file reached within five redirects apply to
  * the original host. Every hop is a separate fetch so the caller's SSRF
- * guard runs before connect. The whole chain stays inside the 500ms budget.
+ * guard runs before connect. The whole chain stays inside the 500ms lenient
+ * budget or the 5s strict budget.
  *
  * RFC 9309 §2.3.1.4: 5xx, 429, a timeout, or a network error (including DNS)
  * means robots.txt is unreachable. A crawler must assume complete disallow,
  * and Google keeps that disallow for up to about 30 days. See the comment
- * on the unreachable branch: the live API fails open here on purpose.
+ * on the unreachable branch. Lenient mode fails open on purpose. Strict mode
+ * skips the page and the ATS lookup and returns unknown with signal
+ * robots_unavailable.
  *
- * HTTP 200 is parsed and the matching rule is followed.
+ * HTTP 200 is parsed and the matching rule is followed. A Disallow still
+ * skips the page.
  */
+
+export type RobotsMode = "strict" | "lenient";
 
 /** RFC 9309 §2.3.1.2: follow at least five consecutive redirects. */
 export const ROBOTS_MAX_REDIRECTS = 5;
 
 export const ROBOTS_CACHE_TTL_MS = 60 * 60 * 1000;
-/** Upper bound. The page timeout and check deadline can cut it shorter. */
+/** Lenient upper bound. The page timeout and check deadline can cut it shorter. */
 export const ROBOTS_FETCH_TIMEOUT_MS = 500;
+/** Strict upper bound. The page timeout and check deadline can cut it shorter. */
+export const ROBOTS_STRICT_FETCH_TIMEOUT_MS = 5_000;
 export const ROBOTS_DISALLOWED_SIGNAL = "robots_disallowed";
 export const ROBOTS_DISALLOWED_MESSAGE =
   "This site's robots.txt disallows Livecheck from fetching this URL, so we can't tell if it's live.";
+export const ROBOTS_UNAVAILABLE_SIGNAL = "robots_unavailable";
+export const ROBOTS_UNAVAILABLE_MESSAGE = "robots.txt unavailable";
 
 const PRODUCT_TOKEN = "livecheck";
 
@@ -53,10 +66,20 @@ type CacheEntry = {
 };
 
 let clock: () => number = () => Date.now();
+let strictTimeoutOverride: number | null = null;
 const cache = new Map<string, CacheEntry>();
 
 export function setRobotsClockForTests(fn: (() => number) | null): void {
   clock = fn ?? (() => Date.now());
+}
+
+/** Shorten the strict robots.txt wait in tests. Production stays at 5s. */
+export function setRobotsStrictTimeoutForTests(ms: number | null): void {
+  strictTimeoutOverride = ms;
+}
+
+export function robotsStrictTimeoutMs(): number {
+  return strictTimeoutOverride ?? ROBOTS_STRICT_FETCH_TIMEOUT_MS;
 }
 
 export function clearRobotsCacheForTests(): void {
@@ -191,7 +214,16 @@ export function robotsAllowsGroups(groups: Group[], url: URL, userAgent = USER_A
 
 export type RobotsVerdict =
   | { allowed: true }
-  | { allowed: false; message: string; signal: typeof ROBOTS_DISALLOWED_SIGNAL };
+  | { allowed: false; reason: "disallowed"; message: string; signal: typeof ROBOTS_DISALLOWED_SIGNAL }
+  | { allowed: false; reason: "unavailable"; message: string; signal: typeof ROBOTS_UNAVAILABLE_SIGNAL };
+
+function disallowedVerdict(): RobotsVerdict {
+  return { allowed: false, reason: "disallowed", message: ROBOTS_DISALLOWED_MESSAGE, signal: ROBOTS_DISALLOWED_SIGNAL };
+}
+
+function unavailableVerdict(): RobotsVerdict {
+  return { allowed: false, reason: "unavailable", message: ROBOTS_UNAVAILABLE_MESSAGE, signal: ROBOTS_UNAVAILABLE_SIGNAL };
+}
 
 function cacheGet(key: string): CacheEntry | null {
   const hit = cache.get(key);
@@ -209,9 +241,9 @@ function cacheSet(key: string, decision: CacheEntry["decision"]): void {
 
 function fromDecision(decision: CacheEntry["decision"], url: URL): RobotsVerdict {
   if (decision === "allow") return { allowed: true };
-  if (decision === "disallow") return { allowed: false, message: ROBOTS_DISALLOWED_MESSAGE, signal: ROBOTS_DISALLOWED_SIGNAL };
+  if (decision === "disallow") return disallowedVerdict();
   if (robotsAllowsGroups(decision, url)) return { allowed: true };
-  return { allowed: false, message: ROBOTS_DISALLOWED_MESSAGE, signal: ROBOTS_DISALLOWED_SIGNAL };
+  return disallowedVerdict();
 }
 
 function abortError(): Error {
@@ -236,21 +268,25 @@ function abortError(): Error {
  * Audits and pilots are batch fetches. They use strict mode, which follows
  * §2.3.1.4 and skips the page (unknown, signal robots_unavailable).
  */
-function unreachableRobots(): RobotsVerdict {
+function unreachableRobots(mode: RobotsMode): RobotsVerdict {
+  if (mode === "strict") return unavailableVerdict();
   return { allowed: true };
 }
 
 /**
- * Whether Livecheck may fetch this page URL. Unreachable robots.txt fails open.
+ * Whether Livecheck may fetch this page URL.
+ * Lenient: unreachable robots.txt fails open.
+ * Strict: unreachable robots.txt is unavailable and is not cached.
  * A parent abort (page timeout or check deadline) is rethrown so that budget
- * is not turned into an allow and is not followed by another full wait.
+ * is not turned into an allow or an unavailable verdict, and is not followed
+ * by another full wait.
  * The fetcher is raced against the timeout so a caller that ignores the
  * abort signal still cannot hold the check longer than timeoutMs.
  */
 export async function robotsAllows(
   rawUrl: string,
   fetcher: typeof fetch = fetch,
-  options: { signal?: AbortSignal; timeoutMs?: number } = {},
+  options: { signal?: AbortSignal; timeoutMs?: number; mode?: RobotsMode } = {},
 ): Promise<RobotsVerdict> {
   if (isPublicAtsApiUrl(rawUrl)) return { allowed: true };
   let url: URL;
@@ -266,7 +302,8 @@ export async function robotsAllows(
   if (options.signal?.aborted) throw abortError();
 
   const robotsUrl = `${url.origin}/robots.txt`;
-  const timeoutMs = options.timeoutMs ?? ROBOTS_FETCH_TIMEOUT_MS;
+  const mode = options.mode ?? "lenient";
+  const timeoutMs = options.timeoutMs ?? (mode === "strict" ? robotsStrictTimeoutMs() : ROBOTS_FETCH_TIMEOUT_MS);
   const controller = new AbortController();
   const onParent = () => controller.abort();
   options.signal?.addEventListener("abort", onParent, { once: true });
@@ -311,14 +348,14 @@ export async function robotsAllows(
       } catch {
         // ignore
       }
-      if (!location) return unreachableRobots();
+      if (!location) return unreachableRobots(mode);
       let next: URL;
       try {
         next = new URL(location, currentUrl);
       } catch {
-        return unreachableRobots();
+        return unreachableRobots(mode);
       }
-      if (next.protocol !== "http:" && next.protocol !== "https:") return unreachableRobots();
+      if (next.protocol !== "http:" && next.protocol !== "https:") return unreachableRobots(mode);
       currentUrl = next.href;
       redirectsFollowed += 1;
     }
@@ -329,7 +366,7 @@ export async function robotsAllows(
     }
     if (response.status < 200 || response.status >= 300) {
       // 429 and 5xx. Same decision as a timeout or DNS failure, below.
-      return unreachableRobots();
+      return unreachableRobots(mode);
     }
     const text = await response.text();
     const groups = parseRobots(text);
@@ -338,9 +375,44 @@ export async function robotsAllows(
   } catch (error) {
     if (options.signal?.aborted) throw error;
     // Timeout (our timer) and network errors, including DNS, land here.
-    return unreachableRobots();
+    return unreachableRobots(mode);
   } finally {
     if (timer) clearTimeout(timer);
     options.signal?.removeEventListener("abort", onParent);
   }
+}
+
+function requireRobotsMode(value: string | undefined, label: string): RobotsMode {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === "strict" || normalized === "lenient") return normalized;
+  throw new Error(`${label} must be strict or lenient`);
+}
+
+/**
+ * Audit and accuracy runner. CLI `--robots-mode` wins over
+ * `LIVECHECK_ROBOTS_MODE`. Unset means strict. A blank env var means strict.
+ * An unknown value throws so a typo cannot silently change the mode.
+ */
+export function parseAuditRunnerArgs(
+  argv: readonly string[],
+  envValue: string | undefined,
+): { robotsMode: RobotsMode; platePath?: string } {
+  let cliMode: RobotsMode | undefined;
+  const positional: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i] ?? "";
+    if (arg === "--robots-mode") {
+      cliMode = requireRobotsMode(argv[i + 1], "--robots-mode");
+      i += 1;
+    } else if (arg.startsWith("--robots-mode=")) {
+      cliMode = requireRobotsMode(arg.slice("--robots-mode=".length), "--robots-mode");
+    } else if (arg.startsWith("-")) {
+      throw new Error(`Unknown argument ${arg}`);
+    } else {
+      positional.push(arg);
+    }
+  }
+  if (positional.length > 1) throw new Error("Pass at most one plate path.");
+  const robotsMode = cliMode ?? (envValue === undefined || envValue.trim() === "" ? "strict" : requireRobotsMode(envValue, "LIVECHECK_ROBOTS_MODE"));
+  return { robotsMode, platePath: positional[0] };
 }
