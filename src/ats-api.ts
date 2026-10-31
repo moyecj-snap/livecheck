@@ -490,24 +490,32 @@ export async function lookupAtsJob(
 ): Promise<AtsLookup> {
   const timeoutMs = options.timeoutMs ?? ATS_FETCH_TIMEOUT_MS;
   const maxBytes = options.maxBytes ?? MAX_BODY_BYTES;
+  // GraphQL and the board-API fallback share this one ATS budget. The
+  // fallback only runs with whatever time is left, and is skipped when the
+  // first call already used the budget.
+  const budgetStarted = Date.now();
+  const budgetLeft = () => timeoutMs - (Date.now() - budgetStarted);
+  const fallbackToBoard = (): Promise<AtsLookup> => {
+    const left = budgetLeft();
+    if (left <= 0) return Promise.resolve({ outcome: "unavailable" });
+    return lookupAtsJob(ashbyBoardRef(ref), fetcher, { ...options, timeoutMs: left });
+  };
   try {
     if (options.signal?.aborted) throw new DeadlineError(resolveDeadlineMs());
     const key = atsResponseCacheKey(ref);
     const cached = readAtsResponseCache(key);
     if (cached) return interpretAtsResponse(ref, cached.status, cached.text, cached.truncated);
-    const loaded = await joinAtsFetch(key, () => loadAtsResponse(ref, fetcher, timeoutMs, maxBytes));
+    const loaded = await joinAtsFetch(key, () => loadAtsResponse(ref, fetcher, budgetLeft(), maxBytes));
     if (options.signal?.aborted) throw new DeadlineError(resolveDeadlineMs());
     if (!loaded) {
-      if (ref.vendor === "ashby" && ref.apiUrl.includes("non-user-graphql")) {
-        return lookupAtsJob(ashbyBoardRef(ref), fetcher, options);
-      }
+      if (ref.vendor === "ashby" && ref.apiUrl.includes("non-user-graphql")) return fallbackToBoard();
       return { outcome: "unavailable" };
     }
     const interpreted = interpretAtsResponse(ref, loaded.status, loaded.text, loaded.truncated);
     const singlePosting = ref.vendor === "ashby" && ref.apiUrl.includes("non-user-graphql");
     const graphqlAnswer = loaded.text.includes("jobPosting");
     if (singlePosting && (interpreted.outcome === "unavailable" || (interpreted.outcome === "missing" && !graphqlAnswer))) {
-      return lookupAtsJob(ashbyBoardRef(ref), fetcher, options);
+      return fallbackToBoard();
     }
     return interpreted;
   } catch (error) {
