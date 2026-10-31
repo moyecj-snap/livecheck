@@ -503,7 +503,8 @@ function postedSignal(iso: string | undefined): string[] {
  * - Lever or Ashby missing from the public feed is not closed on its own.
  *   An apply form stays live. A 404, a redirect to the board, or a closure
  *   banner stays closed. Anything else stays unknown.
- * - closed + listed → unknown, page closed signals and ats_api_listed
+ * - 404, 410, or redirected_to_board + listed → still closed
+ * - other closed copy + listed → unknown, page closed signals and ats_api_listed
  * - challenge_page + listed → live (page never bypassed)
  * - challenge_page + Greenhouse/Workday missing → closed
  * - challenge_page + Lever/Ashby missing → unknown (feed absence is not closed)
@@ -541,6 +542,19 @@ export function combinePageAndAts(page: VerifyVerdict, api: AtsLookup, vendor?: 
 
   const posted = postedSignal(api.postedAt);
   if (page.status === "closed") {
+    // A 404/410 or a redirect onto the board is closed even when the API
+    // still lists the id. Closure copy alone still disagrees with a listing.
+    const hardClosed = page.signals.some(
+      (signal) => signal === "http_404" || signal === "http_410" || signal === "redirected_to_board",
+    );
+    if (hardClosed) {
+      return {
+        ...page,
+        status: "closed",
+        confidence: Math.max(page.confidence, 0.9),
+        signals: dedupe([ATS_API_LISTED, ...page.signals, ...posted]),
+      };
+    }
     return {
       ...page,
       status: "unknown",
