@@ -4,6 +4,7 @@ import { CHECK_TIMEOUT_SIGNAL, FETCH_TIMEOUT_MS, MAX_BODY_BYTES, PRICE_USD, USER
 import { classify } from "./classify.js";
 import { DeadlineError, isAbortLike, linkedAbort, resolveDeadlineMs, withDeadline } from "./deadline.js";
 import { isEbayAdapterEnabled, logEbayAdapterDisabled, parseEbayItemUrl, verifyEbayItem } from "./ebay.js";
+import { applyShopifyAvailability, lookupShopifyAvailable, shopifyProductJsUrl } from "./shopify.js";
 import { stripTrackingParams } from "./tracking-params.js";
 import type { FetchedPage, VerifyVerdict } from "./types.js";
 
@@ -141,6 +142,19 @@ export async function fetchPage(
   }
 }
 
+async function withShopify(
+  requested: string,
+  verdict: VerifyVerdict,
+  fetcher: typeof fetch,
+  signal: AbortSignal,
+): Promise<VerifyVerdict> {
+  const jsUrl = shopifyProductJsUrl(verdict.canonical_url) ?? shopifyProductJsUrl(requested);
+  if (!jsUrl) return verdict;
+  const found = await lookupShopifyAvailable(jsUrl, fetcher, signal);
+  if (!found) return verdict;
+  return applyShopifyAvailability(verdict, found);
+}
+
 export async function verifyUrl(
   url: string,
   fetcher: typeof fetch = fetch,
@@ -179,7 +193,7 @@ async function verifyUrlWithin(
   const ats = options.atsApi ? parseAtsJobUrl(url) ?? roleRefFor(url) : null;
   if (!ats) {
     const page = await fetchPage(url, fetcher, { signal });
-    return classify(page, now);
+    return withShopify(url, classify(page, now), fetcher, signal);
   }
 
   const pagePromise = fetchPage(url, fetcher, { signal }).then(
