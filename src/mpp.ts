@@ -20,6 +20,7 @@ import {
 } from "./paid-call.js";
 import { retainRefundCandidate, type RefundCandidate } from "./paid-call-store.js";
 import { publicOrigin, publicVerifyJobUrl, publicVerifyListingUrl, publicVerifyUrl } from "./public-url.js";
+import { stripTrackingParams } from "./tracking-params.js";
 import { VerifyError, parseTargetUrl, timeoutUnknownVerdict } from "./verify.js";
 import { withWatchHint } from "./watch-hint.js";
 
@@ -291,7 +292,7 @@ export async function validateVerifyRequest(c: Context): Promise<ValidRequest> {
   }
   const raw = typeof body === "object" && body !== null ? (body as { url?: unknown }).url : undefined;
   try {
-    return { ok: true, url: parseTargetUrl(raw) };
+    return { ok: true, url: stripTrackingParams(parseTargetUrl(raw)) };
   } catch (error) {
     if (error instanceof VerifyError) return { ok: false, status: 400, body: { error: error.message } };
     return { ok: false, status: 400, body: { error: "url must be an absolute http(s) URL." } };
