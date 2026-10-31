@@ -10,16 +10,19 @@ import { USER_AGENT } from "./config.js";
  *
  * Cache: one parsed file per origin, kept for one hour.
  *
- * If robots.txt cannot be fetched (network error, timeout, HTTP 5xx, or 429),
- * the check proceeds. A down robots.txt must not turn a real posting into
- * "can't tell". Failures are not cached, so the next check tries again.
+ * The lookup waits at most 500ms, and that wait is inside the caller's page
+ * timeout and the whole-check deadline. It does not add a second budget on
+ * top. If robots.txt cannot be fetched (network error, that 500ms, HTTP 5xx,
+ * or 429), the check proceeds. A down robots.txt must not turn a real posting
+ * into "can't tell". Failures are not cached, so the next check tries again.
  * HTTP 404 means there is no file, so the URL is allowed (and that is cached).
  * HTTP 401 and 403 are treated as disallow-all for that origin, matching
  * RFC 9309, and that decision is cached for the same hour.
  */
 
 export const ROBOTS_CACHE_TTL_MS = 60 * 60 * 1000;
-export const ROBOTS_FETCH_TIMEOUT_MS = 2_000;
+/** Upper bound. The page timeout and check deadline can cut it shorter. */
+export const ROBOTS_FETCH_TIMEOUT_MS = 500;
 export const ROBOTS_DISALLOWED_SIGNAL = "robots_disallowed";
 export const ROBOTS_DISALLOWED_MESSAGE =
   "This site's robots.txt disallows Livecheck from fetching this URL, so we can't tell if it's live.";
@@ -196,9 +199,18 @@ function fromDecision(decision: CacheEntry["decision"], url: URL): RobotsVerdict
   return { allowed: false, message: ROBOTS_DISALLOWED_MESSAGE, signal: ROBOTS_DISALLOWED_SIGNAL };
 }
 
+function abortError(): Error {
+  const error = new Error("aborted");
+  error.name = "AbortError";
+  return error;
+}
+
 /**
  * Whether Livecheck may fetch this page URL. Unreachable robots.txt fails open.
- * A parent abort is rethrown so a check deadline is not turned into an allow.
+ * A parent abort (page timeout or check deadline) is rethrown so that budget
+ * is not turned into an allow and is not followed by another full wait.
+ * The fetcher is raced against the timeout so a caller that ignores the
+ * abort signal still cannot hold the check longer than timeoutMs.
  */
 export async function robotsAllows(
   rawUrl: string,
@@ -216,25 +228,32 @@ export async function robotsAllows(
   const key = originKey(url);
   const cached = cacheGet(key);
   if (cached) return fromDecision(cached.decision, url);
-  if (options.signal?.aborted) {
-    const error = new Error("aborted");
-    error.name = "AbortError";
-    throw error;
-  }
+  if (options.signal?.aborted) throw abortError();
 
   const robotsUrl = `${url.origin}/robots.txt`;
   const timeoutMs = options.timeoutMs ?? ROBOTS_FETCH_TIMEOUT_MS;
   const controller = new AbortController();
   const onParent = () => controller.abort();
-  if (options.signal) options.signal.addEventListener("abort", onParent, { once: true });
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  options.signal?.addEventListener("abort", onParent, { once: true });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timed = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(abortError());
+    }, timeoutMs);
+  });
+  timed.catch(() => undefined);
+  const pending = fetcher(robotsUrl, {
+    method: "GET",
+    redirect: "follow",
+    signal: controller.signal,
+    headers: { accept: "text/plain,*/*;q=0.8", "user-agent": USER_AGENT },
+  });
+  // The race may settle on the timer first. A later abort rejection must not
+  // surface as an unhandled rejection.
+  pending.catch(() => undefined);
   try {
-    const response = await fetcher(robotsUrl, {
-      method: "GET",
-      redirect: "follow",
-      signal: controller.signal,
-      headers: { accept: "text/plain,*/*;q=0.8", "user-agent": USER_AGENT },
-    });
+    const response = await Promise.race([pending, timed]);
     if (response.status === 404) {
       cacheSet(key, "allow");
       return { allowed: true };
@@ -255,7 +274,7 @@ export async function robotsAllows(
     if (options.signal?.aborted) throw error;
     return { allowed: true };
   } finally {
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
     options.signal?.removeEventListener("abort", onParent);
   }
 }

@@ -1,7 +1,7 @@
 import { lookupAtsJob, combinePageAndAts, parseAtsJobUrl, verdictFromAtsWithoutPage } from "./ats-api.js";
 import { CHECK_TIMEOUT_SIGNAL, FETCH_TIMEOUT_MS, MAX_BODY_BYTES, PRICE_USD, USER_AGENT } from "./config.js";
 import { classify } from "./classify.js";
-import { robotsAllows } from "./robots.js";
+import { ROBOTS_FETCH_TIMEOUT_MS, robotsAllows } from "./robots.js";
 import { DeadlineError, isAbortLike, linkedAbort, resolveDeadlineMs, withDeadline } from "./deadline.js";
 import { isEbayAdapterEnabled, logEbayAdapterDisabled, parseEbayItemUrl, verifyEbayItem } from "./ebay.js";
 import { stripTrackingParams } from "./tracking-params.js";
@@ -23,6 +23,13 @@ export type VerifyUrlOptions = {
 export type FetchPageOptions = {
   timeoutMs?: number;
   signal?: AbortSignal;
+  /**
+   * Posting and listing checks only. Confirm and other fetchPage callers
+   * leave this off so they do not request robots.txt.
+   */
+  robots?: boolean;
+  /** Called after robots.txt allows, before the page body is read. */
+  afterRobots?: () => void;
 };
 
 export class VerifyError extends Error {
@@ -96,33 +103,42 @@ export async function fetchPage(
   fetcher: typeof fetch = fetch,
   options: FetchPageOptions = {},
 ): Promise<FetchedPage> {
-  let robots: Awaited<ReturnType<typeof robotsAllows>>;
-  try {
-    robots = await robotsAllows(url, fetcher, { signal: options.signal });
-  } catch (error) {
-    if (error instanceof DeadlineError || options.signal?.aborted) {
-      throw error instanceof DeadlineError ? error : new DeadlineError(resolveDeadlineMs());
-    }
-    throw error;
-  }
-  if (!robots.allowed) {
-    return {
-      requestedUrl: url,
-      canonicalUrl: url,
-      httpStatus: 0,
-      title: null,
-      html: "",
-      text: "",
-      redirected: false,
-      redirectChain: [],
-      robotsDisallowed: true,
-    };
-  }
-
   const timeoutMs = options.timeoutMs ?? FETCH_TIMEOUT_MS;
+  // One clock for robots.txt and the page. A robots timeout cannot push the
+  // page past this budget, and a 40ms page timeout still fails in about 40ms.
   const linked = linkedAbort(timeoutMs, options.signal);
   const redirectChain: string[] = [];
   try {
+    if (options.robots) {
+      const robotsTimeout = Math.min(ROBOTS_FETCH_TIMEOUT_MS, timeoutMs);
+      let robots: Awaited<ReturnType<typeof robotsAllows>>;
+      try {
+        robots = await robotsAllows(url, fetcher, { signal: linked.signal, timeoutMs: robotsTimeout });
+      } catch (error) {
+        if (error instanceof DeadlineError || options.signal?.aborted) {
+          throw error instanceof DeadlineError ? error : new DeadlineError(resolveDeadlineMs());
+        }
+        if (linked.signal.aborted) {
+          throw new VerifyError(`Timed out fetching ${url} after ${timeoutMs}ms.`, 504);
+        }
+        throw error;
+      }
+      if (!robots.allowed) {
+        return {
+          requestedUrl: url,
+          canonicalUrl: url,
+          httpStatus: 0,
+          title: null,
+          html: "",
+          text: "",
+          redirected: false,
+          redirectChain: [],
+          robotsDisallowed: true,
+        };
+      }
+    }
+    options.afterRobots?.();
+
     const response = await fetcher(url, {
       method: "GET",
       redirect: "follow",
@@ -198,37 +214,27 @@ async function verifyUrlWithin(
     logEbayAdapterDisabled();
   }
   const ats = options.atsApi ? parseAtsJobUrl(url) : null;
-  const robots = await robotsAllows(url, fetcher, { signal });
-  if (!robots.allowed) {
-    return classify(
-      {
-        requestedUrl: url,
-        canonicalUrl: url,
-        httpStatus: 0,
-        title: null,
-        html: "",
-        text: "",
-        redirected: false,
-        redirectChain: [],
-        robotsDisallowed: true,
-      },
-      now,
-    );
-  }
-  if (!ats) {
-    const page = await fetchPage(url, fetcher, { signal });
-    return classify(page, now);
-  }
-
-  const pagePromise = fetchPage(url, fetcher, { signal }).then(
-    (page) => ({ ok: true as const, page }),
+  let atsLookup: Promise<Awaited<ReturnType<typeof lookupAtsJob>>> | undefined;
+  const page = await fetchPage(url, fetcher, {
+    signal,
+    robots: true,
+    afterRobots: () => {
+      if (ats) atsLookup = lookupAtsJob(ats, fetcher, { signal });
+    },
+  }).then(
+    (fetched) => ({ ok: true as const, page: fetched }),
     (error: unknown) => {
       if (error instanceof DeadlineError) throw error;
       return { ok: false as const, error };
     },
   );
-  const [pageResult, atsLookup] = await Promise.all([pagePromise, lookupAtsJob(ats, fetcher, { signal })]);
-  if (pageResult.ok) return combinePageAndAts(classify(pageResult.page, now), atsLookup, ats.vendor);
-  if (atsLookup.outcome === "unavailable") throw pageResult.error;
-  return verdictFromAtsWithoutPage(url, atsLookup, now, ats.vendor);
+  if (page.ok && page.page.robotsDisallowed) return classify(page.page, now);
+  if (!ats || !atsLookup) {
+    if (!page.ok) throw page.error;
+    return classify(page.page, now);
+  }
+  const api = await atsLookup;
+  if (page.ok) return combinePageAndAts(classify(page.page, now), api, ats.vendor);
+  if (api.outcome === "unavailable") throw page.error;
+  return verdictFromAtsWithoutPage(url, api, now, ats.vendor);
 }
