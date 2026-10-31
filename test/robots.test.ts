@@ -115,21 +115,54 @@ describe("robots.txt fetch policy", () => {
     assert.equal(robotsCacheSizeForTests(), 0);
   });
 
-  it("caches a 404 as allow and a 403 as disallow-all", async () => {
-    let calls = 0;
-    const missing: typeof fetch = async () => {
-      calls += 1;
-      return new Response("missing", { status: 404 });
-    };
-    assert.equal((await robotsAllows("https://none.example/jobs/1", missing)).allowed, true);
-    assert.equal((await robotsAllows("https://none.example/jobs/2", missing)).allowed, true);
-    assert.equal(calls, 1);
+  it("allows and caches every 4xx except 429, and refetches 429 and 5xx", async () => {
+    const page = "<html><title>Engineer</title><body><a>Apply now</a></body></html>";
+    for (const status of [401, 403, 404, 410]) {
+      clearRobotsCacheForTests();
+      const seen: string[] = [];
+      let robotsFetches = 0;
+      const fetcher: typeof fetch = async (input) => {
+        const url = requestUrl(input);
+        seen.push(url);
+        if (url.endsWith("/robots.txt")) {
+          robotsFetches += 1;
+          return new Response("nope", { status });
+        }
+        return new Response(page, { status: 200 });
+      };
+      const origin = `https://absent-${status}.example`;
+      const first = await verifyUrl(`${origin}/jobs/1`, fetcher);
+      const second = await verifyUrl(`${origin}/jobs/2`, fetcher);
+      assert.equal(first.signals.includes(ROBOTS_DISALLOWED_SIGNAL), false, String(status));
+      assert.equal(second.signals.includes(ROBOTS_DISALLOWED_SIGNAL), false, String(status));
+      assert.ok(seen.includes(`${origin}/jobs/1`), `${status} still fetches the page`);
+      assert.ok(seen.includes(`${origin}/jobs/2`), `${status} still fetches the page`);
+      assert.equal(robotsFetches, 1, `${status} is cached as allow`);
+      assert.equal(robotsCacheSizeForTests(), 1);
+    }
 
-    clearRobotsCacheForTests();
-    const forbidden: typeof fetch = async () => new Response("no", { status: 403 });
-    const blocked = await robotsAllows("https://private.example/jobs/1", forbidden);
-    assert.equal(blocked.allowed, false);
-    if (!blocked.allowed) assert.equal(blocked.message, ROBOTS_DISALLOWED_MESSAGE);
+    for (const status of [429, 503]) {
+      clearRobotsCacheForTests();
+      const seen: string[] = [];
+      let robotsFetches = 0;
+      const fetcher: typeof fetch = async (input) => {
+        const url = requestUrl(input);
+        seen.push(url);
+        if (url.endsWith("/robots.txt")) {
+          robotsFetches += 1;
+          return new Response("nope", { status });
+        }
+        return new Response(page, { status: 200 });
+      };
+      const origin = `https://unreachable-${status}.example`;
+      const first = await verifyUrl(`${origin}/jobs/1`, fetcher);
+      const second = await verifyUrl(`${origin}/jobs/2`, fetcher);
+      assert.equal(first.signals.includes(ROBOTS_DISALLOWED_SIGNAL), false, String(status));
+      assert.ok(seen.includes(`${origin}/jobs/1`), `${status} still fetches the page`);
+      assert.ok(seen.includes(`${origin}/jobs/2`), `${status} still fetches the page`);
+      assert.equal(robotsFetches, 2, `${status} is not cached`);
+      assert.equal(robotsCacheSizeForTests(), 0);
+    }
   });
 
   it("returns can't tell and does not fetch the page when the URL is disallowed", async () => {

@@ -12,12 +12,18 @@ import { USER_AGENT } from "./config.js";
  *
  * The lookup waits at most 500ms, and that wait is inside the caller's page
  * timeout and the whole-check deadline. It does not add a second budget on
- * top. If robots.txt cannot be fetched (network error, that 500ms, HTTP 5xx,
- * or 429), the check proceeds. A down robots.txt must not turn a real posting
- * into "can't tell". Failures are not cached, so the next check tries again.
- * HTTP 404 means there is no file, so the URL is allowed (and that is cached).
- * HTTP 401 and 403 are treated as disallow-all for that origin, matching
- * RFC 9309, and that decision is cached for the same hour.
+ * top.
+ *
+ * Any HTTP 4xx except 429 means no robots.txt is available, so the URL is
+ * allowed and that allow is cached for an hour. This includes 401, 403, 404,
+ * and 410. The older "401/403 is disallow-all" reading of RFC 9309 is not
+ * what Google follows now.
+ *
+ * HTTP 429, 5xx, a timeout, or a network error means robots.txt is
+ * temporarily unreachable. The check proceeds and the failure is not cached.
+ * A down robots.txt must not turn a real posting into "can't tell".
+ *
+ * HTTP 200 is parsed and the matching rule is followed.
  */
 
 export const ROBOTS_CACHE_TTL_MS = 60 * 60 * 1000;
@@ -254,16 +260,13 @@ export async function robotsAllows(
   pending.catch(() => undefined);
   try {
     const response = await Promise.race([pending, timed]);
-    if (response.status === 404) {
+    if (response.status >= 400 && response.status <= 499 && response.status !== 429) {
+      // No robots.txt (401, 403, 404, 410, and every other 4xx except 429).
       cacheSet(key, "allow");
       return { allowed: true };
     }
-    if (response.status === 401 || response.status === 403) {
-      cacheSet(key, "disallow");
-      return { allowed: false, message: ROBOTS_DISALLOWED_MESSAGE, signal: ROBOTS_DISALLOWED_SIGNAL };
-    }
     if (response.status < 200 || response.status >= 300) {
-      // 5xx, 429, and anything else unexpected: fail open, do not cache.
+      // 429 and 5xx: unreachable. Fail open, do not cache.
       return { allowed: true };
     }
     const text = await response.text();
