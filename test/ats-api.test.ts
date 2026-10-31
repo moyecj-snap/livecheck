@@ -6,6 +6,7 @@ import { serve } from "@hono/node-server";
 import {
   ATS_API_LISTED,
   ATS_API_MISSING,
+  ATS_NOT_IN_PUBLIC_FEED,
   ATS_DISAGREE_CONFIDENCE,
   ATS_LISTED_CONFIDENCE,
   ATS_LISTED_WITH_POSTED_AT_CONFIDENCE,
@@ -336,13 +337,14 @@ describe("verifyUrl ATS integration", () => {
     assert.ok(verdict.confidence >= ATS_LISTED_CONFIDENCE);
   });
 
-  it("closes an Ashby shell when the board does not list the id", async () => {
+  it("does not close an Ashby shell just because the board omits the id", async () => {
     const verdict = await verifyUrl(ASHBY_CLOSED, routed({
       [ASHBY_CLOSED]: htmlResponse(JS_SHELL),
       "https://api.ashbyhq.com/posting-api/job-board/linear": jsonResponse(fixture("ashby-board-missing.json")),
     }), new Date(), { atsApi: true });
-    assert.equal(verdict.status, "closed");
-    assert.ok(verdict.signals.includes(ATS_API_MISSING));
+    assert.equal(verdict.status, "unknown");
+    assert.equal(verdict.signals.includes(ATS_API_MISSING), false);
+    assert.ok(verdict.signals.includes("ats_not_in_public_feed"));
   });
 
   it("uses Workday CXS, Lever, and Greenhouse the same way", async () => {
@@ -372,7 +374,9 @@ describe("verifyUrl ATS integration", () => {
       [LEVER_LIVE]: htmlResponse(APPLY_PAGE),
       [refOf(LEVER_LIVE).apiUrl]: jsonResponse(fixture("lever-missing.json"), 404),
     }), new Date(), { atsApi: true });
-    assert.equal(leverMissing.status, "closed");
+    assert.equal(leverMissing.status, "live");
+    assert.ok(leverMissing.signals.includes("apply form present"));
+    assert.equal(leverMissing.signals.includes(ATS_API_MISSING), false);
 
     const greenhouse = await verifyUrl(GREENHOUSE_LIVE, routed({
       [GREENHOUSE_LIVE]: htmlResponse(APPLY_PAGE),
@@ -537,8 +541,83 @@ describe("POST /v1/verify/job uses the public ATS API", () => {
     assert.equal(shared.status, 200);
     const sharedBody = (await shared.json()) as { route?: string; status?: string; signals?: string[] };
     assert.equal(sharedBody.route, "verify");
-    assert.equal(sharedBody.status, "closed");
+    assert.equal(sharedBody.status, "unknown");
     assert.equal((sharedBody as { http_status?: number }).http_status, 200);
-    assert.ok(sharedBody.signals?.includes(ATS_API_MISSING));
+    assert.equal(sharedBody.signals?.includes(ATS_API_MISSING), false);
+    assert.ok(sharedBody.signals?.includes("ats_not_in_public_feed"));
+  });
+});
+
+describe("Oct 28 unlisted Lever and Ashby postings", () => {
+  // The Oct 28 audits found postings absent from the public feed whose pages
+  // still rendered an apply form. Those were open. The recheck CSV's closed
+  // Lever row (atmosera) was a real HTTP 404 and stays closed. Fixtures only.
+  const LEVER_UNLISTED = "https://jobs.lever.co/spotify/2193db3f-77c5-43b8-b030-8f92c9882bf1";
+  const ASHBY_UNLISTED_OPEN = "https://jobs.ashbyhq.com/openai/8fb1615c-34bf-47c4-a1d1-b7b2f836bbd3";
+  const LEVER_PAGE_404 = "https://jobs.lever.co/atmosera/f155d502-e2f0-458f-96f0-dc6e9666de15";
+
+  function routed(routes: Record<string, Response>): typeof fetch {
+    return async (input) => {
+      const url = requestUrl(input);
+      const response = routes[url];
+      if (!response) throw new Error(`unexpected fetch ${url}`);
+      return response.clone();
+    };
+  }
+
+  it("keeps an unlisted Lever posting open when the page has an apply form", async () => {
+    const verdict = await verifyUrl(LEVER_UNLISTED, routed({
+      [LEVER_UNLISTED]: htmlResponse(APPLY_PAGE),
+      [refOf(LEVER_UNLISTED).apiUrl]: jsonResponse(fixture("lever-missing.json"), 404),
+    }), new Date("2026-10-28T18:30:00Z"), { atsApi: true });
+    assert.equal(verdict.status, "live");
+    assert.ok(verdict.signals.includes("apply form present"));
+    assert.ok(verdict.signals.includes(ATS_NOT_IN_PUBLIC_FEED));
+    assert.equal(verdict.signals.includes(ATS_API_MISSING), false);
+  });
+
+  it("keeps an unlisted Ashby posting open when the page has an apply form", async () => {
+    const verdict = await verifyUrl(ASHBY_UNLISTED_OPEN, routed({
+      [ASHBY_UNLISTED_OPEN]: htmlResponse(APPLY_PAGE),
+      "https://api.ashbyhq.com/posting-api/job-board/openai": jsonResponse(fixture("ashby-board-missing.json")),
+    }), new Date("2026-10-28T18:30:00Z"), { atsApi: true });
+    assert.equal(verdict.status, "live");
+    assert.ok(verdict.signals.includes("apply form present"));
+    assert.ok(verdict.signals.includes(ATS_NOT_IN_PUBLIC_FEED));
+    assert.equal(verdict.signals.includes(ATS_API_MISSING), false);
+  });
+
+  it("still closes a Lever posting on a real 404, a closure banner, or a board redirect", async () => {
+    clearAtsResponseCache();
+    const missing = await verifyUrl(LEVER_PAGE_404, routed({
+      [LEVER_PAGE_404]: htmlResponse("<html><title>Not found</title><body>Not found</body></html>", 404),
+      [refOf(LEVER_PAGE_404).apiUrl]: jsonResponse(fixture("lever-missing.json"), 404),
+    }), new Date(), { atsApi: true });
+    assert.equal(missing.status, "closed");
+    assert.ok(missing.signals.includes("http_404"));
+
+    clearAtsResponseCache();
+    const banner = await verifyUrl(LEVER_UNLISTED, routed({
+      [LEVER_UNLISTED]: htmlResponse(CLOSED_COPY),
+      [refOf(LEVER_UNLISTED).apiUrl]: jsonResponse(fixture("lever-missing.json"), 404),
+    }), new Date(), { atsApi: true });
+    assert.equal(banner.status, "closed");
+    assert.ok(banner.signals.some((signal) => signal.startsWith("close_language:")));
+
+    const redirected = classified(LEVER_PAGE_404, "<html><title>Board</title><body>Open roles</body></html>");
+    redirected.signals.push("redirected_to_board");
+    redirected.status = "closed";
+    const combined = combinePageAndAts(redirected, { outcome: "missing", httpStatus: 404 }, "lever");
+    assert.equal(combined.status, "closed");
+    assert.ok(combined.signals.includes("redirected_to_board"));
+  });
+
+  it("does not call a Lever posting closed from the feed when the page never loaded", async () => {
+    const verdict = await verifyUrl(LEVER_UNLISTED, routed({
+      [refOf(LEVER_UNLISTED).apiUrl]: jsonResponse(fixture("lever-missing.json"), 404),
+    }), new Date(), { atsApi: true });
+    assert.equal(verdict.status, "unknown");
+    assert.deepEqual(verdict.signals, [ATS_NOT_IN_PUBLIC_FEED]);
+    assert.equal(verdict.signals.includes(ATS_API_MISSING), false);
   });
 });

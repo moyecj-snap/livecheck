@@ -187,7 +187,7 @@ async function verifyUrlWithin(
     },
   );
   const [pageResult, atsLookup] = await Promise.all([pagePromise, lookupAtsJob(ats, fetcher, { signal })]);
-  if (pageResult.ok) return combinePageAndAts(classify(pageResult.page, now), atsLookup);
+  if (pageResult.ok) return combinePageAndAts(classify(pageResult.page, now), atsLookup, ats.vendor);
   if (atsLookup.outcome === "unavailable") throw pageResult.error;
-  return verdictFromAtsWithoutPage(url, atsLookup, now);
+  return verdictFromAtsWithoutPage(url, atsLookup, now, ats.vendor);
 }

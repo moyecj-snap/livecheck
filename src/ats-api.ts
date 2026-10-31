@@ -18,11 +18,19 @@ import type { VerifyVerdict } from "./types.js";
  * 5 minutes so jobs at the same company share one fetch. Single-posting
  * responses are cached on the posting URL for the same TTL.
  * Network errors, timeouts, and HTTP 5xx are "unavailable", never "missing".
+ * Greenhouse and Workday "missing" is closed. Lever and Ashby "missing" is
+ * only a public-feed miss: the posting page decides (apply form = live;
+ * 404, board redirect, or closure banner = closed).
  * A bot-challenge page is not promoted to live. No Cloudflare or reCAPTCHA bypass.
  */
 
 export const ATS_API_LISTED = "ats_api_listed";
 export const ATS_API_MISSING = "ats_api_missing";
+/**
+ * Lever or Ashby public feed does not contain this id. That is not a closed
+ * verdict: unlisted postings are often absent from the feed and still open.
+ */
+export const ATS_NOT_IN_PUBLIC_FEED = "ats_not_in_public_feed";
 /** Equivalent to listed_in_ats_api: true. */
 export const ATS_LISTED_CONFIDENCE = 0.96;
 /** Greenhouse (and any board that returns a posted timestamp) when the API agrees the job is live. */
@@ -474,6 +482,11 @@ function dedupe(signals: string[]): string[] {
   return out;
 }
 
+/** Public-feed absence is not evidence the posting is closed. */
+function feedMissIsNotClosed(vendor: AtsVendor | undefined): boolean {
+  return vendor === "lever" || vendor === "ashby";
+}
+
 function checkedAtIso(now: Date): string {
   return now.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
@@ -486,12 +499,17 @@ function postedSignal(iso: string | undefined): string[] {
  * Page × public API.
  * - live + listed → live, high confidence
  * - unknown without challenge_page (JS shell / blank) + listed → live + ats_api_listed
- * - any non-challenge page + missing → closed + ats_api_missing
+ * - Greenhouse or Workday missing → closed + ats_api_missing
+ * - Lever or Ashby missing from the public feed is not closed on its own.
+ *   An apply form stays live. A 404, a redirect to the board, or a closure
+ *   banner stays closed. Anything else stays unknown.
  * - closed + listed → unknown, page closed signals and ats_api_listed
- * - challenge_page + listed/missing → answered from the API (page never bypassed)
+ * - challenge_page + listed → live (page never bypassed)
+ * - challenge_page + Greenhouse/Workday missing → closed
+ * - challenge_page + Lever/Ashby missing → unknown (feed absence is not closed)
  * - unavailable leaves the HTML verdict untouched
  */
-export function combinePageAndAts(page: VerifyVerdict, api: AtsLookup): VerifyVerdict {
+export function combinePageAndAts(page: VerifyVerdict, api: AtsLookup, vendor?: AtsVendor): VerifyVerdict {
   if (api.outcome === "unavailable") return page;
 
   // A challenge page is never bypassed. When the link carries a job id the
@@ -499,6 +517,20 @@ export function combinePageAndAts(page: VerifyVerdict, api: AtsLookup): VerifyVe
   // challenge_page signal stays for transparency.
 
   if (api.outcome === "missing") {
+    // Oct 28, 2026 audits: Lever and Ashby postings can be missing from the
+    // public feed and still show an apply form. Feed absence is not closed.
+    if (feedMissIsNotClosed(vendor)) {
+      if (page.status === "closed") {
+        return {
+          ...page,
+          signals: dedupe([ATS_API_MISSING, ...page.signals]),
+        };
+      }
+      return {
+        ...page,
+        signals: dedupe([ATS_NOT_IN_PUBLIC_FEED, ...page.signals]),
+      };
+    }
     return {
       ...page,
       status: "closed",
@@ -527,7 +559,24 @@ export function combinePageAndAts(page: VerifyVerdict, api: AtsLookup): VerifyVe
 }
 
 /** No HTML body (fetch failed) and the board API still answered. Not a challenge page. */
-export function verdictFromAtsWithoutPage(url: string, api: Exclude<AtsLookup, { outcome: "unavailable" }>, now: Date): VerifyVerdict {
+export function verdictFromAtsWithoutPage(
+  url: string,
+  api: Exclude<AtsLookup, { outcome: "unavailable" }>,
+  now: Date,
+  vendor?: AtsVendor,
+): VerifyVerdict {
+  if (api.outcome === "missing" && feedMissIsNotClosed(vendor)) {
+    return {
+      url,
+      canonical_url: url,
+      status: "unknown",
+      http_status: 0,
+      checked_at: checkedAtIso(now),
+      signals: [ATS_NOT_IN_PUBLIC_FEED],
+      confidence: 0.35,
+      price_usd: PRICE_USD,
+    };
+  }
   const posted = api.outcome === "listed" ? postedSignal(api.postedAt) : [];
   const title = api.outcome === "listed" ? api.title : undefined;
   return {
