@@ -1,5 +1,10 @@
 import { PRICE_USD } from "./config.js";
-import { ROBOTS_DISALLOWED_MESSAGE, ROBOTS_DISALLOWED_SIGNAL } from "./robots.js";
+import {
+  ROBOTS_DISALLOWED_MESSAGE,
+  ROBOTS_DISALLOWED_SIGNAL,
+  ROBOTS_UNAVAILABLE_MESSAGE,
+  ROBOTS_UNAVAILABLE_SIGNAL,
+} from "./robots.js";
 import type { FetchedPage, SourceStatus, VerifyVerdict } from "./types.js";
 
 const CLOSED_PHRASES = [
@@ -304,6 +309,19 @@ function isChallengeInterstitial(html: string, text: string, realProductPage: bo
 }
 
 export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdict {
+  if (page.robotsUnavailable) {
+    return {
+      url: page.requestedUrl,
+      canonical_url: page.canonicalUrl,
+      status: "unknown",
+      http_status: 0,
+      checked_at: checkedAt.toISOString().replace(/\.\d{3}Z$/, "Z"),
+      signals: [ROBOTS_UNAVAILABLE_SIGNAL],
+      confidence: 0.55,
+      price_usd: PRICE_USD,
+      message: ROBOTS_UNAVAILABLE_MESSAGE,
+    };
+  }
   if (page.robotsDisallowed) {
     return {
       url: page.requestedUrl,

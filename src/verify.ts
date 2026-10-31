@@ -1,7 +1,7 @@
 import { lookupAtsJob, combinePageAndAts, parseAtsJobUrl, verdictFromAtsWithoutPage } from "./ats-api.js";
 import { CHECK_TIMEOUT_SIGNAL, FETCH_TIMEOUT_MS, MAX_BODY_BYTES, PRICE_USD, USER_AGENT } from "./config.js";
 import { classify } from "./classify.js";
-import { ROBOTS_FETCH_TIMEOUT_MS, robotsAllows } from "./robots.js";
+import { ROBOTS_FETCH_TIMEOUT_MS, robotsAllows, robotsStrictTimeoutMs, type RobotsMode } from "./robots.js";
 import { DeadlineError, isAbortLike, linkedAbort, resolveDeadlineMs, withDeadline } from "./deadline.js";
 import { isEbayAdapterEnabled, logEbayAdapterDisabled, parseEbayItemUrl, verifyEbayItem } from "./ebay.js";
 import { stripTrackingParams } from "./tracking-params.js";
@@ -18,6 +18,15 @@ export type VerifyUrlOptions = {
   deadlineMs?: number;
   /** Outer abort. When it fires, verify returns unknown + check_timeout. */
   signal?: AbortSignal;
+  /**
+   * robots.txt when the file cannot be fetched.
+   * `lenient` (default): wait 500ms, then fetch the page. Public paid routes,
+   * free /job, checks, and watches leave this unset and do not accept it from
+   * callers.
+   * `strict`: wait 5s. No robots file means unknown + robots_unavailable, with
+   * no page fetch and no ATS lookup. Audits and pilots pass this.
+   */
+  robotsMode?: RobotsMode;
 };
 
 export type FetchPageOptions = {
@@ -28,6 +37,8 @@ export type FetchPageOptions = {
    * leave this off so they do not request robots.txt.
    */
   robots?: boolean;
+  /** Defaults to lenient. Strict skips the page when robots.txt does not answer. */
+  robotsMode?: RobotsMode;
   /** Called after robots.txt allows, before the page body is read. */
   afterRobots?: () => void;
 };
@@ -110,10 +121,12 @@ export async function fetchPage(
   const redirectChain: string[] = [];
   try {
     if (options.robots) {
-      const robotsTimeout = Math.min(ROBOTS_FETCH_TIMEOUT_MS, timeoutMs);
+      const robotsMode = options.robotsMode ?? "lenient";
+      const robotsCap = robotsMode === "strict" ? robotsStrictTimeoutMs() : ROBOTS_FETCH_TIMEOUT_MS;
+      const robotsTimeout = Math.min(robotsCap, timeoutMs);
       let robots: Awaited<ReturnType<typeof robotsAllows>>;
       try {
-        robots = await robotsAllows(url, fetcher, { signal: linked.signal, timeoutMs: robotsTimeout });
+        robots = await robotsAllows(url, fetcher, { signal: linked.signal, timeoutMs: robotsTimeout, mode: robotsMode });
       } catch (error) {
         if (error instanceof DeadlineError || options.signal?.aborted) {
           throw error instanceof DeadlineError ? error : new DeadlineError(resolveDeadlineMs());
@@ -133,7 +146,7 @@ export async function fetchPage(
           text: "",
           redirected: false,
           redirectChain: [],
-          robotsDisallowed: true,
+          ...(robots.reason === "unavailable" ? { robotsUnavailable: true } : { robotsDisallowed: true }),
         };
       }
     }
@@ -218,6 +231,7 @@ async function verifyUrlWithin(
   const page = await fetchPage(url, fetcher, {
     signal,
     robots: true,
+    robotsMode: options.robotsMode,
     afterRobots: () => {
       if (ats) atsLookup = lookupAtsJob(ats, fetcher, { signal });
     },
@@ -228,7 +242,7 @@ async function verifyUrlWithin(
       return { ok: false as const, error };
     },
   );
-  if (page.ok && page.page.robotsDisallowed) return classify(page.page, now);
+  if (page.ok && (page.page.robotsDisallowed || page.page.robotsUnavailable)) return classify(page.page, now);
   if (!ats || !atsLookup) {
     if (!page.ok) throw page.error;
     return classify(page.page, now);

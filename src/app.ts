@@ -219,6 +219,8 @@ async function handlePaidVerify(c: Context) {
     const target = stripTrackingParams(parseTargetUrl(url));
     const route = responseRouteFromPath(c.req.path);
     if (!route) return c.json({ error: "not_found" }, 404);
+    // Paid routes stay lenient. robotsMode is not read from the body, so a
+    // caller cannot switch this check to strict.
     const verdict = await verifyUrl(target, fetch, new Date(), {
       atsApi: route === "verify" || route === "verify/job",
     });
