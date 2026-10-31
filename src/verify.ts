@@ -3,6 +3,7 @@ import { CHECK_TIMEOUT_SIGNAL, FETCH_TIMEOUT_MS, MAX_BODY_BYTES, PRICE_USD, USER
 import { classify } from "./classify.js";
 import { DeadlineError, isAbortLike, linkedAbort, resolveDeadlineMs, withDeadline } from "./deadline.js";
 import { isEbayAdapterEnabled, logEbayAdapterDisabled, parseEbayItemUrl, verifyEbayItem } from "./ebay.js";
+import { stripTrackingParams } from "./tracking-params.js";
 import type { FetchedPage, VerifyVerdict } from "./types.js";
 
 export type VerifyUrlOptions = {
@@ -146,10 +147,11 @@ export async function verifyUrl(
   options: VerifyUrlOptions = {},
 ): Promise<VerifyVerdict> {
   const deadlineMs = resolveDeadlineMs(options.deadlineMs);
+  const target = stripTrackingParams(url);
   try {
     return await withDeadline(deadlineMs, (deadlineSignal) => {
       const signal = options.signal ? AbortSignal.any([deadlineSignal, options.signal]) : deadlineSignal;
-      return verifyUrlWithin(url, fetcher, now, options, signal);
+      return verifyUrlWithin(target, fetcher, now, options, signal);
     });
   } catch (error) {
     if (error instanceof DeadlineError) return timeoutUnknownVerdict(url, now);
@@ -185,7 +187,7 @@ async function verifyUrlWithin(
     },
   );
   const [pageResult, atsLookup] = await Promise.all([pagePromise, lookupAtsJob(ats, fetcher, { signal })]);
-  if (pageResult.ok) return combinePageAndAts(classify(pageResult.page, now), atsLookup);
+  if (pageResult.ok) return combinePageAndAts(classify(pageResult.page, now), atsLookup, ats.vendor);
   if (atsLookup.outcome === "unavailable") throw pageResult.error;
-  return verdictFromAtsWithoutPage(url, atsLookup, now);
+  return verdictFromAtsWithoutPage(url, atsLookup, now, ats.vendor);
 }

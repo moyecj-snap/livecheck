@@ -57,6 +57,7 @@ import {
 } from "./receipt.js";
 import { buildPublicStatsDocument, statsScopeIsLocal } from "./stats-fleet.js";
 import { buildStatsDocument, statsHtml } from "./stats.js";
+import { stripTrackingParams } from "./tracking-params.js";
 import { VerifyError, parseTargetUrl, verifyUrl } from "./verify.js";
 import { WatchError, createWatch, deleteWatch, listWatchEventsForOwner, readWatch, renewWatch, topupWatchChain, watchErrorBody } from "./watch.js";
 import { withWatchHint } from "./watch-hint.js";
@@ -259,7 +260,7 @@ async function handlePaidVerify(c: Context) {
   }
   const url = typeof body === "object" && body !== null ? (body as { url?: unknown }).url : undefined;
   try {
-    const target = parseTargetUrl(url);
+    const target = stripTrackingParams(parseTargetUrl(url));
     const route = responseRouteFromPath(c.req.path);
     if (!route) return c.json({ error: "not_found" }, 404);
     const verdict = await verifyUrl(target, fetch, new Date(), {
