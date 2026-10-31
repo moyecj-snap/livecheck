@@ -14,17 +14,26 @@ import { USER_AGENT } from "./config.js";
  * timeout and the whole-check deadline. It does not add a second budget on
  * top.
  *
- * Any HTTP 4xx except 429 means no robots.txt is available, so the URL is
- * allowed and that allow is cached for an hour. This includes 401, 403, 404,
- * and 410. The older "401/403 is disallow-all" reading of RFC 9309 is not
- * what Google follows now.
+ * RFC 9309 §2.3.1.3: an HTTP 4xx other than 429 means robots.txt is
+ * unavailable, so the URL is allowed and that allow is cached for an hour.
+ * This includes 401, 403, 404, and 410.
  *
- * HTTP 429, 5xx, a timeout, or a network error means robots.txt is
- * temporarily unreachable. The check proceeds and the failure is not cached.
- * A down robots.txt must not turn a real posting into "can't tell".
+ * RFC 9309 §2.3.1.2: follow at least five redirects, even across hosts.
+ * More than five is §2.3.1.3 unavailable (allowed, cached), not a fetch of
+ * the next hop. The rules of a file reached within five redirects apply to
+ * the original host. Every hop is a separate fetch so the caller's SSRF
+ * guard runs before connect. The whole chain stays inside the 500ms budget.
+ *
+ * RFC 9309 §2.3.1.4: 5xx, 429, a timeout, or a network error (including DNS)
+ * means robots.txt is unreachable. A crawler must assume complete disallow,
+ * and Google keeps that disallow for up to about 30 days. See the comment
+ * on the unreachable branch: the live API fails open here on purpose.
  *
  * HTTP 200 is parsed and the matching rule is followed.
  */
+
+/** RFC 9309 §2.3.1.2: follow at least five consecutive redirects. */
+export const ROBOTS_MAX_REDIRECTS = 5;
 
 export const ROBOTS_CACHE_TTL_MS = 60 * 60 * 1000;
 /** Upper bound. The page timeout and check deadline can cut it shorter. */
@@ -212,6 +221,26 @@ function abortError(): Error {
 }
 
 /**
+ * RFC 9309 §2.3.1.4 says that when robots.txt is unreachable (5xx, 429,
+ * timeout, or a network error such as DNS), a crawler MUST assume complete
+ * disallow. The same section's example is to keep that answer for a
+ * reasonably long period (for example, 30 days). Google does that, for up
+ * to about 30 days.
+ *
+ * The live API is not a crawler. It makes one on-demand fetch of the single
+ * URL an agent asked about. Treating an unreachable robots.txt as disallow
+ * would turn a blip into "can't tell" for that check. Lenient mode therefore
+ * fails open on purpose: the page is fetched, and this miss is not cached.
+ * Do not "fix" the live API to assume disallow.
+ *
+ * Audits and pilots are batch fetches. They use strict mode, which follows
+ * §2.3.1.4 and skips the page (unknown, signal robots_unavailable).
+ */
+function unreachableRobots(): RobotsVerdict {
+  return { allowed: true };
+}
+
+/**
  * Whether Livecheck may fetch this page URL. Unreachable robots.txt fails open.
  * A parent abort (page timeout or check deadline) is rethrown so that budget
  * is not turned into an allow and is not followed by another full wait.
@@ -249,25 +278,58 @@ export async function robotsAllows(
     }, timeoutMs);
   });
   timed.catch(() => undefined);
-  const pending = fetcher(robotsUrl, {
-    method: "GET",
-    redirect: "follow",
-    signal: controller.signal,
-    headers: { accept: "text/plain,*/*;q=0.8", "user-agent": USER_AGENT },
-  });
-  // The race may settle on the timer first. A later abort rejection must not
-  // surface as an unhandled rejection.
-  pending.catch(() => undefined);
   try {
-    const response = await Promise.race([pending, timed]);
+    let currentUrl = robotsUrl;
+    let redirectsFollowed = 0;
+    let response: Response;
+    for (;;) {
+      const pending = fetcher(currentUrl, {
+        method: "GET",
+        redirect: "manual",
+        signal: controller.signal,
+        headers: { accept: "text/plain,*/*;q=0.8", "user-agent": USER_AGENT },
+      });
+      // The race may settle on the timer first. A later abort rejection must not
+      // surface as an unhandled rejection.
+      pending.catch(() => undefined);
+      response = await Promise.race([pending, timed]);
+      if (response.status < 300 || response.status >= 400) break;
+      if (redirectsFollowed >= ROBOTS_MAX_REDIRECTS) {
+        // RFC 9309 §2.3.1.2: more than five redirects. §2.3.1.3 unavailable:
+        // allow, and cache that allow. Do not request another hop.
+        try {
+          await response.body?.cancel();
+        } catch {
+          // ignore
+        }
+        cacheSet(key, "allow");
+        return { allowed: true };
+      }
+      const location = response.headers.get("location");
+      try {
+        await response.body?.cancel();
+      } catch {
+        // ignore
+      }
+      if (!location) return unreachableRobots();
+      let next: URL;
+      try {
+        next = new URL(location, currentUrl);
+      } catch {
+        return unreachableRobots();
+      }
+      if (next.protocol !== "http:" && next.protocol !== "https:") return unreachableRobots();
+      currentUrl = next.href;
+      redirectsFollowed += 1;
+    }
     if (response.status >= 400 && response.status <= 499 && response.status !== 429) {
-      // No robots.txt (401, 403, 404, 410, and every other 4xx except 429).
+      // RFC 9309 §2.3.1.3. 429 is unreachable, with the 5xx branch below.
       cacheSet(key, "allow");
       return { allowed: true };
     }
     if (response.status < 200 || response.status >= 300) {
-      // 429 and 5xx: unreachable. Fail open, do not cache.
-      return { allowed: true };
+      // 429 and 5xx. Same decision as a timeout or DNS failure, below.
+      return unreachableRobots();
     }
     const text = await response.text();
     const groups = parseRobots(text);
@@ -275,7 +337,8 @@ export async function robotsAllows(
     return fromDecision(groups, url);
   } catch (error) {
     if (options.signal?.aborted) throw error;
-    return { allowed: true };
+    // Timeout (our timer) and network errors, including DNS, land here.
+    return unreachableRobots();
   } finally {
     if (timer) clearTimeout(timer);
     options.signal?.removeEventListener("abort", onParent);
