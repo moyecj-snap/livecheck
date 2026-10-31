@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterEach, describe, it } from "node:test";
 import { createApp } from "../src/app.js";
 import { classify } from "../src/classify.js";
 import { CHECK_TIMEOUT_SIGNAL, USER_AGENT } from "../src/config.js";
+import { guardedFetch, isBlockedAddress, type FetchPolicy } from "../src/free-job-guard.js";
 import { cantTellCopy } from "../src/free-job-page.js";
 import {
   ROBOTS_CACHE_TTL_MS,
   ROBOTS_DISALLOWED_MESSAGE,
   ROBOTS_DISALLOWED_SIGNAL,
   ROBOTS_FETCH_TIMEOUT_MS,
+  ROBOTS_MAX_REDIRECTS,
   ROBOTS_STRICT_FETCH_TIMEOUT_MS,
   ROBOTS_UNAVAILABLE_MESSAGE,
   ROBOTS_UNAVAILABLE_SIGNAL,
@@ -31,10 +35,23 @@ afterEach(() => {
   setRobotsStrictTimeoutForTests(null);
 });
 
+const PAGE_HTML = "<html><title>Engineer</title><body><a>Apply now</a></body></html>";
+
 function requestUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
   if (input instanceof URL) return input.href;
   return input.url;
+}
+
+function hangUntilAbort(init?: RequestInit): Promise<Response> {
+  return new Promise((_resolve, reject) => {
+    const fail = () => reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+    if (init?.signal?.aborted) {
+      fail();
+      return;
+    }
+    init?.signal?.addEventListener("abort", fail, { once: true });
+  });
 }
 
 describe("robots.txt parser", () => {
@@ -123,7 +140,7 @@ describe("robots.txt fetch policy", () => {
     assert.equal(robotsCacheSizeForTests(), 0);
   });
 
-  it("allows and caches 401, 403, 404, and 410 in both modes", async () => {
+  it("checks the page for 401, 403, 404, and 410 in both modes", async () => {
     const page = "<html><title>Engineer</title><body><a>Apply now</a></body></html>";
     for (const mode of ["lenient", "strict"] as const) {
       for (const status of [401, 403, 404, 410]) {
@@ -153,9 +170,9 @@ describe("robots.txt fetch policy", () => {
     }
   });
 
-  it("skips 429 and 5xx in strict and carries on in lenient", async () => {
+  it("429, 500, and 503 are checked in lenient and skipped in strict", async () => {
     const page = "<html><title>Engineer</title><body><a>Apply now</a></body></html>";
-    for (const status of [429, 503]) {
+    for (const status of [429, 500, 503]) {
       for (const mode of ["lenient", "strict"] as const) {
         clearRobotsCacheForTests();
         const seen: string[] = [];
@@ -188,6 +205,204 @@ describe("robots.txt fetch policy", () => {
           assert.ok(seen.includes(`${origin}/jobs/2`));
         }
       }
+    }
+  });
+
+  it("a robots.txt timeout matches a 5xx in each mode", { timeout: 3_000 }, async () => {
+    setRobotsStrictTimeoutForTests(40);
+    const strictSeen: string[] = [];
+    const strictStarted = Date.now();
+    const strictFetcher: typeof fetch = (input, init) => {
+      const url = requestUrl(input);
+      strictSeen.push(url);
+      if (url.endsWith("/robots.txt")) return hangUntilAbort(init);
+      return Promise.resolve(new Response(PAGE_HTML, { status: 200 }));
+    };
+    const strictVerdict = await verifyUrl("https://timeout-strict.example/jobs/1", strictFetcher, new Date(), {
+      robotsMode: "strict",
+    });
+    assert.ok(Date.now() - strictStarted < 1_000);
+    assert.equal(strictVerdict.status, "unknown");
+    assert.equal(strictVerdict.message, ROBOTS_UNAVAILABLE_MESSAGE);
+    assert.deepEqual(strictVerdict.signals, [ROBOTS_UNAVAILABLE_SIGNAL]);
+    assert.equal(strictSeen.includes("https://timeout-strict.example/jobs/1"), false);
+    assert.equal(robotsCacheSizeForTests(), 0);
+
+    setRobotsStrictTimeoutForTests(null);
+    clearRobotsCacheForTests();
+    const seen: string[] = [];
+    const started = Date.now();
+    const fetcher: typeof fetch = (input, init) => {
+      const url = requestUrl(input);
+      seen.push(url);
+      if (url.endsWith("/robots.txt")) return hangUntilAbort(init);
+      return Promise.resolve(new Response(PAGE_HTML, { status: 200 }));
+    };
+    const verdict = await verifyUrl("https://timeout-lenient.example/jobs/1", fetcher, new Date(), { robotsMode: "lenient" });
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed >= ROBOTS_FETCH_TIMEOUT_MS - 100, `waited ${elapsed}ms`);
+    assert.ok(elapsed < 2_000, `waited ${elapsed}ms`);
+    assert.equal(verdict.signals.includes(ROBOTS_UNAVAILABLE_SIGNAL), false);
+    assert.ok(seen.includes("https://timeout-lenient.example/jobs/1"));
+    assert.equal(robotsCacheSizeForTests(), 0);
+  });
+
+  it("a robots.txt DNS failure matches a 5xx in each mode", async () => {
+    for (const mode of ["lenient", "strict"] as const) {
+      clearRobotsCacheForTests();
+      const seen: string[] = [];
+      let robotsFetches = 0;
+      const fetcher: typeof fetch = async (input) => {
+        const url = requestUrl(input);
+        seen.push(url);
+        if (url.endsWith("/robots.txt")) {
+          robotsFetches += 1;
+          throw Object.assign(new Error("getaddrinfo ENOTFOUND dns.example"), { code: "ENOTFOUND" });
+        }
+        return new Response(PAGE_HTML, { status: 200 });
+      };
+      const origin = `https://${mode}-dns.example`;
+      const first = await verifyUrl(`${origin}/jobs/1`, fetcher, new Date(), { robotsMode: mode });
+      const second = await verifyUrl(`${origin}/jobs/2`, fetcher, new Date(), { robotsMode: mode });
+      assert.equal(robotsFetches, 2, `${mode} DNS failure is not cached`);
+      assert.equal(robotsCacheSizeForTests(), 0);
+      if (mode === "strict") {
+        assert.equal(first.status, "unknown");
+        assert.equal(first.message, ROBOTS_UNAVAILABLE_MESSAGE);
+        assert.deepEqual(first.signals, [ROBOTS_UNAVAILABLE_SIGNAL]);
+        assert.deepEqual(second.signals, [ROBOTS_UNAVAILABLE_SIGNAL]);
+        assert.equal(seen.includes(`${origin}/jobs/1`), false);
+        assert.equal(seen.includes(`${origin}/jobs/2`), false);
+      } else {
+        assert.equal(first.signals.includes(ROBOTS_UNAVAILABLE_SIGNAL), false);
+        assert.equal(second.signals.includes(ROBOTS_UNAVAILABLE_SIGNAL), false);
+        assert.ok(seen.includes(`${origin}/jobs/1`));
+        assert.ok(seen.includes(`${origin}/jobs/2`));
+      }
+    }
+  });
+
+  it("follows five robots.txt redirects and applies the final file in both modes", async () => {
+    for (const mode of ["lenient", "strict"] as const) {
+      clearRobotsCacheForTests();
+      const seen: string[] = [];
+      const host = `${mode}-five.example`;
+      const fetcher: typeof fetch = async (input) => {
+        const url = requestUrl(input);
+        seen.push(url);
+        const hop = seen.length;
+        if (hop <= ROBOTS_MAX_REDIRECTS) {
+          return new Response(null, {
+            status: 302,
+            headers: { location: `https://cdn.example/${mode}/robots/${hop}` },
+          });
+        }
+        return new Response("User-agent: *\nDisallow: /jobs\n", { status: 200 });
+      };
+      const verdict = await verifyUrl(`https://${host}/jobs/9`, fetcher, new Date(), { robotsMode: mode });
+      assert.equal(verdict.status, "unknown");
+      assert.equal(verdict.message, ROBOTS_DISALLOWED_MESSAGE);
+      assert.deepEqual(verdict.signals, [ROBOTS_DISALLOWED_SIGNAL]);
+      assert.equal(seen.includes(`https://${host}/jobs/9`), false);
+      assert.deepEqual(seen, [
+        `https://${host}/robots.txt`,
+        `https://cdn.example/${mode}/robots/1`,
+        `https://cdn.example/${mode}/robots/2`,
+        `https://cdn.example/${mode}/robots/3`,
+        `https://cdn.example/${mode}/robots/4`,
+        `https://cdn.example/${mode}/robots/5`,
+      ]);
+    }
+  });
+
+  it("treats a sixth robots.txt redirect as no file in both modes", async () => {
+    for (const mode of ["lenient", "strict"] as const) {
+      clearRobotsCacheForTests();
+      const seen: string[] = [];
+      const host = `${mode}-six.example`;
+      const page = `https://${host}/jobs/9`;
+      const fetcher: typeof fetch = async (input) => {
+        const url = requestUrl(input);
+        seen.push(url);
+        return new Response(null, {
+          status: 302,
+          headers: { location: `https://cdn.example/${mode}/robots/${seen.length}` },
+        });
+      };
+      const first = await verifyUrl(page, fetcher, new Date(), { robotsMode: mode });
+      const duringRobots = seen.filter((url) => url !== page);
+      assert.equal(first.signals.includes(ROBOTS_DISALLOWED_SIGNAL), false);
+      assert.equal(first.signals.includes(ROBOTS_UNAVAILABLE_SIGNAL), false);
+      assert.ok(seen.includes(page), `${mode} still checks the page`);
+      assert.deepEqual(duringRobots, [
+        `https://${host}/robots.txt`,
+        `https://cdn.example/${mode}/robots/1`,
+        `https://cdn.example/${mode}/robots/2`,
+        `https://cdn.example/${mode}/robots/3`,
+        `https://cdn.example/${mode}/robots/4`,
+        `https://cdn.example/${mode}/robots/5`,
+      ]);
+      seen.length = 0;
+      const second = await verifyUrl(`https://${host}/about`, fetcher, new Date(), { robotsMode: mode });
+      assert.equal(second.signals.includes(ROBOTS_UNAVAILABLE_SIGNAL), false);
+      assert.deepEqual(seen, [`https://${host}/about`]);
+      assert.equal(robotsCacheSizeForTests(), 1);
+    }
+  });
+
+  it("vets every robots.txt redirect hop and does not connect to a private address", async () => {
+    const hits: string[] = [];
+    const server = createServer((req, res) => {
+      hits.push(req.url ?? "");
+      if (req.url === "/robots.txt") {
+        res.writeHead(302, { location: `http://meta.test:${port}/secret` });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(PAGE_HTML);
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const port = (server.address() as AddressInfo).port;
+    const resolved: string[] = [];
+    const policy: FetchPolicy = {
+      resolver: async (host) => {
+        resolved.push(host);
+        if (host === "public.test") return ["127.0.0.1"];
+        if (host === "meta.test") return ["169.254.169.254"];
+        throw new Error(`ENOTFOUND ${host}`);
+      },
+      isBlocked: (ip) => (ip === "127.0.0.1" ? false : isBlockedAddress(ip)),
+      allowedPorts: new Set(["", "80", "443", String(port)]),
+      maxBodyBytes: 1024 * 1024,
+      hopTimeoutMs: 2_000,
+      maxRedirects: ROBOTS_MAX_REDIRECTS,
+    };
+    try {
+      for (const mode of ["lenient", "strict"] as const) {
+        clearRobotsCacheForTests();
+        hits.length = 0;
+        resolved.length = 0;
+        const verdict = await verifyUrl(`http://public.test:${port}/jobs/1`, guardedFetch(policy), new Date(), {
+          robotsMode: mode,
+        });
+        assert.ok(resolved.includes("meta.test"), `${mode} vets the redirect target`);
+        assert.equal(hits.includes("/secret"), false, `${mode} does not connect to the private address`);
+        assert.equal(robotsCacheSizeForTests(), 0);
+        if (mode === "strict") {
+          assert.equal(verdict.status, "unknown");
+          assert.equal(verdict.message, ROBOTS_UNAVAILABLE_MESSAGE);
+          assert.deepEqual(verdict.signals, [ROBOTS_UNAVAILABLE_SIGNAL]);
+          assert.deepEqual(hits, ["/robots.txt"]);
+        } else {
+          assert.equal(verdict.signals.includes(ROBOTS_UNAVAILABLE_SIGNAL), false);
+          assert.deepEqual(hits, ["/robots.txt", "/jobs/1"]);
+        }
+      }
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 
@@ -252,17 +467,6 @@ describe("robots.txt fetch policy", () => {
 
 const APPLY_PAGE = "<html><title>Engineer</title><body><a>Apply now</a></body></html>";
 const GREENHOUSE = "https://job-boards.greenhouse.io/discord/jobs/8806482002";
-
-function hangUntilAbort(init?: RequestInit): Promise<Response> {
-  return new Promise((_resolve, reject) => {
-    const fail = () => reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
-    if (init?.signal?.aborted) {
-      fail();
-      return;
-    }
-    init?.signal?.addEventListener("abort", fail, { once: true });
-  });
-}
 
 describe("strict robots.txt", () => {
   it("uses a 5s strict wait and the existing 500ms lenient wait", () => {

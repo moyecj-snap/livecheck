@@ -333,11 +333,15 @@ export function guardedFetch(policy: FetchPolicy = DEFAULT_FETCH_POLICY): typeof
     const method = (init?.method ?? "GET").toUpperCase();
     if (method !== "GET" && method !== "HEAD") throw new TypeError(`free page fetch is GET/HEAD only, got ${method}`);
     const headers = new Headers(init?.headers ?? {});
+    // "manual" returns this hop's response, including a redirect, so robots.txt
+    // can follow RFC 9309's five-hop limit itself. Each call is still vetted
+    // before connect. "follow" (the page fetch) keeps walking hops here.
+    const manual = init?.redirect === "manual";
     for (let hop = 0; hop <= policy.maxRedirects; hop++) {
       const target = await vetTarget(current, policy);
       const res = await requestOnce(target, { method, headers, signal: init?.signal }, policy);
       const location = res.headers.get("location");
-      if (res.status >= 300 && res.status < 400 && location) {
+      if (!manual && res.status >= 300 && res.status < 400 && location) {
         try {
           await res.body?.cancel();
         } catch {
