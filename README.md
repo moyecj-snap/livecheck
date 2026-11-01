@@ -162,6 +162,53 @@ curl -sS -D - -o /dev/null https://livecheck.fly.dev/v1/verify \
 # and extensions.bazaar must be present
 ```
 
+## Starter key (`GET /keys`)
+
+A GitHub account can get one key, `lc_live_…`, shown once, and send it as `Authorization: Bearer` on `POST /v1/verify`, `/v1/verify/job`, and `/v1/verify/listing`. 200 free checks over 30 days. Confirm, Sentinel (`/v1/check`, `/v1/watch`), and the free `/job` page limits stay as they are. A real answer spends one check (`live`, `closed`, or `unknown` after the page was read), including a board we only learn about after fetching. Errors, timeouts, and a robots.txt "can't tell" (`robots_disallowed`, e.g. every LinkedIn link: the page is never requested) do not. A board URL from the #52 rule (Greenhouse, Lever, or Ashby with no job id, a bare `/careers` or `/jobs` page, or a bare Workday `myworkdayjobs.com/<site>`) is rejected before the fetch with the same free 400 as the wallet routes and does not spend a credit. Free checks write no `paid_calls` row, so the `/stats` buckets are unchanged.
+
+Sign-in is GitHub OAuth with no `user` or `user:email` scope. The server stores the GitHub username and id, the SHA-256 of the key, an opt-in bit, and counts. The `/keys` page says: "We store your GitHub username to run your key. Nothing is shared." The checkbox "OK to contact me about my experience" is off unless the person checks it. Accounts under 7 days old are refused. One key per GitHub account. Records are deleted 90 days after the key expires (`npm run keys:cleanup`, also on a daily sweep).
+
+Env (Fly secrets, not in git):
+
+```bash
+# Craig registers the GitHub OAuth app. Callback URL:
+#   https://livecheck.fly.dev/keys/callback
+fly secrets set GITHUB_OAUTH_CLIENT_ID=... GITHUB_OAUTH_CLIENT_SECRET=...
+```
+
+The switches are not Fly secrets. They are rows in the paid-calls SQLite file, read on the next request. No deploy and no restart.
+
+```bash
+npm run --silent keys:list
+# Emergency stop. Every key, including unexpired ones, stops immediately.
+# For abuse, a cost spike, or a bug. Overrides wind-down.
+npm run --silent keys:set -- emergency_stop 1
+npm run --silent keys:set -- emergency_stop 0
+# Wind-down. /keys sign-up closes. Unexpired keys keep their remaining
+# checks until they expire. Use this to end the trial without breaking
+# builders who already integrated.
+npm run --silent keys:set -- wind_down 1
+npm run --silent keys:set -- wind_down 0
+
+npm run --silent keys:set -- daily_check_cap 2000
+npm run --silent keys:revoke -- k_0123abcd0123abcd
+
+# Our own test key (id, GitHub id, or login).
+npm run --silent keys:mark-internal -- <github_login>  # out of every starter-key stat
+npm run --silent keys:revoke -- <github_login>         # stops the key on the next call
+npm run --silent keys:delete -- <github_login>         # removes the record now; account can get a new key
+npm run --silent keys:cleanup
+npm run --silent keys:followups
+```
+
+On Fly, the same commands over ssh, for example `fly ssh console -a livecheck -C "npm run --silent keys:set -- emergency_stop 1"`. `GET /stats` shows both switches. An out-of-checks answer still points at the wallet path and says to reply to get a top-up link at moyecj@gmail.com.
+
+`daily_check_cap` (default 2000) is the global free-check cap. The server never raises it. Hitting it logs `starter_keys: DAILY CAP HIT` and sets `starter_keys.daily_cap_hit` on `GET /stats`. Other limits: 3 new keys per IP per day, 50 new keys per day, 60 calls/minute and 200 checks/day per key. Key calls use the same verify concurrency slots as wallet calls. More than half blocked targets in an hour, after 10 outcomes, suspends the key. `keys:revoke` stops it on the next call.
+
+`keys:mark-internal` flags our own dry-run or test key, like `testers:add` for wallets. It leaves issued, activated, 20+ checks, free checks, out of credit, and the 7-day follow-up list. The key still works until revoked. The daily cap meter still counts its checks, because the cap guards load. `keys:delete` removes one account's key record and its per-key counts now, overriding the 90-day retention for that record so the same GitHub account can sign in for a fresh key. It logs the key id and login, never the key or its hash.
+
+Card top-up is not in this phase. `paid_left` stays 0. When it is built, a card-funded call should be a paid call with payer `key:<id>` (external, even on a docs-example URL).
+
 ## Free job check page (`GET /job`)
 
 The free "Is this job still open?" page for people is at **`/job`**, and `/check` redirects there. It's for the Product Hunt launch. Paste a link and get **Open / Closed / Can't tell**, plus the title, the platform, and the evidence in plain words. It runs the same classifier as `POST /v1/verify/job` (`verifyUrl` with the Greenhouse/Lever/Ashby/Workday APIs on). No wallet, no signup, no JavaScript.
