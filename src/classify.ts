@@ -1,4 +1,5 @@
 import { PRICE_USD } from "./config.js";
+import { ROBOTS_DISALLOWED_MESSAGE, ROBOTS_DISALLOWED_SIGNAL } from "./robots.js";
 import type { FetchedPage, SourceStatus, VerifyVerdict } from "./types.js";
 
 const CLOSED_PHRASES = [
@@ -201,6 +202,52 @@ function looksLikeSpecificJobUrl(url: string): boolean {
   return !/^(search|board|list|index)$/i.test(posting[1]);
 }
 
+const JOB_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A job board we can see from the URL string alone, before any fetch.
+ * Greenhouse, Lever, and Ashby with no job id in the path; a Workday site
+ * index with no `/job/` posting; the bare `/careers` or `/jobs` index only
+ * (trailing slash or query is fine; a numeric `gh_jid` is a job id); a
+ * Greenhouse job-board embed; or a LinkedIn jobs search.
+ * `/careers/senior-engineer` and `/jobs/12345` are not this shape.
+ */
+export function isBoardUrlShape(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  if (/[?&]gh_jid=\d+\b/i.test(url.search)) return false;
+  const host = url.hostname.toLowerCase();
+  const path = url.pathname.replace(/\/+$/, "") || "/";
+  const parts = path.split("/").filter(Boolean);
+  if (host.endsWith("greenhouse.io")) {
+    const token = url.searchParams.get("token")?.trim() ?? "";
+    if (/\/embed\/job_app/i.test(path) && /^\d+$/.test(token)) return false;
+    return !/\/jobs\/\d+/.test(path);
+  }
+  if (host.endsWith("lever.co") || host.endsWith("ashbyhq.com")) {
+    return !parts.some((part) => JOB_UUID.test(part));
+  }
+  if (isWorkdayBoardHost(host)) {
+    const jobAt = parts.findIndex((part) => part.toLowerCase() === "job");
+    const hasPosting = jobAt >= 0 && jobAt < parts.length - 1;
+    return !hasPosting && parts.length > 0;
+  }
+  // Bare index only. `/careers/role` and `/jobs/12345` are not boards from the path.
+  if (/^\/(careers|jobs)$/i.test(path)) return true;
+  if (path.includes("/job_board") || path.includes("/embed/job_board")) return true;
+  if (isLinkedInHost(host) && /\/jobs(\/|$)/.test(path) && !/\/jobs\/view\//.test(path)) return true;
+  return false;
+}
+
+function isWorkdayBoardHost(host: string): boolean {
+  return host.endsWith(".myworkdayjobs.com") || /^wd\d+\.myworkdaysite\.com$/.test(host);
+}
+
 function looksLikeBoardOrSearchUrl(url: string): boolean {
   const { host, path, search } = extractHostPath(url);
   const q = search.toLowerCase();
@@ -303,6 +350,20 @@ function isChallengeInterstitial(html: string, text: string, realProductPage: bo
 }
 
 export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdict {
+  if (page.robotsDisallowed) {
+    return {
+      url: page.requestedUrl,
+      canonical_url: page.canonicalUrl,
+      status: "unknown",
+      http_status: 0,
+      checked_at: checkedAt.toISOString().replace(/\.\d{3}Z$/, "Z"),
+      signals: [ROBOTS_DISALLOWED_SIGNAL],
+      confidence: 0.55,
+      price_usd: PRICE_USD,
+      message: ROBOTS_DISALLOWED_MESSAGE,
+    };
+  }
+
   const signals: string[] = [];
   const text = `${page.title ?? ""}\n${page.text}`.toLowerCase();
   const html = page.html.toLowerCase();
@@ -314,6 +375,19 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
     signals.push(`http_${page.httpStatus}`);
     status = "closed";
     confidence = 0.95;
+  } else if (page.httpStatus === 429) {
+    signals.push("http_429");
+    return {
+      url: page.requestedUrl,
+      canonical_url: page.canonicalUrl,
+      status: "unknown",
+      http_status: 429,
+      checked_at: checkedAt.toISOString().replace(/\.\d{3}Z$/, "Z"),
+      ...(page.title ? { title: page.title } : {}),
+      signals,
+      confidence: 0.45,
+      price_usd: PRICE_USD,
+    };
   }
 
   const closedPhrase = includesPhrase(text, CLOSED_PHRASES);

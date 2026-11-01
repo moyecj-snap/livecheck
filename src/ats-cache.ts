@@ -11,11 +11,10 @@ type CacheKeyRef = {
 };
 
 /**
- * Ashby's public posting API is the whole board. Greenhouse, Lever, and
- * Workday expose one posting by id, and those URLs are preferred so a check
- * does not re-parse the board. Board responses are keyed by company/board.
- * Single-posting responses are keyed by that posting URL, not by each
- * incoming page URL, so /apply and the canonical job share one entry.
+ * Ashby tries one posting first (GraphQL). Its whole-board JSON is only the
+ * fallback, keyed by company. Greenhouse, Lever, and Workday expose one
+ * posting by id. Single-posting responses are keyed by that posting URL,
+ * not by each incoming page URL, so /apply and the canonical job share one entry.
  */
 
 export type AtsFetchScope = "board" | "posting";
@@ -37,13 +36,15 @@ let maxBytes = ATS_BOARD_CACHE_MAX_BYTES;
 const store = new Map<string, Entry>();
 const inflight = new Map<string, Promise<unknown>>();
 
-export function atsFetchScope(vendor: string): AtsFetchScope {
+export function atsFetchScope(vendor: string, apiUrl = ""): AtsFetchScope {
+  // Ashby's single-posting GraphQL is one job. The whole-board JSON fallback stays shared.
+  if (vendor === "ashby" && apiUrl.includes("non-user-graphql")) return "posting";
   return vendor === "ashby" ? "board" : "posting";
 }
 
-/** Board-scoped for Ashby. Posting-scoped for vendors with a single-job URL. */
+/** Board-scoped for Ashby's full feed. Posting-scoped for a single-job URL. */
 export function atsResponseCacheKey(ref: CacheKeyRef): string {
-  if (atsFetchScope(ref.vendor) === "board") return `board:${ref.vendor}:${ref.board}`;
+  if (atsFetchScope(ref.vendor, ref.apiUrl) === "board") return `board:${ref.vendor}:${ref.board}`;
   return `posting:${ref.vendor}:${ref.apiUrl}`;
 }
 

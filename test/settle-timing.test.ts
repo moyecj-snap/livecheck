@@ -282,7 +282,12 @@ describe("x402 settle timing (exact authorization flow)", () => {
   it("does not settle when the caller disconnects before the handler finishes", async () => {
     reset();
     let release: ((html: string) => void) | undefined;
-    const held = createServer((_req, res) => {
+    const held = createServer((req, res) => {
+      if ((req.url ?? "").startsWith("/robots.txt")) {
+        res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+        res.end("User-agent: *\nAllow: /\n");
+        return;
+      }
       release = (html) => {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         res.end(html);

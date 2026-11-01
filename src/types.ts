@@ -10,6 +10,8 @@ export type VerifyVerdict = {
   signals: string[];
   confidence: number;
   price_usd: number;
+  /** Set when the check is unknown for a reason the caller should read, such as robots.txt. */
+  message?: string;
 };
 
 export type ConfirmVerdictStatus = "confirmed" | "failed" | "unknown";
@@ -256,4 +258,6 @@ export type FetchedPage = {
   text: string;
   redirected: boolean;
   redirectChain: string[];
+  /** Set when robots.txt disallowed the fetch and the page was not requested. */
+  robotsDisallowed?: boolean;
 };

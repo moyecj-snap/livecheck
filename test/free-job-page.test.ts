@@ -586,7 +586,11 @@ describe("free /job page", () => {
       hits.length = 0;
       const page = await (await form(u(path, "redirector.test"), { cookie: visitor(40), ip: `198.51.100.${40 + hits.length}` })).text();
       assert.match(page, /class="verdict">Can&#39;t tell</, path);
-      assert.deepEqual(hits.map((h) => h.path), [path], `${path}: only the public hop reached a server`);
+      assert.deepEqual(
+        hits.map((h) => h.path),
+        ["/robots.txt", path],
+        `${path}: robots.txt is vetted on the public host, then the page; the blocked redirect never connects`,
+      );
       resetFreeJobForTests();
       setFreeJobPolicyForTests(testPolicy());
       setFreeJobClockForTests(() => now);

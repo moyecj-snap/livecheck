@@ -1,8 +1,12 @@
 import { lookupAtsJob, combinePageAndAts, parseAtsJobUrl, verdictFromAtsWithoutPage } from "./ats-api.js";
+import { roleRefFor } from "./free-job-role.js";
 import { CHECK_TIMEOUT_SIGNAL, FETCH_TIMEOUT_MS, MAX_BODY_BYTES, PRICE_USD, USER_AGENT } from "./config.js";
 import { classify } from "./classify.js";
+import { ROBOTS_FETCH_TIMEOUT_MS, robotsAllows } from "./robots.js";
 import { DeadlineError, isAbortLike, linkedAbort, resolveDeadlineMs, withDeadline } from "./deadline.js";
 import { isEbayAdapterEnabled, logEbayAdapterDisabled, parseEbayItemUrl, verifyEbayItem } from "./ebay.js";
+import { applyShopifyAvailability, lookupShopifyAvailable, shopifyProductJsUrl } from "./shopify.js";
+import { stripTrackingParams } from "./tracking-params.js";
 import type { FetchedPage, VerifyVerdict } from "./types.js";
 
 export type VerifyUrlOptions = {
@@ -21,7 +25,49 @@ export type VerifyUrlOptions = {
 export type FetchPageOptions = {
   timeoutMs?: number;
   signal?: AbortSignal;
+  /**
+   * Posting and listing checks only. Confirm and other fetchPage callers
+   * leave this off so they do not request robots.txt.
+   */
+  robots?: boolean;
+  /** Called after robots.txt allows, before the page body is read. */
+  afterRobots?: () => void;
 };
+
+/** One wait before a second LinkedIn fetch. Tests set this to 0. */
+export const LINKEDIN_429_DELAY_MS = 1_000;
+let linkedIn429DelayMs = LINKEDIN_429_DELAY_MS;
+
+export function setLinkedIn429DelayForTests(ms: number | null): void {
+  linkedIn429DelayMs = ms ?? LINKEDIN_429_DELAY_MS;
+}
+
+function isLinkedInPage(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "linkedin.com" || host.endsWith(".linkedin.com");
+  } catch {
+    return false;
+  }
+}
+
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      const error = new Error("aborted");
+      error.name = "AbortError";
+      reject(error);
+    };
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
 
 export class VerifyError extends Error {
   status: number;
@@ -95,18 +141,55 @@ export async function fetchPage(
   options: FetchPageOptions = {},
 ): Promise<FetchedPage> {
   const timeoutMs = options.timeoutMs ?? FETCH_TIMEOUT_MS;
+  // One clock for robots.txt and the page. A robots timeout cannot push the
+  // page past this budget, and a 40ms page timeout still fails in about 40ms.
   const linked = linkedAbort(timeoutMs, options.signal);
   const redirectChain: string[] = [];
   try {
-    const response = await fetcher(url, {
-      method: "GET",
-      redirect: "follow",
+    if (options.robots) {
+      const robotsTimeout = Math.min(ROBOTS_FETCH_TIMEOUT_MS, timeoutMs);
+      let robots: Awaited<ReturnType<typeof robotsAllows>>;
+      try {
+        robots = await robotsAllows(url, fetcher, { signal: linked.signal, timeoutMs: robotsTimeout });
+      } catch (error) {
+        if (error instanceof DeadlineError || options.signal?.aborted) {
+          throw error instanceof DeadlineError ? error : new DeadlineError(resolveDeadlineMs());
+        }
+        if (linked.signal.aborted) {
+          throw new VerifyError(`Timed out fetching ${url} after ${timeoutMs}ms.`, 504);
+        }
+        throw error;
+      }
+      if (!robots.allowed) {
+        return {
+          requestedUrl: url,
+          canonicalUrl: url,
+          httpStatus: 0,
+          title: null,
+          html: "",
+          text: "",
+          redirected: false,
+          redirectChain: [],
+          robotsDisallowed: true,
+        };
+      }
+    }
+    options.afterRobots?.();
+
+    const fetchInit = {
+      method: "GET" as const,
+      redirect: "follow" as const,
       signal: linked.signal,
       headers: {
         accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
         "user-agent": USER_AGENT,
       },
-    });
+    };
+    let response = await fetcher(url, fetchInit);
+    if (response.status === 429 && isLinkedInPage(url)) {
+      await delay(linkedIn429DelayMs, options.signal);
+      response = await fetcher(url, fetchInit);
+    }
 
     const canonicalUrl = response.url || url;
     if (canonicalUrl !== url) redirectChain.push(canonicalUrl);
@@ -139,6 +222,19 @@ export async function fetchPage(
   }
 }
 
+async function withShopify(
+  requested: string,
+  verdict: VerifyVerdict,
+  fetcher: typeof fetch,
+  signal: AbortSignal,
+): Promise<VerifyVerdict> {
+  const jsUrl = shopifyProductJsUrl(verdict.canonical_url) ?? shopifyProductJsUrl(requested);
+  if (!jsUrl) return verdict;
+  const found = await lookupShopifyAvailable(jsUrl, fetcher, signal);
+  if (!found) return verdict;
+  return applyShopifyAvailability(verdict, found);
+}
+
 export async function verifyUrl(
   url: string,
   fetcher: typeof fetch = fetch,
@@ -146,10 +242,11 @@ export async function verifyUrl(
   options: VerifyUrlOptions = {},
 ): Promise<VerifyVerdict> {
   const deadlineMs = resolveDeadlineMs(options.deadlineMs);
+  const target = stripTrackingParams(url);
   try {
     return await withDeadline(deadlineMs, (deadlineSignal) => {
       const signal = options.signal ? AbortSignal.any([deadlineSignal, options.signal]) : deadlineSignal;
-      return verifyUrlWithin(url, fetcher, now, options, signal);
+      return verifyUrlWithin(target, fetcher, now, options, signal);
     });
   } catch (error) {
     if (error instanceof DeadlineError) return timeoutUnknownVerdict(url, now);
@@ -171,21 +268,30 @@ async function verifyUrlWithin(
     }
     logEbayAdapterDisabled();
   }
-  const ats = options.atsApi ? parseAtsJobUrl(url) : null;
-  if (!ats) {
-    const page = await fetchPage(url, fetcher, { signal });
-    return classify(page, now);
-  }
-
-  const pagePromise = fetchPage(url, fetcher, { signal }).then(
-    (page) => ({ ok: true as const, page }),
+  // Company careers embeds (Figma and others) pass the Greenhouse id as gh_jid
+  // instead of a boards.greenhouse.io URL. roleRefFor resolves that id.
+  const ats = options.atsApi ? parseAtsJobUrl(url) ?? roleRefFor(url) : null;
+  let atsLookup: Promise<Awaited<ReturnType<typeof lookupAtsJob>>> | undefined;
+  const page = await fetchPage(url, fetcher, {
+    signal,
+    robots: true,
+    afterRobots: () => {
+      if (ats) atsLookup = lookupAtsJob(ats, fetcher, { signal });
+    },
+  }).then(
+    (fetched) => ({ ok: true as const, page: fetched }),
     (error: unknown) => {
       if (error instanceof DeadlineError) throw error;
       return { ok: false as const, error };
     },
   );
-  const [pageResult, atsLookup] = await Promise.all([pagePromise, lookupAtsJob(ats, fetcher, { signal })]);
-  if (pageResult.ok) return combinePageAndAts(classify(pageResult.page, now), atsLookup);
-  if (atsLookup.outcome === "unavailable") throw pageResult.error;
-  return verdictFromAtsWithoutPage(url, atsLookup, now);
+  if (page.ok && page.page.robotsDisallowed) return classify(page.page, now);
+  if (!ats || !atsLookup) {
+    if (!page.ok) throw page.error;
+    return withShopify(url, classify(page.page, now), fetcher, signal);
+  }
+  const api = await atsLookup;
+  if (page.ok) return combinePageAndAts(classify(page.page, now), api, ats.vendor);
+  if (api.outcome === "unavailable") throw page.error;
+  return verdictFromAtsWithoutPage(url, api, now, ats.vendor);
 }

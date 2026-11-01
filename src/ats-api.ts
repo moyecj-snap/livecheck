@@ -14,15 +14,24 @@ import type { VerifyVerdict } from "./types.js";
  *
  * No API keys. These are the vendors' public board endpoints.
  * Greenhouse, Lever, and Workday are fetched as one posting by id.
- * Ashby's public API is the whole board; that JSON is cached per company for
- * 5 minutes so jobs at the same company share one fetch. Single-posting
- * responses are cached on the posting URL for the same TTL.
+ * Ashby is fetched as one posting (public ApiJobPosting GraphQL). If that
+ * call is unavailable, the whole-board JSON is the fallback and is cached
+ * per company for 5 minutes. Single-posting responses are cached on the
+ * posting URL for the same TTL.
  * Network errors, timeouts, and HTTP 5xx are "unavailable", never "missing".
+ * Greenhouse and Workday "missing" is closed. Lever and Ashby "missing" is
+ * only a public-feed miss: the posting page decides (apply form = live;
+ * 404, board redirect, or closure banner = closed).
  * A bot-challenge page is not promoted to live. No Cloudflare or reCAPTCHA bypass.
  */
 
 export const ATS_API_LISTED = "ats_api_listed";
 export const ATS_API_MISSING = "ats_api_missing";
+/**
+ * Lever or Ashby public feed does not contain this id. That is not a closed
+ * verdict: unlisted postings are often absent from the feed and still open.
+ */
+export const ATS_NOT_IN_PUBLIC_FEED = "ats_not_in_public_feed";
 /** Equivalent to listed_in_ats_api: true. */
 export const ATS_LISTED_CONFIDENCE = 0.96;
 /** Greenhouse (and any board that returns a posted timestamp) when the API agrees the job is live. */
@@ -39,10 +48,12 @@ export type AtsVendor = "ashby" | "workday" | "lever" | "greenhouse";
 
 export type AtsJobRef = {
   vendor: AtsVendor;
-  /** Public board request. GET, no credentials. */
+  /** Public board request. GET, no credentials, except Ashby's single-posting GraphQL POST. */
   apiUrl: string;
   jobId: string;
   board: string;
+  method?: "GET" | "POST";
+  body?: string;
 };
 
 export type AtsLookup =
@@ -122,11 +133,30 @@ function parseAshby(host: string, url: URL): AtsJobRef | null {
   // become trunk%2520tools.
   const board = decodePathSegment(encodedBoard);
   if (!board) return null;
+  // The hosted page loads one posting from this public GraphQL operation.
+  // The fragment is only a cache key; fetch strips it. The whole-board JSON
+  // is the fallback when this call is unavailable.
   return {
     vendor: "ashby",
     board,
     jobId,
-    apiUrl: `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(board)}`,
+    method: "POST",
+    body: JSON.stringify({
+      operationName: "ApiJobPosting",
+      variables: { organizationHostedJobsPageName: board, jobPostingId: jobId },
+      query:
+        "query ApiJobPosting($organizationHostedJobsPageName: String!, $jobPostingId: String!) { jobPosting(organizationHostedJobsPageName: $organizationHostedJobsPageName, jobPostingId: $jobPostingId) { id title isListed } }",
+    }),
+    apiUrl: `https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobPosting#${encodeURIComponent(board)}/${encodeURIComponent(jobId)}`,
+  };
+}
+
+function ashbyBoardRef(ref: AtsJobRef): AtsJobRef {
+  return {
+    vendor: "ashby",
+    board: ref.board,
+    jobId: ref.jobId,
+    apiUrl: `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(ref.board)}`,
   };
 }
 
@@ -266,8 +296,25 @@ function listed(input: {
   };
 }
 
+function interpretAshbyGraphql(status: number, text: string, jobId: string): AtsLookup | null {
+  const payload = asRecord(parseJson(text));
+  const data = asRecord(payload?.data);
+  if (!data || !("jobPosting" in data)) return null;
+  if (data.jobPosting == null) return { outcome: "missing", httpStatus: status };
+  const row = asRecord(data.jobPosting);
+  if (!row) return { outcome: "unavailable" };
+  const id = typeof row.id === "string" ? row.id : "";
+  if (id && id.toLowerCase() !== jobId.toLowerCase()) return { outcome: "unavailable" };
+  return listed({
+    httpStatus: status,
+    title: typeof row.title === "string" ? row.title : undefined,
+  });
+}
+
 function interpretAshby(status: number, text: string, truncated: boolean, jobId: string): AtsLookup {
   if (status === 404 || status === 410) return { outcome: "missing", httpStatus: status };
+  const graphql = interpretAshbyGraphql(status, text, jobId);
+  if (graphql) return graphql;
   if (status < 200 || status >= 300) return { outcome: "unavailable" };
   if (looksLikeBotChallenge(text)) return { outcome: "unavailable" };
   const needle = jobId.toLowerCase();
@@ -422,14 +469,16 @@ async function loadAtsResponse(
   // shared board fetch that other in-flight checks are waiting on.
   const linked = linkedAbort(timeoutMs);
   try {
-    const response = await fetcher(ref.apiUrl, {
-      method: "GET",
+    const response = await fetcher(ref.apiUrl.split("#")[0] ?? ref.apiUrl, {
+      method: ref.method ?? "GET",
       redirect: "follow",
       signal: linked.signal,
       headers: {
         accept: "application/json",
         "user-agent": USER_AGENT,
+        ...(ref.body ? { "content-type": "application/json" } : {}),
       },
+      ...(ref.body ? { body: ref.body } : {}),
     });
     const { text, truncated } = await readCappedText(response, maxBytes);
     const body = { status: response.status, text, truncated };
@@ -449,15 +498,34 @@ export async function lookupAtsJob(
 ): Promise<AtsLookup> {
   const timeoutMs = options.timeoutMs ?? ATS_FETCH_TIMEOUT_MS;
   const maxBytes = options.maxBytes ?? MAX_BODY_BYTES;
+  // GraphQL and the board-API fallback share this one ATS budget. The
+  // fallback only runs with whatever time is left, and is skipped when the
+  // first call already used the budget.
+  const budgetStarted = Date.now();
+  const budgetLeft = () => timeoutMs - (Date.now() - budgetStarted);
+  const fallbackToBoard = (): Promise<AtsLookup> => {
+    const left = budgetLeft();
+    if (left <= 0) return Promise.resolve({ outcome: "unavailable" });
+    return lookupAtsJob(ashbyBoardRef(ref), fetcher, { ...options, timeoutMs: left });
+  };
   try {
     if (options.signal?.aborted) throw new DeadlineError(resolveDeadlineMs());
     const key = atsResponseCacheKey(ref);
     const cached = readAtsResponseCache(key);
     if (cached) return interpretAtsResponse(ref, cached.status, cached.text, cached.truncated);
-    const loaded = await joinAtsFetch(key, () => loadAtsResponse(ref, fetcher, timeoutMs, maxBytes));
+    const loaded = await joinAtsFetch(key, () => loadAtsResponse(ref, fetcher, budgetLeft(), maxBytes));
     if (options.signal?.aborted) throw new DeadlineError(resolveDeadlineMs());
-    if (!loaded) return { outcome: "unavailable" };
-    return interpretAtsResponse(ref, loaded.status, loaded.text, loaded.truncated);
+    if (!loaded) {
+      if (ref.vendor === "ashby" && ref.apiUrl.includes("non-user-graphql")) return fallbackToBoard();
+      return { outcome: "unavailable" };
+    }
+    const interpreted = interpretAtsResponse(ref, loaded.status, loaded.text, loaded.truncated);
+    const singlePosting = ref.vendor === "ashby" && ref.apiUrl.includes("non-user-graphql");
+    const graphqlAnswer = loaded.text.includes("jobPosting");
+    if (singlePosting && (interpreted.outcome === "unavailable" || (interpreted.outcome === "missing" && !graphqlAnswer))) {
+      return fallbackToBoard();
+    }
+    return interpreted;
   } catch (error) {
     if (error instanceof DeadlineError || options.signal?.aborted) {
       throw error instanceof DeadlineError ? error : new DeadlineError(resolveDeadlineMs());
@@ -474,6 +542,11 @@ function dedupe(signals: string[]): string[] {
   return out;
 }
 
+/** Public-feed absence is not evidence the posting is closed. */
+function feedMissIsNotClosed(vendor: AtsVendor | undefined): boolean {
+  return vendor === "lever" || vendor === "ashby";
+}
+
 function checkedAtIso(now: Date): string {
   return now.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
@@ -486,12 +559,18 @@ function postedSignal(iso: string | undefined): string[] {
  * Page × public API.
  * - live + listed → live, high confidence
  * - unknown without challenge_page (JS shell / blank) + listed → live + ats_api_listed
- * - any non-challenge page + missing → closed + ats_api_missing
- * - closed + listed → unknown, page closed signals and ats_api_listed
- * - challenge_page + listed/missing → answered from the API (page never bypassed)
+ * - Greenhouse or Workday missing → closed + ats_api_missing
+ * - Lever or Ashby missing from the public feed is not closed on its own.
+ *   An apply form stays live. A 404, a redirect to the board, or a closure
+ *   banner stays closed. Anything else stays unknown.
+ * - 404, 410, or redirected_to_board + listed → still closed
+ * - other closed copy + listed → unknown, page closed signals and ats_api_listed
+ * - challenge_page + listed → live (page never bypassed)
+ * - challenge_page + Greenhouse/Workday missing → closed
+ * - challenge_page + Lever/Ashby missing → unknown (feed absence is not closed)
  * - unavailable leaves the HTML verdict untouched
  */
-export function combinePageAndAts(page: VerifyVerdict, api: AtsLookup): VerifyVerdict {
+export function combinePageAndAts(page: VerifyVerdict, api: AtsLookup, vendor?: AtsVendor): VerifyVerdict {
   if (api.outcome === "unavailable") return page;
 
   // A challenge page is never bypassed. When the link carries a job id the
@@ -499,6 +578,20 @@ export function combinePageAndAts(page: VerifyVerdict, api: AtsLookup): VerifyVe
   // challenge_page signal stays for transparency.
 
   if (api.outcome === "missing") {
+    // Oct 28, 2026 audits: Lever and Ashby postings can be missing from the
+    // public feed and still show an apply form. Feed absence is not closed.
+    if (feedMissIsNotClosed(vendor)) {
+      if (page.status === "closed") {
+        return {
+          ...page,
+          signals: dedupe([ATS_API_MISSING, ...page.signals]),
+        };
+      }
+      return {
+        ...page,
+        signals: dedupe([ATS_NOT_IN_PUBLIC_FEED, ...page.signals]),
+      };
+    }
     return {
       ...page,
       status: "closed",
@@ -509,6 +602,19 @@ export function combinePageAndAts(page: VerifyVerdict, api: AtsLookup): VerifyVe
 
   const posted = postedSignal(api.postedAt);
   if (page.status === "closed") {
+    // A 404/410 or a redirect onto the board is closed even when the API
+    // still lists the id. Closure copy alone still disagrees with a listing.
+    const hardClosed = page.signals.some(
+      (signal) => signal === "http_404" || signal === "http_410" || signal === "redirected_to_board",
+    );
+    if (hardClosed) {
+      return {
+        ...page,
+        status: "closed",
+        confidence: Math.max(page.confidence, 0.9),
+        signals: dedupe([ATS_API_LISTED, ...page.signals, ...posted]),
+      };
+    }
     return {
       ...page,
       status: "unknown",
@@ -527,7 +633,24 @@ export function combinePageAndAts(page: VerifyVerdict, api: AtsLookup): VerifyVe
 }
 
 /** No HTML body (fetch failed) and the board API still answered. Not a challenge page. */
-export function verdictFromAtsWithoutPage(url: string, api: Exclude<AtsLookup, { outcome: "unavailable" }>, now: Date): VerifyVerdict {
+export function verdictFromAtsWithoutPage(
+  url: string,
+  api: Exclude<AtsLookup, { outcome: "unavailable" }>,
+  now: Date,
+  vendor?: AtsVendor,
+): VerifyVerdict {
+  if (api.outcome === "missing" && feedMissIsNotClosed(vendor)) {
+    return {
+      url,
+      canonical_url: url,
+      status: "unknown",
+      http_status: 0,
+      checked_at: checkedAtIso(now),
+      signals: [ATS_NOT_IN_PUBLIC_FEED],
+      confidence: 0.35,
+      price_usd: PRICE_USD,
+    };
+  }
   const posted = api.outcome === "listed" ? postedSignal(api.postedAt) : [];
   const title = api.outcome === "listed" ? api.title : undefined;
   return {

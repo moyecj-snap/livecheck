@@ -4,7 +4,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Context, Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
-import { ATS_API_LISTED, ATS_API_MISSING, parseAtsJobUrl } from "./ats-api.js";
+import { ATS_API_LISTED, ATS_API_MISSING, ATS_NOT_IN_PUBLIC_FEED, parseAtsJobUrl } from "./ats-api.js";
+import { ROBOTS_DISALLOWED_MESSAGE, ROBOTS_DISALLOWED_SIGNAL } from "./robots.js";
 import { PRICE_USD } from "./config.js";
 import { BlockedTargetError, DEFAULT_FETCH_POLICY, guardedFetch, vetTarget, type FetchPolicy } from "./free-job-guard.js";
 import {
@@ -314,6 +315,9 @@ const BLOCKED_COPY = "This site blocks automated checks or needs a login, so we 
 const UNCLEAR_COPY = "We couldn't get a clear answer from this page, so we won't guess.";
 const UNREACHABLE_COPY = "We couldn't reach this site just now, so we won't guess.";
 const BOARD_PAGE_COPY = "This page is a list of jobs, not one posting. Open a single job and paste its link.";
+/** Same fact as BOARD_PAGE_COPY, for a JSON caller who passes a URL rather than pasting into /job. */
+export const BOARD_PAGE_API_MESSAGE =
+  "This URL is a job board or careers index, not a single posting. Pass the URL of one job posting.";
 const BOT_CHECK_LINE = "Site showed a bot check (we don't bypass those)";
 
 /**
@@ -324,6 +328,24 @@ const BOT_CHECK_LINE = "Site showed a bot check (we don't bypass those)";
  */
 function isBoardOrList(signals: readonly string[]): boolean {
   return signals.includes("not_a_specific_posting") || signals.includes("collection_or_category");
+}
+
+/**
+ * Message on a paid 200, after the page was fetched. A board whose URL shape
+ * is obvious never reaches here: that request is rejected before payment.
+ * A product collection is not a job board. A posting that redirected onto a
+ * board already has a closed or unknown answer, so it does not get this line.
+ * Finding a board only after the fetch is still a real $0.01 answer.
+ */
+export function boardPageApiMessage(verdict: { status: string; signals: readonly string[] }): string | undefined {
+  if (verdict.status !== "unknown") return undefined;
+  if (verdict.signals.includes("redirected_to_board") || verdict.signals.includes("redirected_away_from_job")) {
+    return undefined;
+  }
+  if (verdict.signals.includes("ats_api_listed")) return undefined;
+  const jobBoard = verdict.signals.includes("not_a_specific_posting") || verdict.signals.includes("careers_homepage");
+  if (!jobBoard) return undefined;
+  return BOARD_PAGE_API_MESSAGE;
 }
 
 function formatDay(iso: string): string | undefined {
@@ -341,6 +363,7 @@ export function evidenceInPlainWords(signals: readonly string[], platform: strin
   for (const signal of signals) {
     if (signal === ATS_API_LISTED) add(`Listed in ${platform}'s jobs API`);
     else if (signal === ATS_API_MISSING) add(`Removed from ${platform}'s jobs API`);
+    else if (signal === ATS_NOT_IN_PUBLIC_FEED) add(`Not in ${platform}'s public jobs feed; the posting page is what we use`);
     else if (signal.startsWith("ats_posted_at:")) {
       const day = formatDay(signal.slice("ats_posted_at:".length));
       if (day) add(`Posted ${day}`);
@@ -367,6 +390,7 @@ export function evidenceInPlainWords(signals: readonly string[], platform: strin
     else if (signal === "js_shell") add("Page needs JavaScript to show the posting");
     else if (signal === "ambiguous_html") add("Page didn't clearly say open or closed");
     else if (signal === "check_timeout") add("The site took too long to answer");
+    else if (signal === ROBOTS_DISALLOWED_SIGNAL) add("robots.txt disallows this check");
   }
   return out;
 }
@@ -384,6 +408,8 @@ export function evidenceForVerdict(signals: readonly string[], platform: string,
 }
 
 export function cantTellCopy(signals: readonly string[]): string {
+  // We never fetched the page, so this is not a board and not a bot wall.
+  if (signals.includes(ROBOTS_DISALLOWED_SIGNAL)) return ROBOTS_DISALLOWED_MESSAGE;
   // Board/list copy wins over blocked and unclear. A Lever board is both
   // not_a_specific_posting and challenge_page, and must not say we were blocked.
   if (isBoardOrList(signals)) return BOARD_PAGE_COPY;
