@@ -6,7 +6,7 @@ import type { Context, Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import { ATS_API_LISTED, ATS_API_MISSING, ATS_NOT_IN_PUBLIC_FEED, parseAtsJobUrl } from "./ats-api.js";
 import { ROBOTS_DISALLOWED_MESSAGE, ROBOTS_DISALLOWED_SIGNAL } from "./robots.js";
-import { PRICE_USD } from "./config.js";
+import { LINKEDIN_UNSUPPORTED_COPY, PRICE_USD } from "./config.js";
 import { BlockedTargetError, DEFAULT_FETCH_POLICY, guardedFetch, vetTarget, type FetchPolicy } from "./free-job-guard.js";
 import {
   bumpFreePageMetric,
@@ -407,7 +407,20 @@ export function evidenceForVerdict(signals: readonly string[], platform: string,
   return label === "Closed" ? lines.filter((line) => !OPEN_LEANING.has(line)) : lines;
 }
 
-export function cantTellCopy(signals: readonly string[]): string {
+function isLinkedInUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "linkedin.com" || host.endsWith(".linkedin.com");
+  } catch {
+    return false;
+  }
+}
+
+export function cantTellCopy(signals: readonly string[], url?: string): string {
+  // LinkedIn is unsupported by policy (its robots.txt disallows all bots).
+  // Say that, whatever the signal, so the visitor knows what to paste instead.
+  if (isLinkedInUrl(url)) return LINKEDIN_UNSUPPORTED_COPY;
   // We never fetched the page, so this is not a board and not a bot wall.
   if (signals.includes(ROBOTS_DISALLOWED_SIGNAL)) return ROBOTS_DISALLOWED_MESSAGE;
   // Board/list copy wins over blocked and unclear. A Lever board is both
@@ -696,7 +709,8 @@ async function runCheck(target: string, opts: { signal?: AbortSignal }): Promise
     }
   }
   if (!verdict) {
-    return { view: { kind: "result", url: target, label: "Can't tell", platform, evidence: [], explanation: UNREACHABLE_COPY }, ok: false };
+    const explanation = isLinkedInUrl(target) ? LINKEDIN_UNSUPPORTED_COPY : UNREACHABLE_COPY;
+    return { view: { kind: "result", url: target, label: "Can't tell", platform, evidence: [], explanation }, ok: false };
   }
   const label = verdictLabel(verdict.status);
   let role: RoleInfo | undefined;
@@ -714,7 +728,7 @@ async function runCheck(target: string, opts: { signal?: AbortSignal }): Promise
       ...(line.unavailable ? { titleUnavailable: true } : {}),
       platform,
       evidence: evidenceForVerdict(verdict.signals, platform, label),
-      ...(label === "Can't tell" ? { explanation: cantTellCopy(verdict.signals) } : {}),
+      ...(label === "Can't tell" ? { explanation: cantTellCopy(verdict.signals, target) } : {}),
     },
     ok: true,
   };
