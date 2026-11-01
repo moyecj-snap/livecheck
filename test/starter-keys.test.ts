@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtempSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
@@ -9,6 +10,8 @@ import { createApp } from "../src/app.js";
 import {
   apiKeyDb,
   deleteExpiredStarterKeys,
+  deleteStarterKeyRecord,
+  markStarterKeyInternal,
   issueStarterKey,
   migrateApiKeyStore,
   listFollowups,
@@ -470,6 +473,123 @@ describe("starter key store", () => {
     setStarterKeySetting(database, "emergency_stop", 0, now);
     setStarterKeySetting(database, "daily_check_cap", 2000, now);
   });
+  it("an internal test key leaves every starter-key stat and the follow-up list, and works until revoked", () => {
+    const before = queryStarterKeyStats(db(), now);
+    const issued = issue({ githubId: "4242", login: "PyGuy2", ip: "ip:pyguy2", optIn: true });
+    for (let i = 0; i < 20; i += 1) {
+      const call = reserveStarterCall(db(), issued.plaintext, now);
+      assert.equal(call.ok, true);
+      if (!call.ok) return;
+      finishStarterCall(db(), call.key.id, { charge: true, blocked: false }, now);
+    }
+    const counted = queryStarterKeyStats(db(), now);
+    for (const window of ["l7d", "l30d"] as const) {
+      assert.equal(counted[window].issued, before[window].issued + 1);
+      assert.equal(counted[window].activated, before[window].activated + 1);
+      assert.equal(counted[window].reached_20, before[window].reached_20 + 1);
+      assert.equal(counted[window].free_checks, before[window].free_checks + 20);
+    }
+    const weekLater = new Date(now.getTime() + 8 * 24 * 60 * 60 * 1000);
+    assert.equal(listFollowups(db(), weekLater).some((row) => row.id === issued.id), true);
+
+    const logs: string[] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+    try {
+      const marked = markStarterKeyInternal(db(), "@pyguy2", now);
+      assert.equal(marked?.id, issued.id);
+      assert.equal(marked?.internal, 1);
+    } finally {
+      console.log = original;
+    }
+    assert.equal(logs.some((line) => line.includes(`marked internal id=${issued.id}`)), true);
+    assert.equal(logs.join("\n").includes(issued.plaintext), false);
+    assert.equal(logs.join("\n").includes(hashStarterKey(issued.plaintext)), false);
+
+    const excluded = queryStarterKeyStats(db(), now);
+    assert.equal(excluded.internal_keys_excluded, before.internal_keys_excluded + 1);
+    for (const window of ["l7d", "l30d"] as const) {
+      assert.deepEqual(excluded[window], before[window], window);
+    }
+    assert.equal(listFollowups(db(), weekLater).some((row) => row.id === issued.id), false);
+    const doc = buildStatsDocument();
+    assert.deepEqual(doc.starter_keys.l7d, excluded.l7d);
+    assert.match(statsHtml(doc), /Excludes \d+ internal test key/);
+
+    const stillWorks = reserveStarterCall(db(), issued.plaintext, now);
+    assert.equal(stillWorks.ok, true);
+    if (stillWorks.ok) finishStarterCall(db(), stillWorks.key.id, { charge: true, blocked: false }, now);
+    assert.deepEqual(queryStarterKeyStats(db(), now).l7d, before.l7d);
+
+    assert.equal(revokeStarterKey(db(), "PyGuy2", now)?.status, "revoked");
+    assert.equal(reserveStarterCall(db(), issued.plaintext, now).ok, false);
+    assert.deepEqual(queryStarterKeyStats(db(), now).l7d, before.l7d);
+  });
+
+  it("admin delete removes the record and its per-key counts so the same GitHub account can get a fresh key", () => {
+    const first = issue({ githubId: "4343", login: "craig-main", ip: "ip:craig-main" });
+    const call = reserveStarterCall(db(), first.plaintext, now);
+    assert.equal(call.ok, true);
+    if (call.ok) finishStarterCall(db(), call.key.id, { charge: true, blocked: false }, now);
+    const again = issueStarterKey(
+      db(),
+      { githubId: "4343", githubLogin: "craig-main", accountCreatedAt: "2020-01-01T00:00:00Z", contactOptIn: false, ipSubject: "ip:craig-main" },
+      now,
+    );
+    assert.equal(again.ok, false, "one key per GitHub account while the record exists");
+
+    const logs: string[] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+    let gone: ReturnType<typeof deleteStarterKeyRecord>;
+    try {
+      gone = deleteStarterKeyRecord(db(), "@Craig-Main", now);
+    } finally {
+      console.log = original;
+    }
+    assert.deepEqual(gone, { id: first.id, github_login: "craig-main", github_id: "4343" });
+    const line = logs.find((entry) => entry.includes("admin deleted"));
+    assert.ok(line);
+    assert.match(line, new RegExp(`id=${first.id} login=@craig-main github:4343`));
+    assert.match(line, /overrides 90-day retention/);
+    assert.equal(logs.join("\n").includes(first.plaintext), false);
+    assert.equal(logs.join("\n").includes(hashStarterKey(first.plaintext)), false);
+    for (const table of ["api_keys", "api_key_daily", "api_key_minute", "api_key_hour"]) {
+      const column = table === "api_keys" ? "id" : "key_id";
+      const row = db().prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${column} = ?`).get(first.id) as { n: number };
+      assert.equal(Number(row.n), 0, table);
+    }
+    assert.equal(reserveStarterCall(db(), first.plaintext, now).ok, false, "the old key no longer works");
+    assert.equal(deleteStarterKeyRecord(db(), "craig-main", now), undefined);
+
+    const fresh = issueStarterKey(
+      db(),
+      { githubId: "4343", githubLogin: "craig-main", accountCreatedAt: "2020-01-01T00:00:00Z", contactOptIn: false, ipSubject: "ip:craig-main-2" },
+      now,
+    );
+    assert.equal(fresh.ok, true);
+    if (fresh.ok) {
+      assert.notEqual(fresh.id, first.id);
+      assert.notEqual(fresh.plaintext, first.plaintext);
+      assert.equal(listStarterKeys(db()).find((row) => row.id === fresh.id)?.free_used, 0);
+    }
+  });
+
+  it("adds the internal column to a key table made before keys:mark-internal", () => {
+    const old = new DatabaseSync(":memory:");
+    old.exec(`CREATE TABLE api_keys (
+      id TEXT PRIMARY KEY, key_sha256 TEXT NOT NULL UNIQUE, github_id TEXT NOT NULL UNIQUE, github_login TEXT NOT NULL,
+      contact_opt_in INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+      free_allowance INTEGER NOT NULL, free_used INTEGER NOT NULL DEFAULT 0, paid_left INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active', suspended_reason TEXT, followup_drafted_at TEXT)`);
+    old.exec(`INSERT INTO api_keys (id, key_sha256, github_id, github_login, created_at, expires_at, free_allowance)
+      VALUES ('k_old', 'h', '1', 'old', '2026-10-30T12:00:00Z', '2027-01-28T12:00:00Z', 200)`);
+    migrateApiKeyStore(old);
+    migrateApiKeyStore(old);
+    assert.equal(listStarterKeys(old)[0]?.internal, 0);
+    assert.equal(markStarterKeyInternal(old, "old", now)?.internal, 1);
+    old.close();
+  });
 });
 
 describe("starter key HTTP", () => {
@@ -862,6 +982,45 @@ describe("keys script", () => {
     const body = JSON.parse(stdout) as { limits: { emergencyStop: boolean; windDown: boolean } };
     assert.equal(body.limits.emergencyStop, true);
     assert.equal(body.limits.windDown, false);
+  });
+  it("mark-internal, revoke, and delete a test key by login without printing the key", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "starter-keys-"));
+    const path = join(dir, "paid-calls.sqlite");
+    initPaidCallStore(path);
+    const made = issueStarterKey(
+      db(),
+      { githubId: "777", githubLogin: "PyGuy2", accountCreatedAt: "2020-01-01T00:00:00Z", contactOptIn: false, ipSubject: "ip:script" },
+      new Date(),
+    );
+    closePaidCallStore();
+    assert.equal(made.ok, true);
+    if (!made.ok) return;
+    const run = async (...args: string[]) => {
+      const { stdout } = await execFileAsync("npx", ["tsx", "scripts/starter-keys.ts", ...args, "--db", path, "--json"], {
+        cwd: process.cwd(),
+      });
+      assert.equal(stdout.includes(made.plaintext), false);
+      assert.equal(stdout.includes(hashStarterKey(made.plaintext)), false);
+      return JSON.parse(stdout.trim().split("\n").at(-1) ?? "{}") as {
+        stats: { internal_keys_excluded: number; l7d: { issued: number }; l30d: { issued: number } };
+        keys: Array<{ id: string; status: string; internal: boolean }>;
+        deleted_key?: { id: string; github_login: string };
+      };
+    };
+    const listed = await run("list");
+    assert.equal(listed.stats.l7d.issued, 1);
+    const marked = await run("mark-internal", "PyGuy2");
+    assert.equal(marked.keys[0]?.internal, true);
+    assert.equal(marked.stats.internal_keys_excluded, 1);
+    assert.equal(marked.stats.l7d.issued, 0);
+    assert.equal(marked.stats.l30d.issued, 0);
+    const revoked = await run("revoke", "@PyGuy2");
+    assert.equal(revoked.keys[0]?.status, "revoked");
+    const deleted = await run("delete", "pyguy2");
+    assert.equal(deleted.deleted_key?.id, made.id);
+    assert.equal(deleted.keys.length, 0);
+    assert.equal(deleted.stats.internal_keys_excluded, 0);
+    await assert.rejects(run("delete", "pyguy2"), /no starter key matches/);
   });
 });
 

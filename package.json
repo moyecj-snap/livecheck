@@ -24,6 +24,8 @@
     "keys:list": "tsx scripts/starter-keys.ts list",
     "keys:set": "tsx scripts/starter-keys.ts set",
     "keys:revoke": "tsx scripts/starter-keys.ts revoke",
+    "keys:mark-internal": "tsx scripts/starter-keys.ts mark-internal",
+    "keys:delete": "tsx scripts/starter-keys.ts delete",
     "keys:cleanup": "tsx scripts/starter-keys.ts cleanup",
     "keys:followups": "tsx scripts/starter-keys.ts followups",
     "free:get": "tsx scripts/free-page-settings.ts get",

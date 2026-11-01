@@ -2106,7 +2106,7 @@ function starterKeysHtml(doc: StatsDocument): string {
   return `${cap}${stop}<h2>Starter keys</h2>
   ${wind}
   <p class="muted">${escHtml(keys.note)} Emergency stop: ${keys.emergency_stop ? "on" : "off"}. Wind-down: ${keys.wind_down ? "on" : "off"}. Daily cap ${keys.daily_cap} (${keys.daily_cap_used} used today${keys.daily_cap_hit ? ", cap hit" : ""}).</p>
-  <p class="muted">L7d: ${l7.issued} issued, ${l7.activated} activated, ${l7.reached_20} with 20+ checks, ${l7.free_checks} free checks, ${l7.out_of_credit} out of credit. L30d: ${l30.issued} issued, ${l30.activated} activated, ${l30.reached_20} with 20+ checks, ${l30.free_checks} free checks, ${l30.out_of_credit} out of credit.</p>`;
+  <p class="muted">L7d: ${l7.issued} issued, ${l7.activated} activated, ${l7.reached_20} with 20+ checks, ${l7.free_checks} free checks, ${l7.out_of_credit} out of credit. L30d: ${l30.issued} issued, ${l30.activated} activated, ${l30.reached_20} with 20+ checks, ${l30.free_checks} free checks, ${l30.out_of_credit} out of credit.${keys.internal_keys_excluded ? ` Excludes ${keys.internal_keys_excluded} internal test key${keys.internal_keys_excluded === 1 ? "" : "s"}.` : ""}</p>`;
 }
 
 export function statsHtml(doc: StatsDocument): string {

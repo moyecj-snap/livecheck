@@ -192,6 +192,11 @@ npm run --silent keys:set -- wind_down 0
 
 npm run --silent keys:set -- daily_check_cap 2000
 npm run --silent keys:revoke -- k_0123abcd0123abcd
+
+# Our own test key (id, GitHub id, or login).
+npm run --silent keys:mark-internal -- <github_login>  # out of every starter-key stat
+npm run --silent keys:revoke -- <github_login>         # stops the key on the next call
+npm run --silent keys:delete -- <github_login>         # removes the record now; account can get a new key
 npm run --silent keys:cleanup
 npm run --silent keys:followups
 ```
@@ -199,6 +204,8 @@ npm run --silent keys:followups
 On Fly, the same commands over ssh, for example `fly ssh console -a livecheck -C "npm run --silent keys:set -- emergency_stop 1"`. `GET /stats` shows both switches. An out-of-checks answer still points at the wallet path and says to reply to get a top-up link at moyecj@gmail.com.
 
 `daily_check_cap` (default 2000) is the global free-check cap. The server never raises it. Hitting it logs `starter_keys: DAILY CAP HIT` and sets `starter_keys.daily_cap_hit` on `GET /stats`. Other limits: 3 new keys per IP per day, 50 new keys per day, 60 calls/minute and 200 checks/day per key. Key calls use the same verify concurrency slots as wallet calls. More than half blocked targets in an hour, after 10 outcomes, suspends the key. `keys:revoke` stops it on the next call.
+
+`keys:mark-internal` flags our own dry-run or test key, like `testers:add` for wallets. It leaves issued, activated, 20+ checks, free checks, out of credit, and the 7-day follow-up list. The key still works until revoked. The daily cap meter still counts its checks, because the cap guards load. `keys:delete` removes one account's key record and its per-key counts now, overriding the 90-day retention for that record so the same GitHub account can sign in for a fresh key. It logs the key id and login, never the key or its hash.
 
 Card top-up is not in this phase. `paid_left` stays 0. When it is built, a card-funded call should be a paid call with payer `key:<id>` (external, even on a docs-example URL).
 

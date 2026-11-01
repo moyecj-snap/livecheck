@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
   paid_left INTEGER NOT NULL DEFAULT 0 CHECK (paid_left >= 0),
   status TEXT NOT NULL CHECK (status IN ('active', 'suspended', 'revoked')),
   suspended_reason TEXT,
-  followup_drafted_at TEXT
+  followup_drafted_at TEXT,
+  internal INTEGER NOT NULL DEFAULT 0 CHECK (internal IN (0, 1))
 );
 `;
 
@@ -109,6 +110,8 @@ export type ApiKeyRow = {
   status: ApiKeyStatus;
   suspended_reason: string | null;
   followup_drafted_at: string | null;
+  /** 1 = our own dry-run/test key (keys:mark-internal). Left out of every starter-key stat and follow-up. */
+  internal: number;
 };
 
 export type IssueInput = {
@@ -146,6 +149,8 @@ export type StarterKeyWindow = {
 };
 
 export type StarterKeyStats = {
+  /** Internal/test keys on file (keys:mark-internal). Not in l7d/l30d. */
+  internal_keys_excluded: number;
   available: boolean;
   emergency_stop: boolean;
   wind_down: boolean;
@@ -158,7 +163,7 @@ export type StarterKeyStats = {
 };
 
 const STATS_NOTE =
-  "Free starter-key checks are not paid calls and are not in the traffic buckets. This block is this machine's paid-calls volume, not a fleet sum. A future card-funded call would be a paid call with payer key:<id> (external). The daily cap is never raised automatically.";
+  "Free starter-key checks are not paid calls and are not in the traffic buckets. This block is this machine's paid-calls volume, not a fleet sum. A future card-funded call would be a paid call with payer key:<id> (external). The daily cap is never raised automatically. Our own test keys (keys:mark-internal) are left out of issued, activated, 20+, free checks, and out of credit. The daily cap meter counts every free check, ours included, because it guards load.";
 
 let bound: DatabaseSync | undefined;
 
@@ -178,11 +183,19 @@ export function apiKeyDb(): DatabaseSync | undefined {
 
 export function migrateApiKeyStore(db: DatabaseSync): void {
   db.exec(KEYS_SQL);
+  migrateInternalColumn(db);
   db.exec(DAILY_SQL);
   db.exec(MINUTE_SQL);
   db.exec(HOUR_SQL);
   migrateApiKeySettings(db);
   db.exec(CAP_HITS_SQL);
+}
+
+/** Files made before keys:mark-internal existed get the column, default 0. */
+function migrateInternalColumn(db: DatabaseSync): void {
+  const cols = db.prepare(`PRAGMA table_info(api_keys)`).all() as Array<{ name: string }>;
+  if (cols.some((col) => col.name === "internal")) return;
+  db.exec(`ALTER TABLE api_keys ADD COLUMN internal INTEGER NOT NULL DEFAULT 0 CHECK (internal IN (0, 1))`);
 }
 
 /**
@@ -331,11 +344,12 @@ function rowFrom(raw: Record<string, unknown> | undefined): ApiKeyRow | undefine
     status,
     suspended_reason: raw.suspended_reason == null ? null : String(raw.suspended_reason),
     followup_drafted_at: raw.followup_drafted_at == null ? null : String(raw.followup_drafted_at),
+    internal: num(raw.internal ?? 0),
   };
 }
 
 const KEY_COLUMNS =
-  "id, key_sha256, github_id, github_login, contact_opt_in, created_at, expires_at, free_allowance, free_used, paid_left, status, suspended_reason, followup_drafted_at";
+  "id, key_sha256, github_id, github_login, contact_opt_in, created_at, expires_at, free_allowance, free_used, paid_left, status, suspended_reason, followup_drafted_at, internal";
 
 export function readStarterKeySettings(db: DatabaseSync): StarterKeySettings {
   const out: StarterKeySettings = {};
@@ -619,19 +633,71 @@ export function finishStarterCall(
   });
 }
 
-export function revokeStarterKey(db: DatabaseSync, idOrLogin: string, now = new Date()): ApiKeyRow | undefined {
+/**
+ * Find one key by key id (k_…), GitHub numeric id, or GitHub login (with or
+ * without @; GitHub logins are case-insensitive).
+ */
+export function findStarterKey(db: DatabaseSync, idOrLogin: string): ApiKeyRow | undefined {
   const needle = idOrLogin.trim().replace(/^@/, "");
-  const row = rowFrom(
-    db.prepare(`SELECT ${KEY_COLUMNS} FROM api_keys WHERE id = ? OR github_id = ? OR github_login = ?`).get(needle, needle, needle) as
-      | Record<string, unknown>
-      | undefined,
+  if (!needle) return undefined;
+  return rowFrom(
+    db
+      .prepare(
+        `SELECT ${KEY_COLUMNS} FROM api_keys WHERE id = ? OR github_id = ? OR lower(github_login) = lower(?) ORDER BY created_at ASC LIMIT 1`,
+      )
+      .get(needle, needle, needle) as Record<string, unknown> | undefined,
   );
+}
+
+export function revokeStarterKey(db: DatabaseSync, idOrLogin: string, now = new Date()): ApiKeyRow | undefined {
+  const row = findStarterKey(db, idOrLogin);
   if (!row) return undefined;
   if (row.status !== "revoked") {
     db.prepare(`UPDATE api_keys SET status = 'revoked', suspended_reason = COALESCE(suspended_reason, 'revoked') WHERE id = ?`).run(row.id);
     console.log(`starter_keys: revoked id=${row.id} at=${isoStamp(now)}`);
   }
   return rowFrom(db.prepare(`SELECT ${KEY_COLUMNS} FROM api_keys WHERE id = ?`).get(row.id) as Record<string, unknown>);
+}
+
+/**
+ * Flag our own dry-run/test key as internal. Its key, checks, and 20+ status
+ * leave every starter-key stat (issued, activated, reached_20, free_checks,
+ * out_of_credit) and the 7-day follow-up list. The key itself keeps working
+ * until revoked. Like testers:add for wallets.
+ */
+export function markStarterKeyInternal(db: DatabaseSync, idOrLogin: string, now = new Date()): ApiKeyRow | undefined {
+  const row = findStarterKey(db, idOrLogin);
+  if (!row) return undefined;
+  if (row.internal !== 1) {
+    db.prepare(`UPDATE api_keys SET internal = 1 WHERE id = ?`).run(row.id);
+    console.log(`starter_keys: marked internal id=${row.id} login=@${row.github_login} at=${isoStamp(now)}`);
+  }
+  return rowFrom(db.prepare(`SELECT ${KEY_COLUMNS} FROM api_keys WHERE id = ?`).get(row.id) as Record<string, unknown>);
+}
+
+/**
+ * Admin delete: remove one account's key record and its per-key count rows
+ * now, so the same GitHub account can get a fresh key. Overrides the
+ * 90-day retention for this record only. Logs the key id and login, never
+ * the key or its hash. The day's global cap meter is left as it was.
+ */
+export function deleteStarterKeyRecord(
+  db: DatabaseSync,
+  idOrLogin: string,
+  now = new Date(),
+): { id: string; github_login: string; github_id: string } | undefined {
+  return withTx(db, () => {
+    const row = findStarterKey(db, idOrLogin);
+    if (!row) return undefined;
+    db.prepare(`DELETE FROM api_key_daily WHERE key_id = ?`).run(row.id);
+    db.prepare(`DELETE FROM api_key_minute WHERE key_id = ?`).run(row.id);
+    db.prepare(`DELETE FROM api_key_hour WHERE key_id = ?`).run(row.id);
+    db.prepare(`DELETE FROM api_keys WHERE id = ?`).run(row.id);
+    console.log(
+      `starter_keys: admin deleted id=${row.id} login=@${row.github_login} github:${row.github_id} status=${row.status} at=${isoStamp(now)} (overrides 90-day retention; the account can get a new key)`,
+    );
+    return { id: row.id, github_login: row.github_login, github_id: row.github_id };
+  });
 }
 
 export function listStarterKeys(db: DatabaseSync): ApiKeyRow[] {
@@ -657,7 +723,7 @@ export function listFollowups(db: DatabaseSync, now = new Date()): FollowupCandi
   const rows = db
     .prepare(
       `SELECT id, github_login, created_at, free_used, status FROM api_keys
-       WHERE contact_opt_in = 1 AND followup_drafted_at IS NULL AND status != 'revoked'
+       WHERE contact_opt_in = 1 AND followup_drafted_at IS NULL AND status != 'revoked' AND internal = 0
          AND created_at <= ? AND expires_at > ?
        ORDER BY created_at ASC`,
     )
@@ -709,21 +775,25 @@ function emptyWindow(): StarterKeyWindow {
 }
 
 function windowStats(db: DatabaseSync, sinceIso: string, sinceDay: string): StarterKeyWindow {
-  const count = (sql: string, arg: string) => num((db.prepare(sql).get(arg) as { n: number | bigint }).n);
+  // Outside keys only: internal = 0. Our own test keys never count.
+  const count = (where: string) =>
+    num(
+      (db.prepare(`SELECT COUNT(*) AS n FROM api_keys WHERE created_at >= ? AND internal = 0${where}`).get(sinceIso) as {
+        n: number | bigint;
+      }).n,
+    );
   return {
-    issued: count(`SELECT COUNT(*) AS n FROM api_keys WHERE created_at >= ?`, sinceIso),
-    activated: count(`SELECT COUNT(*) AS n FROM api_keys WHERE created_at >= ? AND free_used >= 1`, sinceIso),
-    reached_20: count(`SELECT COUNT(*) AS n FROM api_keys WHERE created_at >= ? AND free_used >= 20`, sinceIso),
-    out_of_credit: count(
-      `SELECT COUNT(*) AS n FROM api_keys WHERE created_at >= ? AND free_used >= free_allowance`,
-      sinceIso,
-    ),
+    issued: count(""),
+    activated: count(" AND free_used >= 1"),
+    reached_20: count(" AND free_used >= 20"),
+    out_of_credit: count(" AND free_used >= free_allowance"),
     free_checks: num(
       (
         db
           .prepare(
             `SELECT COALESCE(SUM(n), 0) AS n FROM api_key_daily
-             WHERE metric = 'free_charged' AND day >= ? AND key_id != ? AND key_id NOT LIKE 'ip:%'`,
+             WHERE metric = 'free_charged' AND day >= ? AND key_id != ? AND key_id NOT LIKE 'ip:%'
+               AND key_id NOT IN (SELECT id FROM api_keys WHERE internal = 1)`,
           )
           .get(sinceDay, GLOBAL) as { n: number | bigint }
       ).n,
@@ -737,8 +807,10 @@ export function queryStarterKeyStats(db: DatabaseSync, now = new Date()): Starte
   const used = readDaily(db, day, GLOBAL, "free_charged") + readDaily(db, day, GLOBAL, "free_reserved");
   const l7 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const l30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const internal = num((db.prepare(`SELECT COUNT(*) AS n FROM api_keys WHERE internal = 1`).get() as { n: number | bigint }).n);
   return {
     available: true,
+    internal_keys_excluded: internal,
     emergency_stop: limits.emergencyStop,
     wind_down: limits.windDown,
     daily_cap: limits.dailyCheckCap,
@@ -754,6 +826,7 @@ export function starterKeyStats(now = new Date()): StarterKeyStats {
   if (!bound) {
     return {
       available: false,
+      internal_keys_excluded: 0,
       emergency_stop: false,
       wind_down: false,
       daily_cap: STARTER_KEY_SETTINGS.daily_check_cap.fallback,
@@ -771,6 +844,7 @@ export function starterKeyStats(now = new Date()): StarterKeyStats {
     console.warn(`[starter_keys] stats read failed: ${reason}`);
     return {
       available: false,
+      internal_keys_excluded: 0,
       emergency_stop: false,
       wind_down: false,
       daily_cap: STARTER_KEY_SETTINGS.daily_check_cap.fallback,

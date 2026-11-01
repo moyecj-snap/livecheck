@@ -7,6 +7,9 @@
  *   npm run --silent keys:set -- wind_down 1
  *   npm run --silent keys:set -- daily_check_cap 2000
  *   npm run --silent keys:revoke -- k_0123abcd0123abcd
+ *   npm run --silent keys:revoke -- <github_login>
+ *   npm run --silent keys:mark-internal -- <github_login>
+ *   npm run --silent keys:delete -- <github_login>
  *   npm run --silent keys:cleanup
  *   npm run --silent keys:followups
  *   npm run --silent keys:followups -- --mark k_0123abcd0123abcd
@@ -21,6 +24,13 @@
  *                     Overrides wind_down. Set 0 to turn keys back on.
  *   wind_down 1       /keys sign-up closes. Unexpired keys keep their
  *                     remaining checks until they expire. Set 0 to reopen.
+ *
+ * Our own dry-run/test key: mark-internal (leaves every starter-key stat and
+ * the follow-up list; the key still works), then revoke (stops the key, keeps
+ * the record), then optionally delete (removes the record and its per-key
+ * counts now, overriding the 90-day retention, so the same GitHub account can
+ * get a fresh key). Each takes a key id, GitHub numeric id, or login (@ optional).
+ * Nothing prints the key or its hash.
  *
  * daily_check_cap can be raised only by this command. Nothing in the server
  * raises it.
@@ -39,6 +49,8 @@ import {
   migrateApiKeyStore,
   queryStarterKeyStats,
   readStarterKeySettings,
+  deleteStarterKeyRecord,
+  markStarterKeyInternal,
   revokeStarterKey,
   setStarterKeySetting,
   starterKeyLimits,
@@ -54,6 +66,8 @@ const USAGE = `usage:
   keys:list
   keys:set -- <key> <value>
   keys:revoke -- <id | github id | @login>
+  keys:mark-internal -- <id | github id | @login>
+  keys:delete -- <id | github id | @login>
   keys:cleanup
   keys:followups [--mark <id>]
 keys: ${Object.keys(STARTER_KEY_SETTINGS).join(", ")}
@@ -86,7 +100,7 @@ for (let i = 0; i < argv.length; i++) {
 }
 
 const [command, ...rest] = positional;
-if (!command || !["list", "set", "revoke", "cleanup", "followups"].includes(command)) {
+if (!command || !["list", "set", "revoke", "mark-internal", "delete", "cleanup", "followups"].includes(command)) {
   fail(`unknown command: ${command ?? "(none)"}`);
 }
 const path = dbPath ?? defaultPaidCallDbPath();
@@ -110,6 +124,7 @@ function draftFor(login: string): string {
 
 try {
   let removed = 0;
+  let deleted: { id: string; github_login: string; github_id: string } | undefined;
   if (command === "set") {
     const [key, value] = rest;
     if (!key || value === undefined) fail("set needs <key> <value>");
@@ -128,6 +143,17 @@ try {
     if (!id) fail("revoke needs <id | github id | @login>");
     const row = revokeStarterKey(db, id);
     if (!row) fail(`no starter key matches ${id}`);
+  } else if (command === "mark-internal") {
+    const [id] = rest;
+    if (!id) fail("mark-internal needs <id | github id | @login>");
+    const row = markStarterKeyInternal(db, id);
+    if (!row) fail(`no starter key matches ${id}`);
+  } else if (command === "delete") {
+    const [id] = rest;
+    if (!id) fail("delete needs <id | github id | @login>");
+    const gone = deleteStarterKeyRecord(db, id);
+    if (!gone) fail(`no starter key matches ${id}`);
+    deleted = gone;
   } else if (command === "cleanup") {
     removed = deleteExpiredStarterKeys(db);
     if (!json) console.log(`starter_keys: deleted ${removed} key records 90 days after expiry`);
@@ -154,6 +180,7 @@ try {
     expires_at: row.expires_at,
     suspended_reason: row.suspended_reason,
     followup_drafted_at: row.followup_drafted_at,
+    internal: row.internal === 1,
   }));
   const followups = listFollowups(db).map((row) => ({
     ...row,
@@ -164,6 +191,7 @@ try {
     const body: Record<string, unknown> = { db: path, settings, limits, stats, keys };
     if (command === "followups" || command === "list") body.followups = followups;
     if (command === "cleanup") body.deleted = removed;
+    if (command === "delete") body.deleted_key = deleted;
     console.log(JSON.stringify(body));
   } else if (command !== "cleanup") {
     console.log(
@@ -175,7 +203,7 @@ try {
     if (keys.length === 0) console.log("no starter keys");
     for (const row of keys) {
       console.log(
-        `${row.id}  @${row.github_login}  github:${row.github_id}  ${row.status}  ${row.free_used}/${row.free_allowance} free  paid_left=${row.paid_left}  opt_in=${row.contact_opt_in}  created=${row.created_at}  expires=${row.expires_at}${row.suspended_reason ? `  reason=${row.suspended_reason}` : ""}`,
+        `${row.id}  @${row.github_login}  github:${row.github_id}  ${row.status}  ${row.free_used}/${row.free_allowance} free  paid_left=${row.paid_left}  opt_in=${row.contact_opt_in}  created=${row.created_at}  expires=${row.expires_at}${row.internal ? "  internal" : ""}${row.suspended_reason ? `  reason=${row.suspended_reason}` : ""}`,
       );
     }
     if (command === "followups") {
