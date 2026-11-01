@@ -6,6 +6,7 @@ import { classifyOrderPlaced, ORDER_PLACED_INTENT } from "./order-placed.js";
 import type { ConfirmIntent, ConfirmResult, ConfirmVerdictStatus, EvidenceLevel, FetchedPage } from "./types.js";
 import { classify } from "./classify.js";
 import { isEbayAdapterEnabled, parseEbayItemUrl, verifyEbayItem } from "./ebay.js";
+import { applyShopifyAvailability, lookupShopifyAvailable, shopifyProductJsUrl } from "./shopify.js";
 import { VerifyError, fetchPage, parseTargetUrl } from "./verify.js";
 
 export {
@@ -400,7 +401,12 @@ export async function confirmListingPublishedUrl(
     return classifyListingPublished(verify, { cookiesUsed: cookiesUsed(), now, claim });
   }
   const page = await fetchPage(url, fetchImpl);
-  const verify = classify(page, now);
+  let verify = classify(page, now);
+  const jsUrl = shopifyProductJsUrl(verify.canonical_url) ?? shopifyProductJsUrl(url);
+  if (jsUrl) {
+    const found = await lookupShopifyAvailable(jsUrl, fetchImpl);
+    if (found) verify = applyShopifyAvailability(verify, found);
+  }
   return classifyListingPublished(verify, { cookiesUsed: cookiesUsed(), now, claim, page });
 }
 

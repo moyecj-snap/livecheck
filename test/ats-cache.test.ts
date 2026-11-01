@@ -60,8 +60,9 @@ describe("ATS response cache", () => {
     const live = refOf(ASHBY_LIVE);
     const other = refOf(ASHBY_OTHER);
     const apply = refOf(`${ASHBY_LIVE}/application`);
-    assert.equal(atsResponseCacheKey(live), "board:ashby:linear");
-    assert.equal(atsResponseCacheKey(live), atsResponseCacheKey(other));
+    assert.match(live.apiUrl, /non-user-graphql/);
+    assert.equal(atsFetchScope("ashby", live.apiUrl), "posting");
+    assert.notEqual(atsResponseCacheKey(live), atsResponseCacheKey(other));
     assert.equal(atsResponseCacheKey(live), atsResponseCacheKey(apply));
     assert.notEqual(atsResponseCacheKey(live), atsResponseCacheKey(refOf(ASHBY_ACME)));
 
@@ -80,13 +81,44 @@ describe("ATS response cache", () => {
     assert.equal(cacheableAtsResponse(200, true), false);
   });
 
-  it("reuses one Ashby board fetch for two jobs until the TTL, then misses", async () => {
+  it("loads each Ashby job with one GraphQL query and does not scan the board", async () => {
+    const seen: string[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = requestUrl(input);
+      seen.push(url);
+      assert.equal(url.includes("api.ashbyhq.com"), false);
+      assert.match(url, /non-user-graphql\?op=ApiJobPosting$/);
+      const payload = JSON.parse(String(init?.body ?? "{}")) as { variables?: { jobPostingId?: string } };
+      const id = payload.variables?.jobPostingId ?? "";
+      const body =
+        id === "d3bc1ced-3ce4-4086-a050-555055dbb1ff"
+          ? { data: { jobPosting: { id, title: "Product Engineer", isListed: true } } }
+          : { data: { jobPosting: null } };
+      return jsonResponse(JSON.stringify(body));
+    };
+    const live = await lookupAtsJob(refOf(ASHBY_LIVE), fetcher);
+    const other = await lookupAtsJob(refOf(ASHBY_OTHER), fetcher);
+    const again = await lookupAtsJob(refOf(`${ASHBY_LIVE}/application`), fetcher);
+    assert.equal(live.outcome, "listed");
+    if (live.outcome === "listed") assert.equal(live.title, "Product Engineer");
+    assert.equal(other.outcome, "missing");
+    assert.equal(again.outcome, "listed");
+    assert.equal(seen.length, 2, "the /application URL shares the posting cache");
+    assert.equal(seen.some((url) => url.includes("job-board")), false);
+  });
+
+  it("falls back to one shared board fetch when the single-posting query is unavailable", async () => {
     let now = 1_000_000;
     setAtsCacheClockForTests(() => now);
     let boardCalls = 0;
+    let graphqlCalls = 0;
     const board = fixture("ashby-board.json");
     const fetcher: typeof fetch = async (input) => {
       const url = requestUrl(input);
+      if (url.includes("non-user-graphql")) {
+        graphqlCalls += 1;
+        return jsonResponse("down", 503);
+      }
       assert.match(url, /api\.ashbyhq\.com\/posting-api\/job-board\/(linear|acme)$/);
       boardCalls += 1;
       if (url.includes("/acme")) return jsonResponse(JSON.stringify({ jobs: [] }));
@@ -97,30 +129,25 @@ describe("ATS response cache", () => {
     const second = await lookupAtsJob(refOf(ASHBY_OTHER), fetcher);
     assert.equal(first.outcome, "listed");
     assert.equal(second.outcome, "missing");
-    assert.equal(boardCalls, 1, "second job at the same company must reuse the board");
-
-    const again = await lookupAtsJob(refOf(`${ASHBY_LIVE}/application`), fetcher);
-    assert.equal(again.outcome, "listed");
-    assert.equal(boardCalls, 1);
+    assert.equal(boardCalls, 1, "second job at the same company reuses the board fallback");
+    assert.equal(graphqlCalls, 2);
 
     now += ATS_BOARD_CACHE_TTL_MS + 1;
     const expired = await lookupAtsJob(refOf(ASHBY_LIVE), fetcher);
     assert.equal(expired.outcome, "listed");
     assert.equal(boardCalls, 2);
-
-    const otherCompany = await lookupAtsJob(refOf(ASHBY_ACME), fetcher);
-    assert.equal(otherCompany.outcome, "missing");
-    assert.equal(boardCalls, 3);
   });
 
-  it("coalesces concurrent Ashby lookups onto one in-flight board fetch", async () => {
+  it("coalesces concurrent Ashby board fallbacks onto one in-flight fetch", async () => {
     let boardCalls = 0;
     let release: (body: string) => void = () => {};
     const gate = new Promise<string>((resolve) => {
       release = resolve;
     });
     const fetcher: typeof fetch = async (input) => {
-      assert.match(requestUrl(input), /job-board\/linear$/);
+      const url = requestUrl(input);
+      if (url.includes("non-user-graphql")) return jsonResponse("down", 503);
+      assert.match(url, /job-board\/linear$/);
       boardCalls += 1;
       return jsonResponse(await gate);
     };

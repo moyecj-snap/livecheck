@@ -1,4 +1,5 @@
 import { PRICE_USD } from "./config.js";
+import { ROBOTS_DISALLOWED_MESSAGE, ROBOTS_DISALLOWED_SIGNAL } from "./robots.js";
 import type { FetchedPage, SourceStatus, VerifyVerdict } from "./types.js";
 
 const CLOSED_PHRASES = [
@@ -349,6 +350,20 @@ function isChallengeInterstitial(html: string, text: string, realProductPage: bo
 }
 
 export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdict {
+  if (page.robotsDisallowed) {
+    return {
+      url: page.requestedUrl,
+      canonical_url: page.canonicalUrl,
+      status: "unknown",
+      http_status: 0,
+      checked_at: checkedAt.toISOString().replace(/\.\d{3}Z$/, "Z"),
+      signals: [ROBOTS_DISALLOWED_SIGNAL],
+      confidence: 0.55,
+      price_usd: PRICE_USD,
+      message: ROBOTS_DISALLOWED_MESSAGE,
+    };
+  }
+
   const signals: string[] = [];
   const text = `${page.title ?? ""}\n${page.text}`.toLowerCase();
   const html = page.html.toLowerCase();
@@ -360,6 +375,19 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
     signals.push(`http_${page.httpStatus}`);
     status = "closed";
     confidence = 0.95;
+  } else if (page.httpStatus === 429) {
+    signals.push("http_429");
+    return {
+      url: page.requestedUrl,
+      canonical_url: page.canonicalUrl,
+      status: "unknown",
+      http_status: 429,
+      checked_at: checkedAt.toISOString().replace(/\.\d{3}Z$/, "Z"),
+      ...(page.title ? { title: page.title } : {}),
+      signals,
+      confidence: 0.45,
+      price_usd: PRICE_USD,
+    };
   }
 
   const closedPhrase = includesPhrase(text, CLOSED_PHRASES);

@@ -207,13 +207,18 @@ describe("free /job polish", () => {
     setFreeJobExampleUrlsForTests({ open: u("/to-metadata"), filled: u("/jobs/search?gh_jid=9000") });
     const page = await (await post({ example: "open" })).text();
     assert.equal(verdictOf(page), "Can&#39;t tell");
-    assert.deepEqual(hits, ["/to-metadata"], "the 169.254.169.254 hop was refused");
+    assert.deepEqual(
+      hits.filter((h) => h !== "/robots.txt"),
+      ["/to-metadata"],
+      "the 169.254.169.254 hop was refused",
+    );
+    assert.equal(hits.filter((h) => h === "/robots.txt").length, 1, "robots.txt was fetched on the vetted public host");
     await post({ example: "open" });
-    assert.equal(hits.length, 1, "failure cached");
+    assert.equal(hits.filter((h) => h !== "/robots.txt").length, 1, "failure cached");
     now = new Date(now.getTime() + EXAMPLE_FAIL_TTL_MS + 1000);
     await post({ example: "open" });
     await new Promise((r) => setTimeout(r, 50));
-    assert.equal(hits.length, 2, "retried after the failure TTL");
+    assert.equal(hits.filter((h) => h !== "/robots.txt").length, 2, "retried after the failure TTL");
   });
 
   it("the cache never holds visitor links", async () => {

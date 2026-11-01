@@ -42,6 +42,20 @@ function paymentSignature(accepted: unknown): string {
   return Buffer.from(JSON.stringify(envelope), "utf8").toString("base64");
 }
 
+function hangExceptRobots(releasers: Array<() => void>): typeof fetch {
+  return (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (url.endsWith("/robots.txt")) {
+      return Promise.resolve(
+        new Response("User-agent: *\nAllow: /\n", { status: 200, headers: { "content-type": "text/plain" } }),
+      );
+    }
+    return new Promise((resolve) => {
+      releasers.push(() => resolve(htmlResponse(LIVE_HTML)));
+    });
+  };
+}
+
 function htmlResponse(body: string): Response {
   return new Response(body, { status: 200, headers: { "content-type": "text/html" } });
 }
@@ -159,10 +173,7 @@ describe("check concurrency", () => {
 
     const releasers: Array<() => void> = [];
     const original = globalThis.fetch;
-    globalThis.fetch = () =>
-      new Promise((resolve) => {
-        releasers.push(() => resolve(htmlResponse(LIVE_HTML)));
-      });
+    globalThis.fetch = hangExceptRobots(releasers);
 
     try {
       const first = paid(app, accepted, "https://example.com/jobs/1");
@@ -235,10 +246,7 @@ describe("check concurrency", () => {
 
     const releasers: Array<() => void> = [];
     const original = globalThis.fetch;
-    globalThis.fetch = () =>
-      new Promise((resolve) => {
-        releasers.push(() => resolve(htmlResponse(LIVE_HTML)));
-      });
+    globalThis.fetch = hangExceptRobots(releasers);
 
     const pending: Array<Promise<Response>> = [];
     try {
@@ -280,10 +288,7 @@ describe("check concurrency", () => {
 
     const releasers: Array<() => void> = [];
     const original = globalThis.fetch;
-    globalThis.fetch = () =>
-      new Promise((resolve) => {
-        releasers.push(() => resolve(htmlResponse(LIVE_HTML)));
-      });
+    globalThis.fetch = hangExceptRobots(releasers);
 
     try {
       const first = paid(app, accepted, "https://example.com/jobs/1");
@@ -604,10 +609,7 @@ describe("internal test mode", () => {
     const { app, counts } = liveApp();
     const releasers: Array<() => void> = [];
     const original = globalThis.fetch;
-    globalThis.fetch = () =>
-      new Promise((resolve) => {
-        releasers.push(() => resolve(htmlResponse(LIVE_HTML)));
-      });
+    globalThis.fetch = hangExceptRobots(releasers);
     try {
       const first = app.request("/v1/verify", {
         method: "POST",
@@ -645,10 +647,7 @@ describe("internal test mode", () => {
     const { app, counts } = liveApp();
     const releasers: Array<() => void> = [];
     const original = globalThis.fetch;
-    globalThis.fetch = () =>
-      new Promise((resolve) => {
-        releasers.push(() => resolve(htmlResponse(LIVE_HTML)));
-      });
+    globalThis.fetch = hangExceptRobots(releasers);
     try {
       const first = app.request("/v1/verify", {
         method: "POST",

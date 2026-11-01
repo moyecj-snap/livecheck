@@ -92,31 +92,26 @@ function listed(partial: Partial<Extract<AtsLookup, { outcome: "listed" }>> = {}
 
 describe("ATS URL → public API", () => {
   it("maps Ashby, Workday, Lever, then Greenhouse posting URLs", () => {
-    assert.deepEqual(parseAtsJobUrl(ASHBY_LIVE), {
-      vendor: "ashby",
-      board: "linear",
-      jobId: "d3bc1ced-3ce4-4086-a050-555055dbb1ff",
-      apiUrl: "https://api.ashbyhq.com/posting-api/job-board/linear",
-    });
-    assert.equal(parseAtsJobUrl(`${ASHBY_LIVE}/application`)?.apiUrl, "https://api.ashbyhq.com/posting-api/job-board/linear");
+    const ashby = parseAtsJobUrl(ASHBY_LIVE);
+    assert.equal(ashby?.vendor, "ashby");
+    assert.equal(ashby?.board, "linear");
+    assert.equal(ashby?.jobId, "d3bc1ced-3ce4-4086-a050-555055dbb1ff");
+    assert.equal(ashby?.method, "POST");
+    assert.match(ashby?.apiUrl ?? "", /non-user-graphql\?op=ApiJobPosting#linear\/d3bc1ced-3ce4-4086-a050-555055dbb1ff$/);
+    assert.equal(parseAtsJobUrl(`${ASHBY_LIVE}/application`)?.apiUrl, ashby?.apiUrl);
 
     // pathname is already percent-encoded. Encoding the segment again turned
     // Ashby's "trunk tools" board (jobUrl uses trunk%20tools) into
     // trunk%2520tools, which the posting API 404s.
     const trunkTools = "https://jobs.ashbyhq.com/trunk%20tools/c82252bc-b40f-451c-ae39-e4810bf0f121";
-    assert.deepEqual(parseAtsJobUrl(trunkTools), {
-      vendor: "ashby",
-      board: "trunk tools",
-      jobId: "c82252bc-b40f-451c-ae39-e4810bf0f121",
-      apiUrl: "https://api.ashbyhq.com/posting-api/job-board/trunk%20tools",
-    });
-    assert.equal(
-      parseAtsJobUrl(`${trunkTools}/application`)?.apiUrl,
-      "https://api.ashbyhq.com/posting-api/job-board/trunk%20tools",
-    );
+    const trunk = parseAtsJobUrl(trunkTools);
+    assert.equal(trunk?.board, "trunk tools");
+    assert.equal(trunk?.jobId, "c82252bc-b40f-451c-ae39-e4810bf0f121");
+    assert.match(trunk?.body ?? "", /"organizationHostedJobsPageName":"trunk tools"/);
+    assert.equal(parseAtsJobUrl(`${trunkTools}/application`)?.apiUrl, trunk?.apiUrl);
     assert.equal(
       parseAtsJobUrl("https://jobs.ashbyhq.com/trunk tools/c82252bc-b40f-451c-ae39-e4810bf0f121")?.apiUrl,
-      "https://api.ashbyhq.com/posting-api/job-board/trunk%20tools",
+      trunk?.apiUrl,
     );
 
     assert.equal(
@@ -281,6 +276,23 @@ describe("page × API combine", () => {
     }
   });
 
+  it("a 404 or a redirect to the board stays closed when the API still lists the job", () => {
+    const gone = classified(GREENHOUSE_LIVE, "<html><title>Not found</title><body>Not found</body></html>", 404);
+    assert.equal(gone.status, "closed");
+    const combined404 = combinePageAndAts(gone, listed({ title: "Still indexed" }));
+    assert.equal(combined404.status, "closed");
+    assert.ok(combined404.signals.includes("http_404"));
+    assert.ok(combined404.signals.includes(ATS_API_LISTED));
+
+    const redirected = classified(GREENHOUSE_LIVE, APPLY_PAGE);
+    redirected.status = "closed";
+    redirected.signals = ["redirected_to_board", "ats_empty_state"];
+    const combinedBoard = combinePageAndAts(redirected, listed());
+    assert.equal(combinedBoard.status, "closed");
+    assert.ok(combinedBoard.signals.includes("redirected_to_board"));
+    assert.ok(combinedBoard.signals.includes(ATS_API_LISTED));
+  });
+
   it("closed + listed is unknown and keeps both signals", () => {
     const page = classified(GREENHOUSE_LIVE, CLOSED_COPY);
     assert.equal(page.status, "closed");
@@ -325,6 +337,17 @@ describe("verifyUrl ATS integration", () => {
       return response.clone();
     };
   }
+
+  it("a Greenhouse posting 404 stays closed when the board API still lists the id", async () => {
+    const verdict = await verifyUrl(GREENHOUSE_LIVE, routed({
+      [GREENHOUSE_LIVE]: htmlResponse("<html><title>Not found</title><body>Not found</body></html>", 404),
+      [refOf(GREENHOUSE_LIVE).apiUrl]: jsonResponse(fixture("greenhouse-job.json")),
+    }), new Date(), { atsApi: true });
+    assert.equal(verdict.status, "closed");
+    assert.equal(verdict.http_status, 404);
+    assert.ok(verdict.signals.includes("http_404"));
+    assert.ok(verdict.signals.includes(ATS_API_LISTED));
+  });
 
   it("promotes an Ashby JS shell when the board lists the job", async () => {
     const verdict = await verifyUrl(ASHBY_LIVE, routed({
