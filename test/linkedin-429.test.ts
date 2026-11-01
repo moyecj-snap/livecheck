@@ -18,7 +18,9 @@ function requestUrl(input: RequestInfo | URL): string {
 }
 
 /** robots.txt is a separate fetch. These tests count the posting page only. */
-function pageFetcher(onPage: (url: string, pageFetches: number) => Response | Promise<Response>): typeof fetch {
+function pageFetcher(
+  onPage: (url: string, pageFetches: number) => Response | Promise<Response>,
+): typeof fetch & { pageFetches: () => number } {
   let pageFetches = 0;
   const fetcher: typeof fetch = async (input) => {
     const url = requestUrl(input);
