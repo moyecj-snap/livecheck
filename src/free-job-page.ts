@@ -574,7 +574,7 @@ export function freeJobHtml(
   ${resultHtml(view, options.remaining)}
   <p class="muted small">Free: ${options.perDay} checks per day, no wallet, no signup. We don't store the links you check. These limits are separate from a starter key.</p>
   <section class="cta">
-    <p><strong>Building an AI agent?</strong> Same check by API: <code>POST /v1/verify/job</code>. A wallet pays ${priceLabel()}. A free starter key is at <a href="/keys">/keys</a>.
+    <p><strong>Building an AI agent?</strong> Same check by API: <code>POST /v1/verify/job</code>. A wallet pays ${priceLabel()}. Builders: <a href="/keys">sign in with GitHub for 200 free checks</a>, no wallet needed.
     &rarr; <a href="${FREE_JOB_PATH}/go/docs">Docs</a> &middot; <a href="${FREE_JOB_PATH}/go/skill">Agent skill</a></p>
   </section>
 </main>

@@ -39,7 +39,7 @@ Verify's unpaid 402 offers both rails. Each charges exactly $0.01. Send one cred
 
 ## Starter key (no wallet)
 
-`GET https://livecheck.fly.dev/keys` signs in with GitHub (public profile, no email) and shows `lc_live_…` once. Send `Authorization: Bearer lc_live_…` on `POST /v1/verify`, `/v1/verify/job`, and `/v1/verify/listing` only. 200 checks over 30 days. A real answer spends one check (`unknown` included), including a board found only after the fetch. Errors do not. A Greenhouse, Lever, or Ashby board with no job id is rejected free. Confirm, `/v1/check`, and Sentinel stay wallet-only. The free `/job` page limits are separate. When the free checks are gone, the route returns 402: pay with a wallet on the same route without the key, or reply to get a top-up link at moyecj@gmail.com.
+`GET https://livecheck.fly.dev/keys` signs in with GitHub (public profile, no email) and shows `lc_live_…` once. Send `Authorization: Bearer lc_live_…` on `POST /v1/verify`, `/v1/verify/job`, and `/v1/verify/listing` only. 200 checks over 30 days. A real answer spends one check (`unknown` included when the page was read), including a board found only after the fetch. Errors, timeouts, and a robots.txt "can't tell" (e.g. LinkedIn) do not. A board URL (Greenhouse, Lever, or Ashby with no job id, a bare /careers or /jobs page, or a bare Workday site) is rejected free. Confirm, `/v1/check`, and Sentinel stay wallet-only. The free `/job` page limits are separate. When the free checks are gone, the route returns 402: pay with a wallet on the same route without the key, or reply to get a top-up link at moyecj@gmail.com.
 
 - OpenAPI: https://livecheck.fly.dev/openapi.json
 - Stats: https://livecheck.fly.dev/stats

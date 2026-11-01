@@ -31,45 +31,20 @@ export const OUT_OF_CHECKS_MESSAGE = `This starter key has used its free checks.
 export const BOARD_URL_SHAPE_MESSAGE =
   "This URL is a job board or careers index, not a single posting. Pass the URL of one job posting.";
 
-const JOB_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /**
- * A job board visible from the URL string alone, before any fetch.
- * Same rule as classify.ts `isBoardUrlShape` on the board-message branch:
- * Greenhouse, Lever, or Ashby with no job id, a careers or jobs index, a
- * Greenhouse job-board embed, or a LinkedIn jobs search. A numeric `gh_jid`
- * is a job id, so that URL is not rejected here.
+ * A job board visible from the URL string alone, before any fetch. This is
+ * the same function the paid routes use (PR #52, classify.ts): Greenhouse,
+ * Lever, or Ashby with no job id, a bare /careers or /jobs index, a bare
+ * Workday myworkdayjobs.com/<site>, a Greenhouse job-board embed, or a
+ * LinkedIn jobs search. One rule, so the key and the wallet never disagree.
  */
-export function isBoardUrlShape(raw: string): boolean {
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    return false;
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
-  if (/[?&]gh_jid=\d+\b/i.test(url.search)) return false;
-  const host = url.hostname.toLowerCase();
-  const path = url.pathname.replace(/\/+$/, "") || "/";
-  const parts = path.split("/").filter(Boolean);
-  if (host.endsWith("greenhouse.io")) {
-    const token = url.searchParams.get("token")?.trim() ?? "";
-    if (/\/embed\/job_app/i.test(path) && /^\d+$/.test(token)) return false;
-    return !/\/jobs\/\d+/.test(path);
-  }
-  if (host.endsWith("lever.co") || host.endsWith("ashbyhq.com")) {
-    return !parts.some((part) => JOB_UUID.test(part));
-  }
-  if (/^\/(careers|jobs)$/i.test(path)) return true;
-  if (path.includes("/job_board") || path.includes("/embed/job_board")) return true;
-  if ((host === "linkedin.com" || host.endsWith(".linkedin.com")) && /\/jobs(\/|$)/.test(path) && !/\/jobs\/view\//.test(path)) {
-    return true;
-  }
-  return false;
-}
+export { isBoardUrlShape } from "./classify.js";
 
 export const STARTER_KEY_CALLBACK_PATH = "/keys/callback";
 export const STARTER_KEY_PAGE_PATH = "/keys";
+
+/** Plain-words pointer to /keys on the free /job page, llms.txt, and OpenAPI. */
+export const STARTER_KEY_BUILDERS_LINE = "Builders: sign in with GitHub for 200 free checks, no wallet needed.";
 
 /** Shown once. Stored only as SHA-256. */
 export const STARTER_KEY_PREFIX = "lc_live_";
@@ -228,6 +203,12 @@ export function isCardFundedPayer(payer: string | null | undefined): boolean {
   return /^key:k_[a-f0-9]{16}$/.test(value);
 }
 
+/**
+ * Literals, not imports: robots_unavailable only exists once PR #62 merges,
+ * and these strings are part of the public signals contract.
+ */
+const ROBOTS_NO_ANSWER_SIGNALS: ReadonlySet<string> = new Set(["robots_disallowed", "robots_unavailable"]);
+
 export type StarterSpend = { charge: boolean; blocked: boolean };
 
 /**
@@ -235,6 +216,14 @@ export type StarterSpend = { charge: boolean; blocked: boolean };
  * tell"), including a board we only learned about after fetching. Our
  * errors and check timeouts do not spend a credit. A board visible from
  * the URL string is rejected before this runs.
+ *
+ * robots.txt "can't tell" is not a real answer and does not spend a credit:
+ * the posting page was never requested, so we learned nothing about it
+ * (robots_disallowed, e.g. every LinkedIn link; and robots_unavailable from
+ * strict mode in PR #62, which the key path does not use but is covered so
+ * it can never charge). Other unknowns come from a real page read (a bot
+ * wall, a board found after the fetch, an unclear page) and still spend
+ * one, the same as the $0.01 wallet price.
  *
  * Blocked, for auto-suspend, is a challenge, a login wall, or target
  * HTTP 401/403/429. A 404/410 closed posting is a real answer, not abuse.
@@ -245,11 +234,12 @@ export function classifyStarterSpend(status: number, body: unknown): StarterSpen
   const signals = Array.isArray(record.signals) ? record.signals.filter((item): item is string => typeof item === "string") : [];
   const httpStatus = typeof record.http_status === "number" ? record.http_status : 0;
   const timeout = signals.includes(CHECK_TIMEOUT_SIGNAL);
+  const robotsSkipped = signals.some((signal) => ROBOTS_NO_ANSWER_SIGNALS.has(signal));
   const verdict = record.status;
   const real = verdict === "live" || verdict === "closed" || verdict === "unknown";
   const blocked =
     signals.includes("challenge_page") || signals.includes("loginwalled") || httpStatus === 401 || httpStatus === 403 || httpStatus === 429;
-  return { charge: real && !timeout, blocked };
+  return { charge: real && !timeout && !robotsSkipped, blocked };
 }
 
 let clock: () => Date = () => new Date();

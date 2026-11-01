@@ -119,6 +119,26 @@ describe("starter key rules", () => {
     assert.equal(classifyStarterSpend(200, { status: "unknown", signals: ["loginwalled"], http_status: 200 }).charge, true);
   });
 
+  it("does not charge a robots.txt can't-tell: the page was never requested", () => {
+    assert.deepEqual(classifyStarterSpend(200, { status: "unknown", signals: ["robots_disallowed"], http_status: 0 }), {
+      charge: false,
+      blocked: false,
+    });
+    // Strict mode (PR #62) is for audits, not the key path, but must never charge either.
+    assert.deepEqual(classifyStarterSpend(200, { status: "unknown", signals: ["robots_unavailable"], http_status: 0 }), {
+      charge: false,
+      blocked: false,
+    });
+  });
+
+  it("uses the paid-route board rule, including a bare Workday site", () => {
+    assert.equal(isBoardUrlShape("https://acme.wd5.myworkdayjobs.com/External"), true);
+    assert.equal(isBoardUrlShape("https://acme.wd5.myworkdayjobs.com/en-US/External"), true);
+    assert.equal(isBoardUrlShape("https://acme.wd5.myworkdayjobs.com/External/job/Remote/Engineer_R123"), false);
+    assert.equal(isBoardUrlShape("https://example.com/jobs"), true);
+    assert.equal(isBoardUrlShape("https://example.com/jobs/12345"), false);
+  });
+
   it("sees a Greenhouse, Lever, or Ashby board from the URL, and not a posting id", () => {
     assert.equal(isBoardUrlShape("https://boards.greenhouse.io/acme"), true);
     assert.equal(isBoardUrlShape("https://job-boards.greenhouse.io/figma"), true);
@@ -638,6 +658,72 @@ describe("starter key HTTP", () => {
     });
     assert.equal(payment.status, 402);
     assert.equal(used(plaintext), 0);
+  });
+
+  it("does not spend a credit on a robots.txt can't-tell or on any board-shaped URL", async () => {
+    const app = createApp();
+    const { plaintext } = await signIn(app, { id: 21, login: "robots", created_at: "2020-01-01T00:00:00Z" });
+    const before = reconciliation();
+    const pages: string[] = [];
+    globalThis.fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url === "https://blocked.example/robots.txt") {
+        return new Response("User-agent: *\nDisallow: /\n", { status: 200, headers: { "content-type": "text/plain" } });
+      }
+      if (url.endsWith("/robots.txt")) return new Response("missing", { status: 404 });
+      pages.push(url);
+      return html(LIVE_HTML, 200);
+    };
+
+    const robots = await verify(app, plaintext, "https://blocked.example/jobs/1842");
+    assert.equal(robots.status, 200);
+    const robotsBody = (await robots.json()) as { status: string; signals: string[] };
+    assert.equal(robotsBody.status, "unknown");
+    assert.ok(robotsBody.signals.includes("robots_disallowed"));
+    assert.equal(used(plaintext), 0);
+    assert.equal(robots.headers.get("x-livecheck-free-left"), "200");
+    assert.deepEqual(pages, []);
+
+    for (const board of [
+      "https://acme.wd5.myworkdayjobs.com/External",
+      "https://example.com/careers",
+      "https://example.com/jobs",
+      "https://boards.greenhouse.io/acme",
+      "https://jobs.lever.co/figma",
+      "https://jobs.ashbyhq.com/notion",
+    ]) {
+      const res = await verify(app, plaintext, board);
+      assert.equal(res.status, 400, board);
+      const body = (await res.json()) as { error: string; billed: boolean; price_usd: number };
+      assert.equal(body.error, "board_url", board);
+      assert.equal(body.billed, false, board);
+      assert.equal(body.price_usd, 0, board);
+    }
+    assert.deepEqual(pages, []);
+    assert.equal(used(plaintext), 0);
+
+    const live = await verify(app, plaintext, "https://example.com/jobs/1");
+    assert.equal(live.status, 200);
+    assert.equal(used(plaintext), 1);
+    assert.deepEqual(reconciliation(), before);
+  });
+
+  it("links /keys in plain words from OpenAPI, llms.txt, and the free /job page", async () => {
+    const app = createApp();
+    const line = "Builders: sign in with GitHub for 200 free checks, no wallet needed.";
+    const openapi = (await (await app.request("/openapi.json")).json()) as {
+      info: { description: string; "x-starter-key": { url: string; description: string } };
+    };
+    assert.match(openapi.info.description, /Builders: sign in with GitHub for 200 free checks, no wallet needed\. \S+\/keys$/);
+    assert.match(openapi.info["x-starter-key"].url, /\/keys$/);
+    assert.ok(openapi.info["x-starter-key"].description.startsWith(line));
+    const llms = await (await app.request("/llms.txt")).text();
+    assert.ok(llms.includes("Builders: sign in with GitHub for 200 free checks, no wallet needed: https://livecheck.fly.dev/keys"));
+    assert.match(llms, /reply to get a top-up link/);
+    const page = await (await app.request("/job")).text();
+    assert.ok(page.includes('Builders: <a href="/keys">sign in with GitHub for 200 free checks</a>, no wallet needed.'));
+    // The free page keeps its own limits, separate from a key.
+    assert.match(page, /These limits are separate from a starter key\./);
   });
 
   it("returns 402 with the wallet and top-up line when the free checks are gone", async () => {

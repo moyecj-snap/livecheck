@@ -311,7 +311,10 @@ describe("free /job page", () => {
     assert.match(page, /<form class="check" method="post" action="\/job">/);
     assert.match(page, /placeholder="Paste a job posting link"/);
     assert.match(page, /We don't store the links you check\./);
-    assert.match(page, /Same check by API: <code>POST \/v1\/verify\/job<\/code>\. A wallet pays \$0\.01\. A free starter key is at <a href="\/keys">\/keys<\/a>\./);
+    assert.match(
+      page,
+      /Same check by API: <code>POST \/v1\/verify\/job<\/code>\. A wallet pays \$0\.01\. Builders: <a href="\/keys">sign in with GitHub for 200 free checks<\/a>, no wallet needed\./,
+    );
     assert.match(page, /href="\/job\/go\/docs">Docs</);
     assert.match(page, /href="\/job\/go\/skill">Agent skill</);
     assert.equal(/<script/i.test(page), false);
