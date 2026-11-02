@@ -646,6 +646,18 @@ describe("starter key HTTP", () => {
     assert.doesNotMatch(html, /name="contact"[^>]*checked/);
   });
 
+  it("lets the /keys form hand off to GitHub (CSP form-action allows github.com)", async () => {
+    // Chrome enforces form-action on the redirect after POST /keys/start, so
+    // form-action 'self' alone silently blocks the GitHub sign-in (Nov 2 local dry run).
+    const app = createApp();
+    const res = await app.request("/keys");
+    const csp = res.headers.get("content-security-policy") ?? "";
+    const formAction = csp.split(";").map((d) => d.trim()).find((d) => d.startsWith("form-action")) ?? "";
+    assert.match(formAction, /'self'/);
+    assert.match(formAction, /https:\/\/github\.com(\s|$)/);
+    assert.match(csp, /default-src 'none'/);
+  });
+
   it("issues one key from GitHub's public profile and never stores the email", async () => {
     const app = createApp();
     const issued = await signIn(app, { id: 42, login: "octocat", created_at: "2019-11-14T00:00:00Z" }, { contact: false });

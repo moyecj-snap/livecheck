@@ -54,7 +54,7 @@ const SECURITY: Record<string, string> = {
   "referrer-policy": "no-referrer",
   "x-content-type-options": "nosniff",
   "content-security-policy":
-    "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://github.com; base-uri 'none'; frame-ancestors 'none'",
 };
 
 function page(c: Context, html: string, status: 200 | 400 | 403 | 429 | 503 = 200): Response {
