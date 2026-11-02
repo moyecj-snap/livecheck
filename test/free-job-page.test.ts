@@ -10,6 +10,8 @@ import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { createApp } from "../src/app.js";
 import { classify } from "../src/classify.js";
 import { FIXTURES } from "../src/fixtures.js";
+import { LINKEDIN_UNSUPPORTED_COPY as LINKEDIN_COPY_SOURCE } from "../src/config.js";
+import { ROBOTS_DISALLOWED_MESSAGE } from "../src/robots.js";
 import {
   BlockedTargetError,
   DEFAULT_FETCH_POLICY,
@@ -80,6 +82,11 @@ function startServer(): Promise<void> {
       res.writeHead(302, { location: to });
       res.end();
     };
+    // LinkedIn's real robots.txt: User-agent: * / Disallow: /
+    if ((req.headers.host ?? "").startsWith("www.linkedin.com") && path === "/robots.txt") {
+      res.writeHead(200, { "content-type": "text/plain" });
+      return void res.end("User-agent: *\nDisallow: /\n");
+    }
     if (path.startsWith("/jobs/1842")) return html(res, 200, FIXTURES["jobs/1842"]!.body ?? "");
     if (path === "/jobs/7777") return html(res, 404, FIXTURES["gone-404"]!.body ?? "Not found");
     if (path === "/jobs/5555") return html(res, 200, FIXTURES["cloudflare-challenge"]!.body ?? "");
@@ -167,6 +174,8 @@ const BOARD_PAGE_COPY = "This page is a list of jobs, not one posting. Open a si
 const BLOCKED_COPY = "This site blocks automated checks or needs a login, so we won't guess.";
 const UNCLEAR_COPY = "We couldn't get a clear answer from this page, so we won't guess.";
 const BOT_CHECK_LINE = "Site showed a bot check (we don't bypass those)";
+const LINKEDIN_COPY = "LinkedIn isn't supported (its robots.txt blocks automated checks). Use the company's own job link.";
+const LINKEDIN_COPY_HTML = LINKEDIN_COPY.replace(/'/g, "&#39;");
 
 const GREENHOUSE_BOARD_HTML = `<!doctype html>
 <html lang="en">
@@ -302,6 +311,27 @@ describe("free /job page", () => {
       if (savedEnv[key] === undefined) delete process.env[key];
       else process.env[key] = savedEnv[key];
     }
+  });
+
+  it("POST /job with a LinkedIn link: Can't tell, with the LinkedIn-not-supported line, robots.txt only", async () => {
+
+    setFreeJobPolicyForTests(
+      testPolicy({ resolver: async (host: string) => (host === "www.linkedin.com" ? [PUBLIC_IP] : testPolicy().resolver!(host)) }),
+    );
+    const before = hits.length;
+    let body: string;
+    try {
+      const res = await form(u("/jobs/view/4385154626/", "www.linkedin.com"), { cookie: visitor(77) });
+      body = await res.text();
+    } finally {
+      setFreeJobPolicyForTests(testPolicy());
+    }
+    assert.match(body, /<p class="verdict">Can&#39;t tell<\/p>/);
+    assert.ok(body.includes(`<p class="explain">${LINKEDIN_COPY_HTML}</p>`));
+    assert.equal(body.split(LINKEDIN_COPY_HTML).length - 1, 1);
+    assert.ok(body.includes("robots.txt disallows this check"));
+    // robots.txt only: the posting itself is never fetched.
+    assert.deepEqual(hits.slice(before).map((h) => h.path), ["/robots.txt"]);
   });
 
   it("GET /job: one text box, POST form, CTA, privacy line, cookie, no-store, view counted", async () => {
@@ -848,6 +878,16 @@ describe("free /job helpers", () => {
     assert.equal(cantTellCopy(["ambiguous_html"]), UNCLEAR_COPY);
     assert.equal(cantTellCopy(["loginwalled"]), BLOCKED_COPY);
     assert.equal(cantTellCopy(["js_shell"]), BLOCKED_COPY);
+  });
+
+  it("LinkedIn: can't-tell copy says LinkedIn isn't supported; other robots.txt blocks keep the robots copy", () => {
+    const view = "https://www.linkedin.com/jobs/view/4385154626/";
+    assert.equal(LINKEDIN_COPY_SOURCE, LINKEDIN_COPY);
+    assert.equal(cantTellCopy(["robots_disallowed"], view), LINKEDIN_COPY);
+    assert.equal(cantTellCopy(["loginwalled"], "https://linkedin.com/jobs/view/4385154626"), LINKEDIN_COPY);
+    assert.equal(cantTellCopy(["robots_disallowed"], "https://jobs.example/jobs/42"), ROBOTS_DISALLOWED_MESSAGE);
+    assert.equal(cantTellCopy(["challenge_page"], "https://notlinkedin.com/jobs/1"), BLOCKED_COPY);
+    assert.equal(cantTellCopy(["robots_disallowed"]), ROBOTS_DISALLOWED_MESSAGE);
   });
 
   it("address policy: private, loopback, link-local, CGNAT, Fly 6PN, metadata, mapped, NAT64, 6to4", async () => {
