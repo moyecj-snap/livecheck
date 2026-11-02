@@ -6,6 +6,11 @@
  *   npm run bench:oct1-accuracy
  *   npm run bench:job-accuracy            (Oct 9 21-posting plate, incl. LinkedIn + Lever)
  *   tsx scripts/oct1-accuracy.ts <plate.json>
+ *   tsx scripts/oct1-accuracy.ts --robots-mode lenient <plate.json>
+ *
+ * robots.txt defaults to strict (wait 5s; no file means unknown /
+ * robots_unavailable, and the page is not fetched). Public API checks stay
+ * lenient. Override with --robots-mode strict|lenient or LIVECHECK_ROBOTS_MODE.
  *
  * LinkedIn postings are unsupported by policy (Craig, Nov 1 2026): LinkedIn's
  * robots.txt is "User-agent: * / Disallow: /", so Livecheck answers unknown
@@ -16,6 +21,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseAuditRunnerArgs } from "../src/robots.js";
 import { stripTrackingParams } from "../src/tracking-params.js";
 import { verifyUrl } from "../src/verify.js";
 
@@ -28,8 +34,9 @@ type PlateItem = {
   url: string;
 };
 
-const platePath = process.argv[2]
-  ? resolve(process.argv[2])
+const auditArgs = parseAuditRunnerArgs(process.argv.slice(2), process.env.LIVECHECK_ROBOTS_MODE);
+const platePath = auditArgs.platePath
+  ? resolve(auditArgs.platePath)
   : resolve(dirname(fileURLToPath(import.meta.url)), "..", "bench", "oct1-accuracy-urls.json");
 const plate = JSON.parse(readFileSync(platePath, "utf8")) as { items: PlateItem[] };
 
@@ -65,7 +72,11 @@ async function main(): Promise<void> {
   const linkedIn = emptyTally();
 
   for (const item of plate.items) {
-    const verdict = await verifyUrl(stripTrackingParams(item.url), fetch, new Date(), { atsApi: true, deadlineMs: 20000 });
+    const verdict = await verifyUrl(stripTrackingParams(item.url), fetch, new Date(), {
+      atsApi: true,
+      deadlineMs: 20000,
+      robotsMode: auditArgs.robotsMode,
+    });
     const got = verdict.status;
     const policy = isLinkedInItem(item);
     count(policy ? linkedIn : core, item.expected, got);
@@ -75,7 +86,7 @@ async function main(): Promise<void> {
   }
 
   process.stdout.write(
-    `N=${core.n}\nlive=${core.live} closed=${core.closed} unknown=${core.unknown}\nclosed_to_live=${core.closedToLive}\nfalse_live=${core.falseLive}\nlive_to_closed=${core.liveToClosed}\n`,
+    `N=${core.n}\nlive=${core.live} closed=${core.closed} unknown=${core.unknown}\nclosed_to_live=${core.closedToLive}\nfalse_live=${core.falseLive}\nlive_to_closed=${core.liveToClosed}\nrobots_mode=${auditArgs.robotsMode}\n`,
   );
   if (linkedIn.n > 0) {
     process.stdout.write(
