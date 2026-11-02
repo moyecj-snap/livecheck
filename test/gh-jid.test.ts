@@ -5,10 +5,12 @@ import {
   ATS_API_LISTED,
   ATS_API_MISSING,
   GH_JID_COMPANY_EMBED,
+  GH_JID_COMPANY_PAGE_ERROR,
   combinePageAndAts,
   isGreenhouseEmbedHandoff,
 } from "../src/ats-api.js";
 import { classify } from "../src/classify.js";
+import { evidenceInPlainWords } from "../src/free-job-page.js";
 import { roleRefFor } from "../src/free-job-role.js";
 import { verifyUrl } from "../src/verify.js";
 
@@ -153,6 +155,47 @@ describe("Greenhouse hand-off to the company careers page (gh_jid kept)", () => 
       const combined = combinePageAndAts(page, { outcome: "listed", httpStatus: 200 }, "greenhouse");
       assert.equal(combined.status, "live", landed);
     }
+  });
+
+  // Bishop Fox: the company careers page answered HTTP 500 while Greenhouse
+  // still listed the job. Greenhouse is the system of record; a server error
+  // is not a closing. Craig, Nov 2, 2026: live, with the evidence stated.
+  it("is live with the error stated when the company careers page errors (Bishop Fox)", async () => {
+    const BISHOP = "http://www.bishopfox.com/jobs?gh_jid=5991827004";
+    const ERROR_LINE = "Greenhouse lists this job as open; the company's careers page returned an error.";
+    for (const status of [500, 502, 503]) {
+      clearAtsResponseCache();
+      const verdict = await verifyUrl(
+        LEGACY,
+        routes(
+          () => landedAt("<html><head><title>Error</title></head><body>Internal Server Error</body></html>", BISHOP, status),
+          listedApi,
+        ),
+        new Date("2026-11-02T18:00:00Z"),
+        { atsApi: true, robotsMode: "strict" },
+      );
+      assert.equal(verdict.status, "live", String(status));
+      assert.equal(verdict.http_status, status);
+      assert.ok(verdict.signals.includes(ATS_API_LISTED));
+      assert.ok(verdict.signals.includes(GH_JID_COMPANY_PAGE_ERROR));
+      assert.equal(verdict.message, ERROR_LINE);
+      const lines = evidenceInPlainWords(verdict.signals, "Greenhouse");
+      assert.ok(lines.includes(ERROR_LINE), lines.join(" | "));
+      assert.equal(lines.some((line) => line.startsWith("Link opens this posting")), false);
+    }
+  });
+
+  it("a healthy hand-off page carries no error line or message", async () => {
+    clearAtsResponseCache();
+    const verdict = await verifyUrl(
+      LEGACY,
+      routes(() => landedAt(CAREERS_HTML, LANDED), listedApi),
+      new Date(),
+      { atsApi: true, robotsMode: "strict" },
+    );
+    assert.equal(verdict.status, "live");
+    assert.equal(verdict.signals.includes(GH_JID_COMPANY_PAGE_ERROR), false);
+    assert.equal(verdict.message, undefined);
   });
 
   it("stays closed when the API no longer lists the id", async () => {

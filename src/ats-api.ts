@@ -566,6 +566,13 @@ const EMBED_HANDOFF_BOARD_SIGNALS = new Set([
 /** Greenhouse posting link handed to the company's own careers page with the same gh_jid. */
 export const GH_JID_COMPANY_EMBED = "gh_jid_company_embed";
 
+/** The company careers page a Greenhouse link handed off to answered with HTTP 5xx. */
+export const GH_JID_COMPANY_PAGE_ERROR = "gh_jid_company_page_error";
+
+/** Evidence line when Greenhouse lists the job but the company careers page errored. */
+export const GH_JID_COMPANY_PAGE_ERROR_MESSAGE =
+  "Greenhouse lists this job as open; the company's careers page returned an error.";
+
 const EMBED_EXPIRED_MARKERS = /[?&](trk=expired_jd_redirect|expired(_job)?=(1|true)|error=true)\b/i;
 
 /**
@@ -604,6 +611,8 @@ export function isGreenhouseEmbedHandoff(page: VerifyVerdict, vendor?: AtsVendor
  *   banner stays closed. Anything else stays unknown.
  * - 404, 410, or redirected_to_board + listed → still closed, except a
  *   Greenhouse hand-off to the company careers page with the same gh_jid → live
+ *   (a 5xx from that company page stays live, with gh_jid_company_page_error
+ *   and a message saying the careers page returned an error)
  * - other closed copy + listed → unknown, page closed signals and ats_api_listed
  * - challenge_page + listed → live (page never bypassed)
  * - challenge_page + Greenhouse/Workday missing → closed
@@ -644,13 +653,17 @@ export function combinePageAndAts(page: VerifyVerdict, api: AtsLookup, vendor?: 
   // A Greenhouse link handed to the company careers page with the same
   // gh_jid, and the API still lists that id: the listing decides. Only the
   // redirect made the page look like a board; closure copy still disagrees.
+  const companyPageError = page.http_status >= 500 && page.http_status < 600;
   if (
-    page.status === "closed" &&
+    (page.status === "closed" || (companyPageError && page.status !== "live")) &&
     isGreenhouseEmbedHandoff(page, vendor) &&
     !page.signals.some(
       (signal) => signal === "http_404" || signal === "http_410" || signal.startsWith("close_language:"),
     )
   ) {
+    // Nov 2, 2026 (Bishop Fox): the company page can answer 5xx. Greenhouse
+    // is the system of record and a server error is not a closing, so stay
+    // live and say so in the evidence line.
     return {
       ...page,
       status: "live",
@@ -659,9 +672,11 @@ export function combinePageAndAts(page: VerifyVerdict, api: AtsLookup, vendor?: 
         ATS_API_LISTED,
         ...posted,
         GH_JID_COMPANY_EMBED,
+        ...(companyPageError ? [GH_JID_COMPANY_PAGE_ERROR] : []),
         ...page.signals.filter((signal) => !EMBED_HANDOFF_BOARD_SIGNALS.has(signal)),
       ]),
       ...(api.title ? { title: api.title } : {}),
+      ...(companyPageError ? { message: GH_JID_COMPANY_PAGE_ERROR_MESSAGE } : {}),
     };
   }
   if (page.status === "closed") {
