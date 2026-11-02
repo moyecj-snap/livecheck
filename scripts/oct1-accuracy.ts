@@ -6,10 +6,22 @@
  *   npm run bench:oct1-accuracy
  *   npm run bench:job-accuracy            (Oct 9 21-posting plate, incl. LinkedIn + Lever)
  *   tsx scripts/oct1-accuracy.ts <plate.json>
+ *   tsx scripts/oct1-accuracy.ts --robots-mode lenient <plate.json>
+ *
+ * robots.txt defaults to strict (wait 5s; no file means unknown /
+ * robots_unavailable, and the page is not fetched). Public API checks stay
+ * lenient. Override with --robots-mode strict|lenient or LIVECHECK_ROBOTS_MODE.
+ *
+ * LinkedIn postings are unsupported by policy (Craig, Nov 1 2026): LinkedIn's
+ * robots.txt is "User-agent: * / Disallow: /", so Livecheck answers unknown
+ * (robots_disallowed) on purpose. They are still checked, but reported on their
+ * own "LinkedIn (unsupported by policy)" line and kept out of the main totals
+ * and the exit code, so a deliberate policy choice doesn't read as a miss.
  */
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseAuditRunnerArgs } from "../src/robots.js";
 import { stripTrackingParams } from "../src/tracking-params.js";
 import { verifyUrl } from "../src/verify.js";
 
@@ -22,35 +34,66 @@ type PlateItem = {
   url: string;
 };
 
-const platePath = process.argv[2]
-  ? resolve(process.argv[2])
+const auditArgs = parseAuditRunnerArgs(process.argv.slice(2), process.env.LIVECHECK_ROBOTS_MODE);
+const platePath = auditArgs.platePath
+  ? resolve(auditArgs.platePath)
   : resolve(dirname(fileURLToPath(import.meta.url)), "..", "bench", "oct1-accuracy-urls.json");
 const plate = JSON.parse(readFileSync(platePath, "utf8")) as { items: PlateItem[] };
 
+/** LinkedIn is unsupported by policy (robots.txt disallows all bots). */
+function isLinkedInItem(item: Pick<PlateItem, "ats" | "url">): boolean {
+  if (item.ats.toLowerCase() === "linkedin") return true;
+  try {
+    const host = new URL(item.url).hostname.toLowerCase();
+    return host === "linkedin.com" || host.endsWith(".linkedin.com");
+  } catch {
+    return false;
+  }
+}
+
+type Tally = { n: number; live: number; closed: number; unknown: number; closedToLive: number; falseLive: number; liveToClosed: number };
+
+function emptyTally(): Tally {
+  return { n: 0, live: 0, closed: 0, unknown: 0, closedToLive: 0, falseLive: 0, liveToClosed: 0 };
+}
+
+function count(t: Tally, expected: Expected, got: Expected): void {
+  t.n += 1;
+  if (got === "live") t.live += 1;
+  else if (got === "closed") t.closed += 1;
+  else t.unknown += 1;
+  if (expected === "closed" && got === "live") t.closedToLive += 1;
+  if (expected !== "live" && got === "live") t.falseLive += 1;
+  if (expected === "live" && got === "closed") t.liveToClosed += 1;
+}
+
 async function main(): Promise<void> {
-  let live = 0;
-  let closed = 0;
-  let unknown = 0;
-  let closedToLive = 0;
-  let falseLive = 0;
-  let liveToClosed = 0;
+  const core = emptyTally();
+  const linkedIn = emptyTally();
 
   for (const item of plate.items) {
-    const verdict = await verifyUrl(stripTrackingParams(item.url), fetch, new Date(), { atsApi: true, deadlineMs: 20000 });
+    const verdict = await verifyUrl(stripTrackingParams(item.url), fetch, new Date(), {
+      atsApi: true,
+      deadlineMs: 20000,
+      robotsMode: auditArgs.robotsMode,
+    });
     const got = verdict.status;
-    if (got === "live") live += 1;
-    else if (got === "closed") closed += 1;
-    else unknown += 1;
-    if (item.expected === "closed" && got === "live") closedToLive += 1;
-    if (item.expected !== "live" && got === "live") falseLive += 1;
-    if (item.expected === "live" && got === "closed") liveToClosed += 1;
-    process.stdout.write(`${item.id}\texpect=${item.expected}\tgot=${got}\t${verdict.signals.join(",")}\n`);
+    const policy = isLinkedInItem(item);
+    count(policy ? linkedIn : core, item.expected, got);
+    process.stdout.write(
+      `${item.id}\texpect=${item.expected}\tgot=${got}\t${verdict.signals.join(",")}${policy ? "\tlinkedin_unsupported_by_policy" : ""}\n`,
+    );
   }
 
   process.stdout.write(
-    `N=${plate.items.length}\nlive=${live} closed=${closed} unknown=${unknown}\nclosed_to_live=${closedToLive}\nfalse_live=${falseLive}\nlive_to_closed=${liveToClosed}\n`,
+    `N=${core.n}\nlive=${core.live} closed=${core.closed} unknown=${core.unknown}\nclosed_to_live=${core.closedToLive}\nfalse_live=${core.falseLive}\nlive_to_closed=${core.liveToClosed}\nrobots_mode=${auditArgs.robotsMode}\n`,
   );
-  if (closedToLive !== 0 || falseLive !== 0) process.exitCode = 1;
+  if (linkedIn.n > 0) {
+    process.stdout.write(
+      `LinkedIn (unsupported by policy): N=${linkedIn.n} live=${linkedIn.live} closed=${linkedIn.closed} unknown=${linkedIn.unknown} (not in the totals above)\n`,
+    );
+  }
+  if (core.closedToLive !== 0 || core.falseLive !== 0) process.exitCode = 1;
 }
 
 await main();
