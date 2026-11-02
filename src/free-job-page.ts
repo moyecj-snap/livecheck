@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Context, Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
-import { ATS_API_LISTED, ATS_API_MISSING, ATS_NOT_IN_PUBLIC_FEED, parseAtsJobUrl } from "./ats-api.js";
+import { ATS_API_LISTED, ATS_API_MISSING, ATS_NOT_IN_PUBLIC_FEED, GH_JID_COMPANY_EMBED, parseAtsJobUrl } from "./ats-api.js";
 import {
   ROBOTS_DISALLOWED_MESSAGE,
   ROBOTS_DISALLOWED_SIGNAL,
@@ -368,6 +368,7 @@ export function evidenceInPlainWords(signals: readonly string[], platform: strin
   for (const signal of signals) {
     if (signal === ATS_API_LISTED) add(`Listed in ${platform}'s jobs API`);
     else if (signal === ATS_API_MISSING) add(`Removed from ${platform}'s jobs API`);
+    else if (signal === GH_JID_COMPANY_EMBED) add("Link opens this posting on the company's own careers page (same job id)");
     else if (signal === ATS_NOT_IN_PUBLIC_FEED) add(`Not in ${platform}'s public jobs feed; the posting page is what we use`);
     else if (signal.startsWith("ats_posted_at:")) {
       const day = formatDay(signal.slice("ats_posted_at:".length));

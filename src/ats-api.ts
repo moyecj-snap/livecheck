@@ -555,6 +555,45 @@ function postedSignal(iso: string | undefined): string[] {
   return iso ? [`ats_posted_at:${iso}`] : [];
 }
 
+/** Page signals that only describe the company careers page a Greenhouse link handed off to. */
+const EMBED_HANDOFF_BOARD_SIGNALS = new Set([
+  "redirected_to_board",
+  "ats_empty_state",
+  "not_a_specific_posting",
+  "careers_homepage",
+]);
+
+/** Greenhouse posting link handed to the company's own careers page with the same gh_jid. */
+export const GH_JID_COMPANY_EMBED = "gh_jid_company_embed";
+
+const EMBED_EXPIRED_MARKERS = /[?&](trk=expired_jd_redirect|expired(_job)?=(1|true)|error=true)\b/i;
+
+/**
+ * Nov 2, 2026 audits: legacy boards.greenhouse.io/<org>/jobs/<id> links for
+ * boards hosted on the company site 301 to job-boards.greenhouse.io, then to
+ * the company careers page with `?gh_jid=<id>` (Greenhouse's absolute_url).
+ * That page renders the posting inside the Greenhouse embed, so the HTML
+ * looks like a bare /careers board. The job id survived the redirect, so this
+ * is a hand-off, not a bounce to the board.
+ */
+export function isGreenhouseEmbedHandoff(page: VerifyVerdict, vendor?: AtsVendor): boolean {
+  if (vendor !== undefined && vendor !== "greenhouse") return false;
+  let requested: URL;
+  let landed: URL;
+  try {
+    requested = new URL(page.url);
+    landed = new URL(page.canonical_url);
+  } catch {
+    return false;
+  }
+  if (!requested.hostname.toLowerCase().endsWith("greenhouse.io")) return false;
+  if (landed.hostname.toLowerCase().endsWith("greenhouse.io")) return false;
+  const jobId = /\/jobs\/(\d+)/.exec(requested.pathname)?.[1];
+  if (!jobId) return false;
+  if (EMBED_EXPIRED_MARKERS.test(landed.search)) return false;
+  return landed.searchParams.get("gh_jid")?.trim() === jobId;
+}
+
 /**
  * Page × public API.
  * - live + listed → live, high confidence
@@ -563,7 +602,8 @@ function postedSignal(iso: string | undefined): string[] {
  * - Lever or Ashby missing from the public feed is not closed on its own.
  *   An apply form stays live. A 404, a redirect to the board, or a closure
  *   banner stays closed. Anything else stays unknown.
- * - 404, 410, or redirected_to_board + listed → still closed
+ * - 404, 410, or redirected_to_board + listed → still closed, except a
+ *   Greenhouse hand-off to the company careers page with the same gh_jid → live
  * - other closed copy + listed → unknown, page closed signals and ats_api_listed
  * - challenge_page + listed → live (page never bypassed)
  * - challenge_page + Greenhouse/Workday missing → closed
@@ -601,6 +641,29 @@ export function combinePageAndAts(page: VerifyVerdict, api: AtsLookup, vendor?: 
   }
 
   const posted = postedSignal(api.postedAt);
+  // A Greenhouse link handed to the company careers page with the same
+  // gh_jid, and the API still lists that id: the listing decides. Only the
+  // redirect made the page look like a board; closure copy still disagrees.
+  if (
+    page.status === "closed" &&
+    isGreenhouseEmbedHandoff(page, vendor) &&
+    !page.signals.some(
+      (signal) => signal === "http_404" || signal === "http_410" || signal.startsWith("close_language:"),
+    )
+  ) {
+    return {
+      ...page,
+      status: "live",
+      confidence: api.postedAt ? ATS_LISTED_WITH_POSTED_AT_CONFIDENCE : ATS_LISTED_CONFIDENCE,
+      signals: dedupe([
+        ATS_API_LISTED,
+        ...posted,
+        GH_JID_COMPANY_EMBED,
+        ...page.signals.filter((signal) => !EMBED_HANDOFF_BOARD_SIGNALS.has(signal)),
+      ]),
+      ...(api.title ? { title: api.title } : {}),
+    };
+  }
   if (page.status === "closed") {
     // A 404/410 or a redirect onto the board is closed even when the API
     // still lists the id. Closure copy alone still disagrees with a listing.
