@@ -260,4 +260,6 @@ export type FetchedPage = {
   redirectChain: string[];
   /** Set when robots.txt disallowed the fetch and the page was not requested. */
   robotsDisallowed?: boolean;
+  /** Set when strict mode got no robots.txt and the page was not requested. */
+  robotsUnavailable?: boolean;
 };
