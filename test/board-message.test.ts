@@ -111,7 +111,7 @@ describe("paid routes say when the URL is a board", () => {
   let close: () => void = () => {};
   const originalFetch = globalThis.fetch;
 
-  let paidDb: ReturnType<typeof initPaidCallStore>["db"] | undefined;
+  let paidDb: Extract<ReturnType<typeof initPaidCallStore>, { ok: true }>["db"] | undefined;
 
   before(async () => {
     const opened = initPaidCallStore(":memory:");

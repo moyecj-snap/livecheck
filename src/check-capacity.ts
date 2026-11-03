@@ -10,6 +10,8 @@ import {
   TEST_MODE_SECRET_ENV,
 } from "./config.js";
 import { hasMppPaymentCredential, mppEnabled } from "./mpp-flags.js";
+import { runStarterKeyAdmission } from "./starter-key-gate.js";
+import { parseStarterBearer } from "./starter-key.js";
 
 /**
  * Slots cover the expensive verify pipeline only:
@@ -249,6 +251,13 @@ export function withBurstProtection(paymentGate: MiddlewareHandler): MiddlewareH
       c.header(TEST_MODE_HEADER, "1");
       const run = () => testModeAls.run({ enabled: true }, () => next());
       return isBurstCheckPath(c.req.path) ? runAdmitted(c, run) : run();
+    }
+
+    // Bearer lc_live_ on a verify route shares these slots and skips payment.
+    // Confirm, Sentinel, and /check fall through to the wallet gate.
+    if (c.req.method === "POST" && isBurstCheckPath(c.req.path)) {
+      const starterToken = parseStarterBearer(c.req.header("authorization"));
+      if (starterToken) return runStarterKeyAdmission(c, next, starterToken, runAdmitted);
     }
 
     if (c.req.method !== "POST" || !isBurstCheckPath(c.req.path)) {

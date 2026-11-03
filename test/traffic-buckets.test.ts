@@ -69,6 +69,13 @@ describe("traffic bucket rules (first match wins)", () => {
     assert.equal(classifyPaidCallBucket({ payer: OUTSIDE }, LISTS), "external");
   });
 
+  it("a future card-funded key:<id> payer is external even on a docs-example URL", () => {
+    const payer = "key:k_0123456789abcdef";
+    assert.equal(classifyPaidCallBucket({ payer, url_sha256: DOCS }, LISTS), "external");
+    assert.equal(classifyPaidCallBucket({ payer, url_sha256: REAL_URL }, LISTS), "external");
+    assert.equal(classifyPaidCallBucket({ payer: payer.toUpperCase(), url_sha256: DOCS }, LISTS), "external");
+  });
+
   it("precedence: internal beats grader, grader beats tester", () => {
     const overlap: TrafficBucketLists = {
       internal: [OUTSIDE],

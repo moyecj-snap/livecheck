@@ -207,7 +207,14 @@ export function mergeFleetStats(local: StatsDocument, peers: readonly FleetPeerR
         ? { protocols: includedPeers.length > 0 ? fleetProtocolTraffic(local.traffic.protocols) : local.traffic.protocols }
         : {}),
     },
-    notes: statsNotes(unscoped, volumeNote, "fleet"),
+    notes: [
+      ...statsNotes(unscoped, volumeNote, "fleet"),
+      ...(local.starter_keys?.daily_cap_hit
+        ? [
+            `STARTER KEYS: daily free-key cap hit (${local.starter_keys.daily_cap_used}/${local.starter_keys.daily_cap}). Not raised. This is the operator flag for the nightly note.`,
+          ]
+        : []),
+    ],
   };
 }
 

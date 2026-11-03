@@ -262,7 +262,8 @@ function fromSqlRow(item: {
 }
 
 export type ReceiptRememberResult = {
-  memory: true;
+  /** False only in test mode, where the receipt is signed but never stored. */
+  memory: boolean;
   /** True only when the row was written to receipts.sqlite. */
   durable: boolean;
 };

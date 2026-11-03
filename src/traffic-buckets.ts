@@ -1,4 +1,5 @@
 import { PAID_CALL_ROUTES, isPaidCallRoute, type PaidCallRoute } from "./paid-call.js";
+import { isCardFundedPayer } from "./starter-key.js";
 
 /**
  * Every paid call lands in exactly one /stats bucket. The rules run in this
@@ -10,6 +11,10 @@ import { PAID_CALL_ROUTES, isPaidCallRoute, type PaidCallRoute } from "./paid-ca
  * 4. Unknown payer, but the target is a docs-example URL        -> testers_probable
  * 5. Everything else                                            -> external
  *
+ * A future card-funded payer `key:<id>` is external even on a docs-example
+ * URL (it does not become testers_probable). Free starter-key checks never
+ * reach this function: they write no paid_calls row. Internal stays a
+ * wallet match only.
  * Internal is decided by payer wallet only. A `livecheck-internal/` user
  * agent is a label (`traffic.internal_label`), not a bucket. External means a
  * known outside wallet that is on no list and did not hit a docs-example URL.
@@ -31,7 +36,7 @@ export const TRAFFIC_BUCKET_RULES: readonly string[] = [
   "2. payer is on the grader/tester list -> graders / testers",
   "3. no payer recorded -> unattributed",
   "4. unknown payer, target is a docs-example URL -> testers_probable",
-  "5. everything else -> external",
+  "5. everything else -> external. payer key:<id> (future card top-up) is external even on a docs-example URL",
 ];
 
 export type TrafficBucketLists = {
@@ -78,6 +83,9 @@ function classifyNormalized(row: TrafficBucketRow, lists: NormalizedLists): Traf
   if (payer && lists.graders.has(payer)) return "graders";
   if (payer && lists.testers.has(payer)) return "testers";
   if (!payer) return "unattributed";
+  // Phase 2 hook. Free checks do not write a payer. key:<id> is external
+  // even when the target is a docs-example URL.
+  if (isCardFundedPayer(payer)) return "external";
   const hash = (row.url_sha256 ?? "").trim().toLowerCase();
   if (hash && lists.docs.has(hash)) return "testers_probable";
   return "external";

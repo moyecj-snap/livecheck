@@ -32,6 +32,7 @@ import {
   OPENAPI_WATCH_SUMMARY,
 } from "./config.js";
 import { publicOrigin } from "./public-url.js";
+import { STARTER_KEY_BUILDERS_LINE, STARTER_KEY_PAGE_PATH } from "./starter-key.js";
 
 const OPENAPI_VERSION = "1.0.0";
 const OPENAPI_PRICE_AMOUNT = "0.01";
@@ -149,12 +150,16 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
     info: {
       title: OPENAPI_INFO_TITLE,
       version: OPENAPI_VERSION,
-      description: OPENAPI_INFO_DESCRIPTION,
+      description: `${OPENAPI_INFO_DESCRIPTION} ${STARTER_KEY_BUILDERS_LINE} ${origin}${STARTER_KEY_PAGE_PATH}`,
       contact: {
         email: "moyecj@gmail.com",
       },
       "x-guidance": OPENAPI_INFO_GUIDANCE,
       "x-tags": [...OPENAPI_INFO_TAGS],
+      "x-starter-key": {
+        url: `${origin}${STARTER_KEY_PAGE_PATH}`,
+        description: `${STARTER_KEY_BUILDERS_LINE} Send Authorization: Bearer lc_live_… on POST /v1/verify, /v1/verify/job, or /v1/verify/listing. 200 checks over 30 days.`,
+      },
     },
     servers: [{ url: origin }],
     paths: {

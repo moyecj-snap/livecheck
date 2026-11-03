@@ -1,8 +1,10 @@
 # Livecheck
 
-> Live status of a specific product page, marketplace listing, or job posting, read from the page itself at call time. No account, no API key.
+> Live status of a specific product page, marketplace listing, or job posting, read from the page itself at call time. Wallet calls need no account. Builders: sign in with GitHub for 200 free checks, no wallet needed: https://livecheck.fly.dev/keys
 
 Verify routes are POST /v1/verify, POST /v1/verify/job, and POST /v1/verify/listing. The unpaid 402 offers both x402 (Base USDC) and MPP (Tempo USDC.e). Each charges exactly $0.01. MPP method is tempo/charge: USDC.e on Tempo (chain 4217). Stripe pays Tempo gas. With MPP (Tempo): Paid answers, including the checked link, are kept for 24 hours so retries are safe, then deleted. Check, watch, renew, chain top-up, and confirm stay x402 (Base USDC) only.
+
+A free starter key (GitHub sign-in, public profile, no email) can call POST /v1/verify, POST /v1/verify/job, and POST /v1/verify/listing: 200 checks over 30 days. Get one at https://livecheck.fly.dev/keys and send Authorization: Bearer lc_live_…. A real answer spends one check: live, closed, or unknown after the page was read, including a board found only after the fetch. Errors, timeouts, and a robots.txt "can't tell" (the page was never requested, e.g. LinkedIn) do not. A board URL (Greenhouse, Lever, or Ashby with no job id, a bare /careers or /jobs page, or a bare Workday site) is rejected free. When the 200 checks run out, call the same route without the key to pay with a wallet, or reply to get a top-up link. Confirm, Sentinel (/v1/check, /v1/watch), and the free /job page limits are unchanged. Wallet payments stay the same.
 
 ## When to use
 - Before recommending or buying a product: is this listing still available?

@@ -211,7 +211,13 @@ describe("discovery documents (mock gate)", () => {
     assert.equal(doc.info?.title, "Livecheck: Live Listing Status");
     assert.ok((doc.info?.title ?? "").length <= 32);
     assert.ok(doc.info?.version);
-    assert.equal(doc.info?.description, OPENAPI_INFO_DESCRIPTION);
+    // Starter key pointer (PR #61) follows the shared description, in plain words.
+    const infoDescription = doc.info?.description ?? "";
+    assert.ok(infoDescription.startsWith(`${OPENAPI_INFO_DESCRIPTION} `));
+    assert.match(
+      infoDescription.slice(OPENAPI_INFO_DESCRIPTION.length),
+      /^ Builders: sign in with GitHub for 200 free checks, no wallet needed\. https?:\/\/\S+\/keys$/,
+    );
     assert.equal(doc.info?.["x-guidance"], OPENAPI_INFO_GUIDANCE);
     const infoGuidance = doc.info?.["x-guidance"] ?? "";
     assert.equal(infoGuidance.startsWith("Is this job posting still open?"), true);
