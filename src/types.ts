@@ -10,7 +10,7 @@ export type VerifyVerdict = {
   signals: string[];
   confidence: number;
   price_usd: number;
-  /** Set when the check is unknown for a reason the caller should read, such as robots.txt. */
+  /** Set when the caller should read why, such as robots.txt (unknown) or a Greenhouse-listed job whose company careers page errored (live). */
   message?: string;
 };
 
