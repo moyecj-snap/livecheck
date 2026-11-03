@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { clampStaleAfterDays } from "./posting-age.js";
 import type { Context, MiddlewareHandler } from "hono";
 import { CheckError, parseCheckRequest, runCheck } from "./check.js";
 import {
@@ -268,8 +269,16 @@ async function handlePaidVerify(c: Context) {
     if (!route) return c.json({ error: "not_found" }, 404);
     // Paid routes stay lenient. robotsMode is not read from the body, so a
     // caller cannot switch this check to strict.
+    // Posting age (context only; never changes status or confidence).
+    // stale_after_days: body or ?stale_after_days=, clamped to 7–365, default 60.
+    const staleRaw =
+      (typeof body === "object" && body !== null ? (body as { stale_after_days?: unknown }).stale_after_days : undefined) ??
+      c.req.query("stale_after_days");
     const verdict = await verifyUrl(target, fetch, new Date(), {
       atsApi: route === "verify" || route === "verify/job",
+      ...(route === "verify/job" || route === "verify"
+        ? { age: { mode: route === "verify/job" ? ("job" as const) : ("auto" as const), staleAfterDays: clampStaleAfterDays(staleRaw) } }
+        : {}),
     });
     if (!isInternalTestMode()) {
       recordSuccessfulPaidCheck({

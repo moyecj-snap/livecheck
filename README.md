@@ -126,6 +126,31 @@ After payment verifies and settles:
 - **live** — HTTP 200 on a specific job posting with an apply/submit affordance and no close language, or a specific product page with add to cart / add to bag / buy now and no sold-out phrase. A recaptcha/hcaptcha widget on that page is not a bot wall.
 - **unknown** — loginwalled, a real challenge interstitial (Cloudflare `cf-challenge`, “verify you are human”, “checking your browser”), or ambiguous. Search-result URLs, generic careers homepages, and collection/category pages stay `unknown` even if a template includes add-to-cart.
 
+### Posting age (`age`)
+
+Job answers from `POST /v1/verify/job` (and `POST /v1/verify` when the URL is a job posting) carry an `age` object. It is context only: **age never changes `status`, `confidence`, or the verdict.** Send `"stale_after_days": N` in the body (or `?stale_after_days=N`) to set the stale line; default 60, clamped to 7–365.
+
+```json
+"age": {
+  "posted_at": "2026-09-25T07:30:49Z",
+  "age_days": 39,
+  "age_source": "greenhouse.first_published",
+  "age_precision": "exact",
+  "age_bucket": "31-60",
+  "stale_age": false,
+  "stale_after_days": 60,
+  "last_updated_at": "2026-11-03T10:00:00Z",
+  "note": "Posted 39 days ago. Still open on the employer's site. Most applications come in during a posting's first few days."
+}
+```
+
+- **Sources, in order:** the hiring platform's first-posted date (Greenhouse `first_published`, then `published_at`; Ashby board `publishedAt`; Lever `createdAt`; Workday `startDate`, else the "Posted N Days Ago" text, where "30+ Days Ago" is `age_precision: "at_least"`, `age_days_min: 30`, bucket `30+`), else the page's JSON-LD `datePosted`. If the page's JSON-LD and the platform differ by more than 2 days, the platform date wins and the signal `age_conflict` is added.
+- **Never `updated_at`.** A last-updated date is not a posted date. Greenhouse jobs with only `updated_at` report `age_source: "none"` (it can appear as `last_updated_at`). Ashby's GraphQL fallback has no date, so those report unknown.
+- **Unknown is unknown:** no usable date (missing, malformed, before 2000, or more than a day in the future) → `posted_at: null`, `age_days: null`, `age_bucket: "unknown"`, `stale_age: null`.
+- **Reposts:** an employer that reposts a job resets the date, so the true age is at least `age_days`.
+- **Notes** (live answers only): 30–60 days, "Posted N days ago. Still open on the employer's site. Most applications come in during a posting's first few days." Over 60 days, "Posted over 60 days ago and still listed. Roles this old may already be in final interviews or quietly filled. If you apply, also reach out to the team directly."
+- **Board audits:** `npm run audit:age -- urls.txt [--board NAME] [--stale-after-days N] [--csv out.csv]` runs the job check in strict robots.txt mode and prints the share of dated listings over 30, 60, and 90 days, the bucket table, and the closed share per bucket, always with the check date and sample size.
+
 v1 reads HTML + status only. It does not execute page JavaScript. Redirects are followed; `canonical_url` is the final URL. User-Agent identifies Livecheck.
 
 Free routes: `GET /` (human demo), `GET /health`, `GET /openapi.json`, `GET /.well-known/x402`, `GET /.well-known/livecheck-keys.json`, `GET /llms.txt` (plain-text agent discovery), `GET /stats`, `GET /v1/receipt/{id}`, `GET /v1/watch/{id}`, `GET /v1/watch/{id}/events`, and `DELETE /v1/watch/{id}` (owner token required). Paid: `POST /v1/verify` ($0.01), `POST /v1/check` ($0.02, one-shot Sentinel condition), `POST /v1/watch` ($2.50, 30-day standard watcher; HTTPS callback optional, otherwise pull `GET /v1/watch/{id}/events`), `POST /v1/watch/renew` ($2.50, extend an active watcher; `{id}` in the body), `POST /v1/watch/{id}/chain/topup` ($0.50, owner token + payment), `POST /v1/confirm` ($0.10, `lead_submit` / `listing_published`), and `POST /v1/confirm/order` ($0.25, `order_placed`). `GET /v1/judge` is a 501 stub. `/v1/watch/fast` is not in this phase. Unpaid check, watch, and renew 402s include Bazaar discovery metadata. Confirm chain (`on_change.run=confirm`) spends watcher chain balance at those same Confirm prices — no new public route.

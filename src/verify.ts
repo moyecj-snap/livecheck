@@ -8,6 +8,7 @@ import { isEbayAdapterEnabled, logEbayAdapterDisabled, parseEbayItemUrl, verifyE
 import { applyShopifyAvailability, lookupShopifyAvailable, shopifyProductJsUrl } from "./shopify.js";
 import { stripTrackingParams } from "./tracking-params.js";
 import type { FetchedPage, VerifyVerdict } from "./types.js";
+import { AGE_CONFLICT_SIGNAL, DEFAULT_STALE_AFTER_DAYS, jsonLdJobPosting, resolvePostingAge, type AgeEvidence } from "./posting-age.js";
 
 export type VerifyUrlOptions = {
   /**
@@ -29,7 +30,37 @@ export type VerifyUrlOptions = {
    * no page fetch and no ATS lookup. Audits and pilots pass this.
    */
   robotsMode?: RobotsMode;
+  /**
+   * Add the posting `age` object. `job`: always (POST /v1/verify/job).
+   * `auto`: only when the link is an ATS job or the page has a JobPosting
+   * (POST /v1/verify). Context only: status and confidence never change.
+   */
+  age?: { mode: "job" | "auto"; staleAfterDays?: number };
 };
+
+/** What the check learned about the posting date, filled in as it runs. */
+type AgeContext = { atsRef: boolean; ats?: AgeEvidence; jobPosting: boolean; jsonLdDatePosted?: unknown };
+
+function withAge(verdict: VerifyVerdict, ctx: AgeContext, now: Date, options: VerifyUrlOptions): VerifyVerdict {
+  const age = options.age;
+  if (!age) return verdict;
+  if (age.mode === "auto" && !ctx.atsRef && !ctx.jobPosting) return verdict;
+  const resolved = resolvePostingAge({
+    ats: ctx.ats,
+    jsonLdDatePosted: ctx.jsonLdDatePosted,
+    now,
+    staleAfterDays: age.staleAfterDays ?? DEFAULT_STALE_AFTER_DAYS,
+    status: verdict.status,
+  });
+  // HARD RULE (Craig, Nov 3, 2026): dates never change status or confidence.
+  return {
+    ...verdict,
+    status: verdict.status,
+    confidence: verdict.confidence,
+    signals: resolved.conflict && !verdict.signals.includes(AGE_CONFLICT_SIGNAL) ? [...verdict.signals, AGE_CONFLICT_SIGNAL] : verdict.signals,
+    age: resolved.age,
+  };
+}
 
 export type FetchPageOptions = {
   timeoutMs?: number;
@@ -256,13 +287,15 @@ export async function verifyUrl(
 ): Promise<VerifyVerdict> {
   const deadlineMs = resolveDeadlineMs(options.deadlineMs);
   const target = stripTrackingParams(url);
+  const ageCtx: AgeContext = { atsRef: false, jobPosting: false };
   try {
-    return await withDeadline(deadlineMs, (deadlineSignal) => {
+    const verdict = await withDeadline(deadlineMs, (deadlineSignal) => {
       const signal = options.signal ? AbortSignal.any([deadlineSignal, options.signal]) : deadlineSignal;
-      return verifyUrlWithin(target, fetcher, now, options, signal);
+      return verifyUrlWithin(target, fetcher, now, options, signal, ageCtx);
     });
+    return withAge(verdict, ageCtx, now, options);
   } catch (error) {
-    if (error instanceof DeadlineError) return timeoutUnknownVerdict(url, now);
+    if (error instanceof DeadlineError) return withAge(timeoutUnknownVerdict(url, now), ageCtx, now, options);
     throw error;
   }
 }
@@ -273,6 +306,7 @@ async function verifyUrlWithin(
   now: Date,
   options: VerifyUrlOptions,
   signal: AbortSignal,
+  ageCtx: AgeContext = { atsRef: false, jobPosting: false },
 ): Promise<VerifyVerdict> {
   const ebay = parseEbayItemUrl(url);
   if (ebay) {
@@ -284,6 +318,7 @@ async function verifyUrlWithin(
   // Company careers embeds (Figma and others) pass the Greenhouse id as gh_jid
   // instead of a boards.greenhouse.io URL. roleRefFor resolves that id.
   const ats = options.atsApi ? parseAtsJobUrl(url) ?? roleRefFor(url) : null;
+  if (ats) ageCtx.atsRef = true;
   let atsLookup: Promise<Awaited<ReturnType<typeof lookupAtsJob>>> | undefined;
   const page = await fetchPage(url, fetcher, {
     signal,
@@ -300,11 +335,20 @@ async function verifyUrlWithin(
     },
   );
   if (page.ok && (page.page.robotsDisallowed || page.page.robotsUnavailable)) return classify(page.page, now);
+  if (page.ok && options.age) {
+    // JSON-LD datePosted is read for the age only, never for the verdict.
+    const posting = jsonLdJobPosting(page.page.html);
+    if (posting) {
+      ageCtx.jobPosting = true;
+      ageCtx.jsonLdDatePosted = posting.datePosted;
+    }
+  }
   if (!ats || !atsLookup) {
     if (!page.ok) throw page.error;
     return withShopify(url, classify(page.page, now), fetcher, signal);
   }
   const api = await atsLookup;
+  if (api.outcome === "listed") ageCtx.ats = api.age;
   if (page.ok) return combinePageAndAts(classify(page.page, now), api, ats.vendor);
   if (api.outcome === "unavailable") throw page.error;
   return verdictFromAtsWithoutPage(url, api, now, ats.vendor);

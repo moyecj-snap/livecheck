@@ -18,6 +18,11 @@ export type VerifyVerdict = {
   credits_remaining?: number;
   /** Starter-key answers only: false when the answer did not spend a check (e.g. robots.txt can't-tell). */
   credit_used?: boolean;
+  /**
+   * Posting age on job checks (POST /v1/verify/job, and /v1/verify when the
+   * link is a job). Context only: never changes status or confidence.
+   */
+  age?: import("./posting-age.js").PostingAge;
 };
 
 export type ConfirmVerdictStatus = "confirmed" | "failed" | "unknown";

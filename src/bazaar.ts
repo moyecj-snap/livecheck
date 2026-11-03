@@ -73,6 +73,43 @@ export const VERIFY_OUTPUT_SCHEMA = {
       enum: ["verify", "verify/job", "verify/listing"],
     },
     watch: WATCH_HINT_SCHEMA,
+    paid_with: {
+      type: "string",
+      enum: ["free_credit"],
+      description: "Set to free_credit when a starter key paid for the call. price_usd is then 0.",
+    },
+    credits_remaining: { type: "number", description: "Starter-key free checks left after this call." },
+    credit_used: { type: "boolean", description: "Whether this call used one starter-key credit." },
+    age: {
+      type: "object",
+      description:
+        "Job postings only. How long the posting has been up, from the hiring platform's first-posted date (or the page's JSON-LD datePosted). Context only: never changes status or confidence. Never taken from a last-updated date; unknown when there is no posted date.",
+      properties: {
+        posted_at: { type: ["string", "null"] },
+        age_days: { type: ["number", "null"] },
+        age_days_min: { type: "number", description: "Lower bound when only \"30+ days\" is known (Workday)." },
+        age_source: {
+          type: "string",
+          enum: [
+            "greenhouse.first_published",
+            "greenhouse.published_at",
+            "ashby.publishedAt",
+            "lever.createdAt",
+            "workday.startDate",
+            "workday.postedOn_text",
+            "jsonld.datePosted",
+            "none",
+          ],
+        },
+        age_precision: { type: "string", enum: ["exact", "day", "at_least", "unknown"] },
+        age_bucket: { type: "string", enum: ["0-7", "8-30", "31-60", "61-90", "90+", "30+", "unknown"] },
+        stale_age: { type: ["boolean", "null"], description: "age_days > stale_after_days; null when unknown." },
+        stale_after_days: { type: "number" },
+        last_updated_at: { type: "string", description: "ATS last-updated date. Not the posted date." },
+        note: { type: "string" },
+      },
+      required: ["posted_at", "age_days", "age_source", "age_precision", "age_bucket", "stale_age", "stale_after_days"],
+    },
   },
   required: [
     "url",
@@ -94,6 +131,11 @@ export const VERIFY_INPUT_SCHEMA = {
       type: "string",
       description:
         "Absolute http(s) URL of the specific job, product, or eBay item page to check. Not a search-results URL.",
+    },
+    stale_after_days: {
+      type: "number",
+      description:
+        "Job postings: age in days after which age.stale_age is true. Default 60, clamped to 7–365. Does not change status or confidence.",
     },
   },
   required: ["url"],
