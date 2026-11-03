@@ -573,6 +573,13 @@ export const GH_JID_COMPANY_PAGE_ERROR = "gh_jid_company_page_error";
 export const GH_JID_COMPANY_PAGE_ERROR_MESSAGE =
   "Greenhouse lists this job as open; the company's careers page returned an error.";
 
+/** The company careers page for a Greenhouse gh_jid answered 404 while Greenhouse still lists the job. */
+export const GH_JID_COMPANY_PAGE_NOT_FOUND = "gh_jid_company_page_not_found";
+
+/** Evidence line when Greenhouse lists the job but the company careers page answered 404. */
+export const GH_JID_COMPANY_PAGE_NOT_FOUND_MESSAGE =
+  "Greenhouse lists this job as open; the company's careers page returned 404 (not found).";
+
 const EMBED_EXPIRED_MARKERS = /[?&](trk=expired_jd_redirect|expired(_job)?=(1|true)|error=true)\b/i;
 
 /**
@@ -602,6 +609,39 @@ export function isGreenhouseEmbedHandoff(page: VerifyVerdict, vendor?: AtsVendor
 }
 
 /**
+ * Nov 3, 2026 (VentureLoop audit, Bitwarden): a company careers link that
+ * carries the Greenhouse id as `?gh_jid=<id>` (or a greenhouse.io link handed
+ * off to one) answered a brief 404 while Greenhouse's posting API still
+ * listed that exact id. Greenhouse is the system of record for these pages,
+ * so the 404 alone is not a closing. Only a plain 404: a 410, closure copy,
+ * an expired-redirect marker, or a redirect that lost the id still close.
+ */
+export function isGreenhouseCompanyPageNotFound(page: VerifyVerdict, vendor?: AtsVendor): boolean {
+  if (vendor !== "greenhouse") return false;
+  if (page.http_status !== 404) return false;
+  if (!page.signals.includes("http_404")) return false;
+  if (page.signals.some((signal) => signal === "http_410" || signal.startsWith("close_language:") || signal === "expired_redirect")) {
+    return false;
+  }
+  let requested: URL;
+  let landed: URL;
+  try {
+    requested = new URL(page.url);
+    landed = new URL(page.canonical_url || page.url);
+  } catch {
+    return false;
+  }
+  if (landed.hostname.toLowerCase().endsWith("greenhouse.io")) return false;
+  if (EMBED_EXPIRED_MARKERS.test(landed.search)) return false;
+  const requestedOnGreenhouse = requested.hostname.toLowerCase().endsWith("greenhouse.io");
+  const jobId = requestedOnGreenhouse
+    ? /\/jobs\/(\d+)/.exec(requested.pathname)?.[1]
+    : requested.searchParams.get("gh_jid")?.trim();
+  if (!jobId || !/^\d+$/.test(jobId)) return false;
+  return landed.searchParams.get("gh_jid")?.trim() === jobId;
+}
+
+/**
  * Page × public API.
  * - live + listed → live, high confidence
  * - unknown without challenge_page (JS shell / blank) + listed → live + ats_api_listed
@@ -609,6 +649,9 @@ export function isGreenhouseEmbedHandoff(page: VerifyVerdict, vendor?: AtsVendor
  * - Lever or Ashby missing from the public feed is not closed on its own.
  *   An apply form stays live. A 404, a redirect to the board, or a closure
  *   banner stays closed. Anything else stays unknown.
+ * - Greenhouse gh_jid company careers page answering a plain 404 (no closure
+ *   copy, no expired marker, gh_jid kept) + listed → live, with
+ *   gh_jid_company_page_not_found and a message saying the page returned 404
  * - 404, 410, or redirected_to_board + listed → still closed, except a
  *   Greenhouse hand-off to the company careers page with the same gh_jid → live
  *   (a 5xx from that company page stays live, with gh_jid_company_page_error
@@ -650,6 +693,21 @@ export function combinePageAndAts(page: VerifyVerdict, api: AtsLookup, vendor?: 
   }
 
   const posted = postedSignal(api.postedAt);
+  if (page.status === "closed" && isGreenhouseCompanyPageNotFound(page, vendor)) {
+    return {
+      ...page,
+      status: "live",
+      confidence: api.postedAt ? ATS_LISTED_WITH_POSTED_AT_CONFIDENCE : ATS_LISTED_CONFIDENCE,
+      signals: dedupe([
+        ATS_API_LISTED,
+        ...posted,
+        GH_JID_COMPANY_PAGE_NOT_FOUND,
+        ...page.signals.filter((signal) => !EMBED_HANDOFF_BOARD_SIGNALS.has(signal)),
+      ]),
+      ...(api.title ? { title: api.title } : {}),
+      message: GH_JID_COMPANY_PAGE_NOT_FOUND_MESSAGE,
+    };
+  }
   // A Greenhouse link handed to the company careers page with the same
   // gh_jid, and the API still lists that id: the listing decides. Only the
   // redirect made the page look like a board; closure copy still disagrees.

@@ -977,6 +977,56 @@ describe("starter key HTTP", () => {
     assert.equal(res.headers.get(TEST_MODE_HEADER), "1");
     assert.equal(used(plaintext), 0);
     assert.equal(logs.some((line) => line.includes(PAID_CALL_EVENT)), false);
+    // Not a starter-key answer: the wallet price stays and no free-credit fields appear.
+    const body = (await res.json()) as Record<string, unknown>;
+    assert.equal(body.price_usd, 0.01);
+    assert.equal("paid_with" in body, false);
+    assert.equal("credits_remaining" in body, false);
+  });
+
+  it("says a starter-key answer cost $0 on free credit and how many credits are left", async () => {
+    const app = createApp();
+    const { plaintext } = await signIn(app, { id: 31, login: "freebody", created_at: "2020-01-01T00:00:00Z" });
+    globalThis.fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url === "https://blocked.example/robots.txt") {
+        return new Response("User-agent: *\nDisallow: /\n", { status: 200, headers: { "content-type": "text/plain" } });
+      }
+      if (url.endsWith("/robots.txt")) return new Response("missing", { status: 404 });
+      if (url.endsWith("/missing")) return html(GONE_HTML, 404);
+      return html(LIVE_HTML, 200);
+    };
+    for (const [path, target, status] of [
+      ["/v1/verify", "https://example.com/jobs/1", "live"],
+      ["/v1/verify/job", "https://example.com/jobs/missing", "closed"],
+      ["/v1/verify/listing", "https://example.com/jobs/2", "live"],
+    ] as const) {
+      const res = await app.request(path, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${plaintext}` },
+        body: JSON.stringify({ url: target }),
+      });
+      assert.equal(res.status, 200, path);
+      assert.match(res.headers.get("content-type") ?? "", /json/, path);
+      const body = (await res.json()) as Record<string, unknown>;
+      assert.equal(body.status, status, path);
+      assert.equal(body.price_usd, 0, path);
+      assert.equal(body.paid_with, "free_credit", path);
+      assert.equal(body.credit_used, true, path);
+      assert.equal(body.credits_remaining, Number(res.headers.get("x-livecheck-free-left")), path);
+      assert.equal(body.credits_remaining, 200 - used(plaintext), path);
+    }
+    assert.equal(used(plaintext), 3);
+
+    // A robots.txt can't-tell spends nothing and still says $0 on the key.
+    const robots = await verify(app, plaintext, "https://blocked.example/jobs/9");
+    const robotsBody = (await robots.json()) as Record<string, unknown>;
+    assert.equal(robotsBody.status, "unknown");
+    assert.equal(robotsBody.price_usd, 0);
+    assert.equal(robotsBody.paid_with, "free_credit");
+    assert.equal(robotsBody.credit_used, false);
+    assert.equal(robotsBody.credits_remaining, 197);
+    assert.equal(used(plaintext), 3);
   });
 });
 
