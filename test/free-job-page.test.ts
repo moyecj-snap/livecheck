@@ -553,7 +553,7 @@ describe("free /job page", () => {
 
   it("launch tags never fold: one ?ref=test visit shows as test; by_source gives views and checks per tag", async () => {
     const chrome = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36";
-    for (const tag of ["test", "producthunt", "linkedin", "x", "email", "clawhub"]) {
+    for (const tag of ["test", "producthunt", "linkedin", "x", "email", "clawhub", "hn", "reddit", "cursorforum", "devto", "indiehackers"]) {
       await app.request(`/job?ref=${tag}`, { headers: { "user-agent": chrome } });
     }
     await app.request("/job?ref=oneoff-random", { headers: { "user-agent": chrome } });
@@ -566,7 +566,7 @@ describe("free /job page", () => {
     assert.match(await res.text(), /class="verdict">Open</);
     const stats = await freeStats();
     const utm = stats.sources.today.view.utm;
-    for (const tag of ["test", "producthunt", "linkedin", "x", "email", "clawhub"]) assert.equal(utm[tag], 1, tag);
+    for (const tag of ["test", "producthunt", "linkedin", "x", "email", "clawhub", "hn", "reddit", "cursorforum", "devto", "indiehackers"]) assert.equal(utm[tag], 1, tag);
     assert.equal(utm.other, 1, "a non-launch one-off still folds");
     assert.equal(utm["oneoff-random"], undefined);
     assert.equal(stats.sources.today.view.referrer["producthunt.com"], 1, "launch domain shown on a single visit");
