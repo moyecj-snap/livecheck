@@ -345,6 +345,53 @@ describe("Greenhouse lists the gh_jid but the company careers page 404s (Bitward
     }
   });
 
+  // #58 boundary: a 404 on Greenhouse's own posting page is closed, even
+  // when the posting API still lists the id with a fresh posted date.
+  it("a 404 on Greenhouse's own posting page stays closed even when the API lists the id (#58)", async () => {
+    const api = "https://boards-api.greenhouse.io/v1/boards/bitwarden/jobs/8002606003";
+    for (const url of [
+      "https://job-boards.greenhouse.io/bitwarden/jobs/8002606003",
+      "https://boards.greenhouse.io/bitwarden/jobs/8002606003",
+      "https://boards.greenhouse.io/bitwarden/jobs/8002606003?gh_jid=8002606003",
+    ]) {
+      clearAtsResponseCache();
+      const verdict = await verifyUrl(
+        url,
+        async (input) => {
+          const requested = requestUrl(input);
+          if (requested === api) return listedBw();
+          if (requested === url) return new Response(NOT_FOUND_HTML, { status: 404, headers: { "content-type": "text/html" } });
+          if (requested.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /\n", { status: 200 });
+          throw new Error(`unexpected ${requested}`);
+        },
+        new Date("2026-11-03T18:00:00Z"),
+        { atsApi: true, robotsMode: "strict" },
+      );
+      assert.equal(verdict.status, "closed", url);
+      assert.equal(verdict.http_status, 404, url);
+      assert.ok(verdict.signals.includes("http_404"), url);
+      assert.ok(verdict.signals.includes(ATS_API_LISTED), url);
+      assert.equal(verdict.signals.includes(GH_JID_COMPANY_PAGE_NOT_FOUND), false, url);
+    }
+  });
+
+  it("a company gh_jid link that redirects onto a Greenhouse posting page that 404s stays closed", () => {
+    const page = classify({
+      requestedUrl: BITWARDEN,
+      canonicalUrl: "https://job-boards.greenhouse.io/bitwarden/jobs/8002606003?gh_jid=8002606003",
+      httpStatus: 404,
+      title: "Page not found",
+      html: NOT_FOUND_HTML,
+      text: "404 We couldn't find that page.",
+      redirected: true,
+      redirectChain: [BITWARDEN],
+    });
+    assert.equal(page.status, "closed");
+    const combined = combinePageAndAts(page, { outcome: "listed", httpStatus: 200, postedAt: "2026-09-25T07:30:49Z" }, "greenhouse");
+    assert.equal(combined.status, "closed");
+    assert.equal(combined.signals.includes(GH_JID_COMPANY_PAGE_NOT_FOUND), false);
+  });
+
   it("covers a greenhouse.io link handed off to a company page that 404s with the same gh_jid", () => {
     const page = classify({
       requestedUrl: "https://boards.greenhouse.io/bitwarden/jobs/8002606003",

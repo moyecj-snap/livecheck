@@ -22,7 +22,11 @@ import type { VerifyVerdict } from "./types.js";
  * Greenhouse and Workday "missing" is closed. Lever and Ashby "missing" is
  * only a public-feed miss: the posting page decides (apply form = live;
  * 404, board redirect, or closure banner = closed).
- * A bot-challenge page is not promoted to live. No Cloudflare or reCAPTCHA bypass.
+ * A bot-challenge page is never bypassed (no Cloudflare or reCAPTCHA solving).
+ * Nov 3, 2026 (Budderfly vs Workable): on every vendor here, a challenge page
+ * plus the API listing that job id is live at API-listed confidence, with
+ * challenge_page kept. No posting API (Workable) or an unreachable API stays
+ * unknown.
  */
 
 export const ATS_API_LISTED = "ats_api_listed";
