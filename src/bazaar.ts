@@ -103,7 +103,7 @@ export const VERIFY_OUTPUT_SCHEMA = {
         },
         age_precision: { type: "string", enum: ["exact", "day", "at_least", "unknown"] },
         age_bucket: { type: "string", enum: ["0-7", "8-30", "31-60", "61-90", "90+", "30+", "unknown"] },
-        stale_age: { type: ["boolean", "null"], description: "age_days > stale_after_days; null when unknown." },
+        stale_age: { type: ["boolean", "null"], description: "age_days >= stale_after_days (default 60: \"60 and up\"); null when unknown." },
         stale_after_days: { type: "number" },
         last_updated_at: { type: "string", description: "ATS last-updated date. Not the posted date." },
         note: { type: "string" },

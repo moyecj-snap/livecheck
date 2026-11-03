@@ -191,7 +191,7 @@ describe("posting age (Nov 3, 2026 scope)", () => {
     assert.equal(parseWorkdayPostedOn("Posted recently"), undefined);
   });
 
-  it("8. bucket edges 7/8, 30/31, 60/61, 90/91; notes 29/30, 59/60", () => {
+  it("8. bucket edges 7/8, 30/31, 60/61, 90/91; notes 29/30, 59/60; stale_age from day 60", () => {
     assert.deepEqual([0, 7, 8, 30, 31, 60, 61, 90, 91, 400].map(ageBucket), ["0-7", "0-7", "8-30", "8-30", "31-60", "31-60", "61-90", "61-90", "90+", "90+"]);
     const at = (days: number) => buildPostingAge({ source: "workday.postedOn_text", precision: "day", daysAgo: days }, NOW, 60, "live");
     assert.equal(at(29).note, undefined);
@@ -199,8 +199,15 @@ describe("posting age (Nov 3, 2026 scope)", () => {
     assert.equal(at(59).note, noteForAge30to59(59));
     assert.equal(at(60).note, AGE_NOTE_OVER_60, "the stale note starts at 60 days");
     assert.equal(at(61).note, AGE_NOTE_OVER_60);
-    assert.equal(at(60).stale_age, false);
+    // "60 and up": stale from day 60 at the default threshold.
+    assert.equal(at(59).stale_age, false);
+    assert.equal(at(60).stale_age, true);
     assert.equal(at(61).stale_age, true);
+    assert.equal(buildPostingAge({ source: "workday.postedOn_text", precision: "day", daysAgo: 30 }, NOW, 30).stale_age, true);
+    assert.equal(buildPostingAge({ source: "workday.postedOn_text", precision: "day", daysAgo: 29 }, NOW, 30).stale_age, false);
+    // Workday "30+": stale when the lower bound reaches the threshold, else undecided.
+    assert.equal(buildPostingAge({ source: "workday.postedOn_text", precision: "at_least", atLeastDays: 30 }, NOW, 30).stale_age, true);
+    assert.equal(buildPostingAge({ source: "workday.postedOn_text", precision: "at_least", atLeastDays: 30 }, NOW, 60).stale_age, null);
     // Notes only on live answers.
     assert.equal(buildPostingAge({ source: "workday.postedOn_text", precision: "day", daysAgo: 80 }, NOW, 60, "closed").note, undefined);
   });
@@ -296,7 +303,7 @@ describe("posting age (Nov 3, 2026 scope)", () => {
     }
   });
 
-  it("13. audit math: buckets over dated rows sum to 100%, undated and 30+ counted apart", () => {
+  it("13. audit math: 30+/60+/90+ days are >= N, buckets sum to 100%, undated and 30+ counted apart", () => {
     const at = (days: number | null, status = "live", precision: PostingAge["age_precision"] = days === null ? "unknown" : "day"): AgeAuditRow => ({
       status,
       age: precision === "at_least" ? buildPostingAge({ source: "workday.postedOn_text", precision: "at_least", atLeastDays: 30 }, NOW) : days === null ? buildPostingAge(undefined, NOW) : buildPostingAge({ source: "workday.postedOn_text", precision: "day", daysAgo: days }, NOW),
@@ -311,15 +318,22 @@ describe("posting age (Nov 3, 2026 scope)", () => {
     const sum = Object.values(s.buckets).reduce((n, b) => n + b.count, 0);
     assert.equal(sum, 7);
     assert.ok(Math.abs(Object.values(s.buckets).reduce((n, b) => n + b.pct, 0) - 100) < 0.5);
-    assert.equal(s.over_30.count, 5);
-    assert.equal(s.over_60.count, 3);
-    assert.equal(s.over_90.count, 2);
-    assert.equal(s.over_90.pct, 28.6);
+    assert.equal(s.days_30_plus.count, 5);
+    assert.equal(s.days_60_plus.count, 3);
+    assert.equal(s.days_90_plus.count, 2);
+    assert.equal(s.days_90_plus.pct, 28.6);
+    assert.deepEqual([s.days_30_plus.label, s.days_60_plus.label, s.days_90_plus.label], ["30+ days", "60+ days", "90+ days"]);
+    // Edges count as "N and up": exactly 30, 60, and 90 days are included.
+    const edges = summarizeAges([at(29), at(30), at(59), at(60), at(89), at(90)], { checkedOn: "2026-11-03" });
+    assert.equal(edges.days_30_plus.count, 5);
+    assert.equal(edges.days_60_plus.count, 3);
+    assert.equal(edges.days_90_plus.count, 1);
+    assert.equal(edges.days_60_plus.pct, 50);
     assert.equal(s.buckets["31-60"].closed, 1);
     assert.equal(s.buckets["31-60"].closed_pct, 50);
     assert.ok(s.label.includes("2026-11-03") && s.label.includes("10 listings"));
     const empty = summarizeAges([], { checkedOn: "2026-11-03" });
-    assert.equal(empty.over_60.pct, 0);
+    assert.equal(empty.days_60_plus.pct, 0);
     const csv = ageAuditCsv([{ url: "https://x.example/a,b", ...rows[0]! }]);
     assert.ok(csv.startsWith("url,status,posted_at,age_days"));
     assert.ok(csv.includes('"https://x.example/a,b",live'));

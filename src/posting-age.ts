@@ -58,7 +58,7 @@ export type PostingAge = {
   age_source: AgeSource;
   age_precision: AgePrecision;
   age_bucket: AgeBucket;
-  /** age_days > stale_after_days. null when the age is unknown or only a lower bound that does not decide it. */
+  /** age_days >= stale_after_days ("60 and up" at the default). null when the age is unknown or only a lower bound that does not decide it. */
   stale_age: boolean | null;
   stale_after_days: number;
   /** A "last updated" date from the ATS. Never used as the posted date. */
@@ -278,7 +278,7 @@ export function buildPostingAge(
       age_source: evidence.source,
       age_precision: "at_least",
       age_bucket: min > 90 ? "90+" : min === 30 ? "30+" : ageBucket(min),
-      stale_age: min > staleAfterDays ? true : null,
+      stale_age: min >= staleAfterDays ? true : null,
       stale_after_days: staleAfterDays,
       ...extra,
       ...(note ? { note } : {}),
@@ -304,7 +304,7 @@ export function buildPostingAge(
     age_source: evidence.source,
     age_precision: evidence.daysAgo !== undefined ? "day" : (evidence.precision as "exact" | "day"),
     age_bucket: ageBucket(days),
-    stale_age: days > staleAfterDays,
+    stale_age: days >= staleAfterDays,
     stale_after_days: staleAfterDays,
     ...extra,
     ...(note ? { note } : {}),

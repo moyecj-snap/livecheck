@@ -3,7 +3,7 @@ import { ageBucket, type PostingAge } from "./posting-age.js";
 /**
  * Board-audit age table (Nov 3, 2026 scope). For a sample of a board's
  * listings: how many have a usable posted date, the age distribution, and
- * the share over 30 / 60 / 90 days, plus how many are closed in each bucket.
+ * the share at 30+, 60+, and 90+ days (age_days >= N), plus how many are closed in each bucket.
  *
  * Every number goes out with the check date and sample size. Percentages of
  * the age distribution are over dated rows only, so they add up to 100%.
@@ -25,10 +25,10 @@ export type AgeAuditSummary = {
   lower_bound_only: number;
   undated: number;
   buckets: Record<AuditBucket, { count: number; pct: number; closed: number; closed_pct: number }>;
-  /** Over dated rows: age_days > N. */
-  over_30: { count: number; pct: number };
-  over_60: { count: number; pct: number };
-  over_90: { count: number; pct: number };
+  /** Over dated rows: age_days >= N ("60 and up"). */
+  days_30_plus: { label: "30+ days"; count: number; pct: number };
+  days_60_plus: { label: "60+ days"; count: number; pct: number };
+  days_90_plus: { label: "90+ days"; count: number; pct: number };
   label: string;
 };
 
@@ -51,9 +51,9 @@ export function summarizeAges(rows: readonly AgeAuditRow[], options: { checkedOn
       const bucket = buckets[ageBucket(age.age_days)];
       bucket.count += 1;
       if (row.status === "closed") bucket.closed += 1;
-      if (age.age_days > 30) over[30] += 1;
-      if (age.age_days > 60) over[60] += 1;
-      if (age.age_days > 90) over[90] += 1;
+      if (age.age_days >= 30) over[30] += 1;
+      if (age.age_days >= 60) over[60] += 1;
+      if (age.age_days >= 90) over[90] += 1;
     } else if (age && age.age_precision === "at_least") {
       lowerBound += 1;
     } else {
@@ -75,9 +75,9 @@ export function summarizeAges(rows: readonly AgeAuditRow[], options: { checkedOn
     lower_bound_only: lowerBound,
     undated,
     buckets,
-    over_30: { count: over[30], pct: pct(over[30], dated) },
-    over_60: { count: over[60], pct: pct(over[60], dated) },
-    over_90: { count: over[90], pct: pct(over[90], dated) },
+    days_30_plus: { label: "30+ days", count: over[30], pct: pct(over[30], dated) },
+    days_60_plus: { label: "60+ days", count: over[60], pct: pct(over[60], dated) },
+    days_90_plus: { label: "90+ days", count: over[90], pct: pct(over[90], dated) },
     label: `${who}${options.checkedOn}, ${n} listings checked, ${dated} with a posted date from the hiring platform or the page`,
   };
 }
