@@ -35,8 +35,22 @@ export const SOURCE_DISTINCT_CAP = 50;
  * Extra tags can be added without a deploy via the free_page_launch_utm table
  * (npm run free:launch-tags). "test" is here so a single deploy check is visible.
  * "clawhub" is the ClawHub skill try-it link (?ref=clawhub).
+ * "hn", "reddit", "cursorforum", "devto", "indiehackers" are the Show HN week
+ * posted links (?ref=hn and friends).
  */
-export const LAUNCH_UTM_TAGS = ["producthunt", "linkedin", "x", "email", "test", "clawhub"] as const;
+export const LAUNCH_UTM_TAGS = [
+  "producthunt",
+  "linkedin",
+  "x",
+  "email",
+  "test",
+  "clawhub",
+  "hn",
+  "reddit",
+  "cursorforum",
+  "devto",
+  "indiehackers",
+] as const;
 export const LAUNCH_REFERRER_DOMAINS = ["producthunt.com", "linkedin.com", "x.com", "t.co"] as const;
 
 export const LAUNCH_UTM_TABLE_SQL = `

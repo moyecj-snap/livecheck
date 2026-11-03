@@ -46,4 +46,27 @@ describe("free /job launch utm tags", () => {
     assert.throws(() => upsertLaunchUtmTagIn(db, "clawhub"), /built-in/);
     db.close();
   });
+  it("Show HN week tags are built-in, never fold on one hit, and utm buckets still add up", () => {
+    const showHn = ["hn", "reddit", "cursorforum", "devto", "indiehackers"];
+    const db = openDb();
+    // A tag added at runtime before this deploy stays harmless: no duplicate in the list.
+    db.prepare("INSERT INTO free_page_launch_utm (tag, added_at, removed_at) VALUES ('hn', '2026-11-03T22:00:00Z', NULL)").run();
+    for (const tag of showHn) {
+      assert.ok((LAUNCH_UTM_TAGS as readonly string[]).includes(tag), tag);
+      assert.ok(effectiveLaunchUtmTags(null).has(tag), tag);
+      assert.throws(() => upsertLaunchUtmTagIn(db, tag), /built-in/);
+      bumpSourcesIn(db, "2026-11-04", "view", { referrer: "direct", utm: tag, ua: "browser" });
+    }
+    assert.equal(listLaunchUtmTagsFrom(db).filter((row) => row.tag === "hn").length, 1);
+    bumpSourcesIn(db, "2026-11-04", "view", { referrer: "direct", utm: "oneoff-random", ua: "browser" });
+    bumpSourcesIn(db, "2026-11-04", "view", { referrer: "direct", utm: "none", ua: "browser" });
+    const totals = readSourceTotalsFrom(db, "2026-11-04");
+    for (const tag of showHn) assert.equal(totals.view.utm[tag], 1, tag);
+    assert.equal(totals.view.utm.other, 1, "a non-launch one-off still folds");
+    const sum = (bucket: Record<string, number>) => Object.values(bucket).reduce((a, b) => a + b, 0);
+    assert.equal(sum(totals.view.utm), 7, "utm buckets add up to total views");
+    assert.equal(sum(totals.view.utm), sum(totals.view.ua));
+    assert.equal(sum(totals.view.utm), sum(totals.view.referrer));
+    db.close();
+  });
 });
