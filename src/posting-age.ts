@@ -41,12 +41,12 @@ export type AgePrecision = "exact" | "day" | "at_least" | "unknown";
 
 export type AgeBucket = "0-7" | "8-30" | "31-60" | "61-90" | "90+" | "30+" | "unknown";
 
-/** Neutral note for a live posting 30 to 60 days old. */
-export function noteForAge30to60(days: number | string): string {
+/** Neutral note for a live posting 30 to 59 days old. */
+export function noteForAge30to59(days: number | string): string {
   return `Posted ${days} days ago. Still open on the employer's site. Most applications come in during a posting's first few days.`;
 }
 
-/** Neutral note for a live posting over 60 days old. */
+/** Neutral note for a live posting 60 days old and up (Craig, Nov 3, 2026: "60 and up"). */
 export const AGE_NOTE_OVER_60 =
   "Posted over 60 days ago and still listed. Roles this old may already be in final interviews or quietly filled. If you apply, also reach out to the team directly.";
 
@@ -248,13 +248,13 @@ export function unknownAge(staleAfterDays = DEFAULT_STALE_AFTER_DAYS, lastUpdate
 function noteFor(status: string, days: number | undefined, atLeast: number | undefined): string | undefined {
   if (status !== "live") return undefined;
   if (days !== undefined) {
-    if (days > 60) return AGE_NOTE_OVER_60;
-    if (days >= 30) return noteForAge30to60(days);
+    if (days >= 60) return AGE_NOTE_OVER_60;
+    if (days >= 30) return noteForAge30to59(days);
     return undefined;
   }
   if (atLeast !== undefined) {
-    if (atLeast > 60) return AGE_NOTE_OVER_60;
-    if (atLeast >= 30) return noteForAge30to60(`${atLeast}+`);
+    if (atLeast >= 60) return AGE_NOTE_OVER_60;
+    if (atLeast >= 30) return noteForAge30to59(`${atLeast}+`);
   }
   return undefined;
 }

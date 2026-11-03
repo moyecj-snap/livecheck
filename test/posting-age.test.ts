@@ -19,7 +19,7 @@ import {
   buildPostingAge,
   clampStaleAfterDays,
   jsonLdJobPosting,
-  noteForAge30to60,
+  noteForAge30to59,
   parseAgeDate,
   parseWorkdayPostedOn,
   resolvePostingAge,
@@ -79,7 +79,7 @@ describe("posting age (Nov 3, 2026 scope)", () => {
     assert.equal(age.age_bucket, "31-60");
     assert.equal(age.stale_age, false);
     assert.equal(age.last_updated_at, "2026-11-03T10:00:00Z");
-    assert.equal(age.note, noteForAge30to60(39));
+    assert.equal(age.note, noteForAge30to59(39));
     // published_at is the next fallback.
     const pub = interpretAtsResponse(parseAtsJobUrl("https://job-boards.greenhouse.io/bitwarden/jobs/8002606003")!, 200, JSON.stringify(ghRow({ published_at: "2026-10-01T00:00:00Z" })));
     assert.equal(pub.outcome === "listed" && pub.age?.source, "greenhouse.published_at");
@@ -150,7 +150,7 @@ describe("posting age (Nov 3, 2026 scope)", () => {
     assert.equal(b.age_days_min, 30);
     assert.equal(b.age_bucket, "30+");
     assert.equal(b.stale_age, null);
-    assert.equal(b.note, noteForAge30to60("30+"));
+    assert.equal(b.note, noteForAge30to59("30+"));
     const twelve = buildPostingAge(interpretAtsResponse(ref, 200, JSON.stringify({ jobPostingInfo: { title: "Owner", postedOn: "Posted 12 Days Ago" } })).outcome === "listed" ? { source: "workday.postedOn_text", precision: "day", daysAgo: 12 } : undefined, NOW);
     assert.equal(twelve.posted_at, "2026-10-22");
     assert.equal(twelve.age_days, 12);
@@ -191,12 +191,13 @@ describe("posting age (Nov 3, 2026 scope)", () => {
     assert.equal(parseWorkdayPostedOn("Posted recently"), undefined);
   });
 
-  it("8. bucket edges: 7/8, 30/31, 60/61, 90/91", () => {
+  it("8. bucket edges 7/8, 30/31, 60/61, 90/91; notes 29/30, 59/60", () => {
     assert.deepEqual([0, 7, 8, 30, 31, 60, 61, 90, 91, 400].map(ageBucket), ["0-7", "0-7", "8-30", "8-30", "31-60", "31-60", "61-90", "61-90", "90+", "90+"]);
     const at = (days: number) => buildPostingAge({ source: "workday.postedOn_text", precision: "day", daysAgo: days }, NOW, 60, "live");
     assert.equal(at(29).note, undefined);
-    assert.equal(at(30).note, noteForAge30to60(30));
-    assert.equal(at(60).note, noteForAge30to60(60));
+    assert.equal(at(30).note, noteForAge30to59(30));
+    assert.equal(at(59).note, noteForAge30to59(59));
+    assert.equal(at(60).note, AGE_NOTE_OVER_60, "the stale note starts at 60 days");
     assert.equal(at(61).note, AGE_NOTE_OVER_60);
     assert.equal(at(60).stale_age, false);
     assert.equal(at(61).stale_age, true);
