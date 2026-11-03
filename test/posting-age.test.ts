@@ -199,6 +199,11 @@ describe("posting age (Nov 3, 2026 scope)", () => {
     assert.equal(at(59).note, noteForAge30to59(59));
     assert.equal(at(60).note, AGE_NOTE_OVER_60, "the stale note starts at 60 days");
     assert.equal(at(61).note, AGE_NOTE_OVER_60);
+    assert.equal(
+      AGE_NOTE_OVER_60,
+      "Posted 60+ days ago and still listed. Roles this old may already be in final interviews or quietly filled. If you apply, also reach out to the team directly.",
+    );
+    assert.ok(!AGE_NOTE_OVER_60.includes("over 60"));
     // "60 and up": stale from day 60 at the default threshold.
     assert.equal(at(59).stale_age, false);
     assert.equal(at(60).stale_age, true);

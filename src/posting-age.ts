@@ -48,7 +48,7 @@ export function noteForAge30to59(days: number | string): string {
 
 /** Neutral note for a live posting 60 days old and up (Craig, Nov 3, 2026: "60 and up"). */
 export const AGE_NOTE_OVER_60 =
-  "Posted over 60 days ago and still listed. Roles this old may already be in final interviews or quietly filled. If you apply, also reach out to the team directly.";
+  "Posted 60+ days ago and still listed. Roles this old may already be in final interviews or quietly filled. If you apply, also reach out to the team directly.";
 
 export type PostingAge = {
   posted_at: string | null;

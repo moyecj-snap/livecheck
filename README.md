@@ -149,7 +149,7 @@ Job answers from `POST /v1/verify/job` (and `POST /v1/verify` when the URL is a 
 - **Unknown is unknown:** no usable date (missing, malformed, before 2000, or more than a day in the future) → `posted_at: null`, `age_days: null`, `age_bucket: "unknown"`, `stale_age: null`.
 - **Stale:** `stale_age` is true at `age_days >= stale_after_days`, so with the default it is true from day 60 ("60 and up"), the same day the 60-day note starts.
 - **Reposts:** an employer that reposts a job resets the date, so the true age is at least `age_days`.
-- **Notes** (live answers only): 30–59 days, "Posted N days ago. Still open on the employer's site. Most applications come in during a posting's first few days." 60 days and up, "Posted over 60 days ago and still listed. Roles this old may already be in final interviews or quietly filled. If you apply, also reach out to the team directly."
+- **Notes** (live answers only): 30–59 days, "Posted N days ago. Still open on the employer's site. Most applications come in during a posting's first few days." 60 days and up, "Posted 60+ days ago and still listed. Roles this old may already be in final interviews or quietly filled. If you apply, also reach out to the team directly."
 - **Board audits:** `npm run audit:age -- urls.txt [--board NAME] [--stale-after-days N] [--csv out.csv]` runs the job check in strict robots.txt mode and prints the share of dated listings at 30+, 60+, and 90+ days (`age_days >= 30 / 60 / 90`), the bucket table, and the closed share per bucket, always with the check date and sample size.
 
 v1 reads HTML + status only. It does not execute page JavaScript. Redirects are followed; `canonical_url` is the final URL. User-Agent identifies Livecheck.
