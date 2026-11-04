@@ -158,7 +158,7 @@ export function openApiDocument(requestUrl?: string, host?: string): Record<stri
       "x-tags": [...OPENAPI_INFO_TAGS],
       "x-starter-key": {
         url: `${origin}${STARTER_KEY_PAGE_PATH}`,
-        description: `${STARTER_KEY_BUILDERS_LINE} Send Authorization: Bearer lc_live_… on POST /v1/verify, /v1/verify/job, or /v1/verify/listing. 200 checks over 30 days.`,
+        description: `${STARTER_KEY_BUILDERS_LINE} Send Authorization: Bearer lc_live_… on POST /v1/verify, /v1/verify/job, or /v1/verify/listing. 200 free checks over 30 days, no wallet needed.`,
       },
     },
     servers: [{ url: origin }],
