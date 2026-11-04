@@ -607,6 +607,18 @@ describe("MPP dispatcher on the verify routes (real mppx, stand-in Tempo method)
       assert.equal(stored.payer, PAYER);
       assert.equal(stored.amount_usd, "0.01");
       assert.ok(stored.settled_at);
+      // Money settled before the caller left: the call still counts once as a
+      // paid call (in its usual bucket), not marked late.
+      for (const res of held) res.destroy();
+      const waitRow = Date.now();
+      while (!listPaidCallRowsFromStore().some((r) => r.tx === hash)) {
+        if (Date.now() - waitRow > 3_000) throw new Error("no paid call recorded for the settled MPP payment");
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      const paidRows = listPaidCallRowsFromStore().filter((r) => r.tx === hash);
+      assert.equal(paidRows.length, 1);
+      assert.equal(paidRows[0]!.protocol, "mpp_tempo");
+      assert.equal(paidRows[0]!.settle_late, undefined);
     } finally {
       for (const res of held) res.destroy();
       page.closeAllConnections();

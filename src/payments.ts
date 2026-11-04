@@ -1,6 +1,8 @@
 import { createFacilitatorConfig } from "@coinbase/x402";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import type { FacilitatorClient } from "@x402/core/server";
+import type { SettleResponse } from "@x402/core/types";
+import type Stripe from "stripe";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { bazaarResourceServerExtension } from "@x402/extensions/bazaar";
 import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
@@ -50,7 +52,12 @@ import {
 } from "./x402-payload.js";
 import { rememberMockConfirmPayment, wrapFacilitatorForVerifiedAmount } from "./confirm-payment.js";
 import { withPaidWatchAttemptLog } from "./paid-watch-log.js";
-import { resolveFacilitatorTimeoutMs, withProcessorUnavailable503, wrapFacilitatorProcessorGuard } from "./processor-guard.js";
+import {
+  resolveFacilitatorTimeoutMs,
+  withProcessorUnavailable503,
+  wrapFacilitatorProcessorGuard,
+  type ProcessorGuardHooks,
+} from "./processor-guard.js";
 import { wrapFacilitatorSkipSettleIfDisconnected } from "./settle-abort.js";
 import { wrapFacilitatorForWatchPayer } from "./watch-payer.js";
 import { wrapFacilitatorForCatalog } from "./facilitator-catalog.js";
@@ -330,19 +337,60 @@ export function livePaymentMiddlewareFromServer(
   );
 }
 
+const guardHooksByServer = new WeakMap<x402ResourceServer, ProcessorGuardHooks>();
+
 export function resourceServerFromFacilitator(facilitatorClient: FacilitatorClient): x402ResourceServer {
   // ExactEvmScheme defaults to paymentFlow "authorization": verify, then the
   // handler, then settle only if the handler status is <400. The outer wrapper
   // refuses that settle when the caller already disconnected.
-  return new x402ResourceServer(
+  const hooks: ProcessorGuardHooks = {};
+  const server = new x402ResourceServer(
     wrapFacilitatorProcessorGuard(
       wrapFacilitatorSkipSettleIfDisconnected(
         wrapFacilitatorForVerifiedAmount(wrapFacilitatorForWatchPayer(facilitatorClient)),
       ),
+      hooks,
     ),
   )
     .register(NETWORK, new ExactEvmScheme())
     .registerExtension(bazaarResourceServerExtension);
+  guardHooksByServer.set(server, hooks);
+  return server;
+}
+
+/**
+ * Paid-call accounting for x402 settles (live wiring; tests pass no Stripe).
+ * - In-time settle: onAfterSettle records Stripe, then one paid_calls row.
+ * - Late settle (after 503 payment_status_unknown): the same Stripe record and
+ *   one paid_calls row marked settle_late, in its usual /stats bucket. It is
+ *   also a refund candidate. Stripe is idempotent on the tx hash and
+ *   paid_calls has a unique tx index, so a retry is not counted twice.
+ */
+export function attachPaidCallRecording(resourceServer: x402ResourceServer, stripe?: Stripe): void {
+  const record = async (
+    result: SettleResponse,
+    requirements: Parameters<typeof recordSettledPayment>[2],
+    paymentPayload: unknown,
+    late: boolean,
+  ): Promise<void> => {
+    const paymentIntent = stripe ? await recordSettledPayment(stripe, result, requirements) : undefined;
+    // SettleResponse is success, payer, transaction, network, and optional
+    // amount/extensions. It does not name the facilitator. Do not store a
+    // guessed name; CDP is process config, not a per-call field.
+    emitPaidCallAfterSettle({
+      payer: extractPayer(result, paymentPayload),
+      tx: result.transaction,
+      payment_intent: paymentIntent,
+      ...(late ? { late: true } : {}),
+    });
+  };
+  resourceServer.onAfterSettle(async ({ result, requirements, paymentPayload }) => {
+    await record(result, requirements, paymentPayload, false);
+  });
+  const hooks = guardHooksByServer.get(resourceServer);
+  if (hooks) {
+    hooks.onLateSettle = ({ result, requirements, paymentPayload }) => record(result, requirements, paymentPayload, true);
+  }
 }
 
 /**
@@ -367,18 +415,7 @@ function livePaymentMiddleware(): MiddlewareHandler {
 
   const facilitatorClient = wrapFacilitatorForCatalog(liveFacilitatorClient(keys));
   const resourceServer = resourceServerFromFacilitator(facilitatorClient);
-  const stripe = createStripeClient(keys.stripeSecretKey);
-  resourceServer.onAfterSettle(async ({ result, requirements, paymentPayload }) => {
-    const paymentIntent = await recordSettledPayment(stripe, result, requirements);
-    // SettleResponse is success, payer, transaction, network, and optional
-    // amount/extensions. It does not name the facilitator. Do not store a
-    // guessed name; CDP is process config, not a per-call field.
-    emitPaidCallAfterSettle({
-      payer: extractPayer(result, paymentPayload),
-      tx: result.transaction,
-      payment_intent: paymentIntent,
-    });
-  });
+  attachPaidCallRecording(resourceServer, createStripeClient(keys.stripeSecretKey));
 
   return livePaymentMiddlewareFromServer(resourceServer, keys.depositAddress);
 }

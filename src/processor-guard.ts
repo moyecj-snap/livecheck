@@ -1,4 +1,5 @@
 import type { FacilitatorClient } from "@x402/core/server";
+import type { PaymentPayload, PaymentRequirements, SettleResponse } from "@x402/core/types";
 import { FacilitatorResponseError } from "@x402/core/server";
 import type { Context, MiddlewareHandler } from "hono";
 import {
@@ -39,6 +40,20 @@ export class SettleStatusUnknownError extends FacilitatorResponseError {
 export const LATE_SETTLE_REASON = "settled_after_status_unknown";
 export const SETTLE_TIMEOUT_UNRESOLVED_REASON = "settle_timeout_unresolved";
 export const SETTLE_ERROR_UNRESOLVED_REASON = "settle_error_unresolved";
+
+/**
+ * Called once when a settle succeeds after the caller already got 503
+ * payment_status_unknown. Runs in the original request's async context, so
+ * the paid-call record from the handler is still available. Live wiring
+ * records Stripe and writes the paid_calls row (settle_late). Errors are logged.
+ */
+export type LateSettleRecorder = (args: {
+  result: SettleResponse;
+  requirements: PaymentRequirements;
+  paymentPayload: PaymentPayload;
+}) => Promise<void> | void;
+
+export type ProcessorGuardHooks = { onLateSettle?: LateSettleRecorder };
 
 let facilitatorTimeoutOverrideMs: number | null = null;
 
@@ -94,7 +109,7 @@ function asProcessorError(error: unknown): ProcessorUnavailableError {
  *   listed without one. Listing only: nothing is refunded automatically.
  * - settle success in time: noted for the disconnect watch (settle-abort.ts).
  */
-export function wrapFacilitatorProcessorGuard(inner: FacilitatorClient): FacilitatorClient {
+export function wrapFacilitatorProcessorGuard(inner: FacilitatorClient, hooks: ProcessorGuardHooks = {}): FacilitatorClient {
   return {
     getSupported: () => inner.getSupported(),
     verify: async (paymentPayload, paymentRequirements) => {
@@ -129,6 +144,19 @@ export function wrapFacilitatorProcessorGuard(inner: FacilitatorClient): Facilit
               responded_at: respondedAt,
               settled_at: isoTs(),
             });
+            // Count it as a paid call too (same bucket, marked settle_late), so
+            // /stats matches Stripe and on-chain. The tx unique index keeps a
+            // retry from counting it twice.
+            const recorder = hooks.onLateSettle;
+            if (recorder) {
+              Promise.resolve()
+                .then(() => recorder({ result, requirements: paymentRequirements, paymentPayload }))
+                .catch((error: unknown) => {
+                  console.warn(
+                    `[x402] late settle paid-call record failed: ${error instanceof Error ? error.message : String(error)}`,
+                  );
+                });
+            }
           } else if (result.errorReason === "settlement_pending") {
             // Broadcast but unconfirmed: may still land. Keep the tx for lookup.
             logRefundCandidate({

@@ -99,6 +99,8 @@ export type PaidCallSettlement = {
   payment_intent?: string;
   /** Set by the MPP dispatcher. The x402 settle hook leaves it unset (row stores x402). */
   protocol?: PaymentProtocol;
+  /** x402 settled after the caller got 503 payment_status_unknown. */
+  late?: boolean;
 };
 
 export type PaidCallRemembered = {
@@ -143,6 +145,8 @@ export type PaidCallEvent = {
   receipt_id?: string;
   /** Present on MPP calls only. Absent means x402, so the x402 log line is unchanged. */
   protocol?: PaymentProtocol;
+  /** Present only when x402 settled after the caller got 503 payment_status_unknown. */
+  settle_late?: true;
   ts: string;
 };
 
@@ -340,6 +344,7 @@ export function buildPaidCallEvent(
   if (paymentIntent) event.payment_intent = paymentIntent;
   const protocol = sanitizePaymentProtocol(settlement.protocol);
   if (protocol) event.protocol = protocol;
+  if (settlement.late === true) event.settle_late = true;
   return event;
 }
 
@@ -447,9 +452,16 @@ export function recordSuccessfulPaidCheck(input: {
   // Test mode and free starter keys never write a paid_calls row or count in /stats.
   if (isInternalTestMode() || isStarterKeyRequest()) return;
   rememberPaidCall(input);
-  if (!isLiveSettlement() && !paidCallAls.getStore()?.deferEmit) {
+  if (!isLiveSettlement() && !liveEmitForTests && !paidCallAls.getStore()?.deferEmit) {
     emitPaidCall();
   }
+}
+
+let liveEmitForTests = false;
+
+/** Test seam: behave like live settlement (emit only from the settle hook) without live keys. */
+export function setLiveSettleEmitForTests(on: boolean): void {
+  liveEmitForTests = on;
 }
 
 /** MPP dispatcher only: hold the handler's emit until the dispatcher has the payment fields. */
