@@ -1,5 +1,6 @@
 import { lookupAtsJob, combinePageAndAts, parseAtsJobUrl, verdictFromAtsWithoutPage } from "./ats-api.js";
 import { roleRefFor } from "./free-job-role.js";
+import { resolveGuessedGreenhouseMiss } from "./gh-jid-board.js";
 import { CHECK_TIMEOUT_SIGNAL, FETCH_TIMEOUT_MS, MAX_BODY_BYTES, PRICE_USD, USER_AGENT } from "./config.js";
 import { classify } from "./classify.js";
 import { ROBOTS_FETCH_TIMEOUT_MS, robotsAllows, robotsStrictTimeoutMs, type RobotsMode } from "./robots.js";
@@ -317,7 +318,11 @@ async function verifyUrlWithin(
   }
   // Company careers embeds (Figma and others) pass the Greenhouse id as gh_jid
   // instead of a boards.greenhouse.io URL. roleRefFor resolves that id.
-  const ats = options.atsApi ? parseAtsJobUrl(url) ?? roleRefFor(url) : null;
+  const direct = options.atsApi ? parseAtsJobUrl(url) : null;
+  let ats = options.atsApi ? direct ?? roleRefFor(url) : null;
+  // A board token guessed from the company host can be wrong (Datadog:
+  // careers.datadoghq.com, board "datadog"). Its miss is re-checked below.
+  const boardGuessed = Boolean(ats && !direct);
   if (ats) ageCtx.atsRef = true;
   let atsLookup: Promise<Awaited<ReturnType<typeof lookupAtsJob>>> | undefined;
   const page = await fetchPage(url, fetcher, {
@@ -347,7 +352,14 @@ async function verifyUrlWithin(
     if (!page.ok) throw page.error;
     return withShopify(url, classify(page.page, now), fetcher, signal);
   }
-  const api = await atsLookup;
+  const firstApi = await atsLookup;
+  const resolved = await resolveGuessedGreenhouseMiss(url, ats, firstApi, fetcher, {
+    guessed: boardGuessed,
+    html: page.ok ? page.page.html : undefined,
+    signal,
+  });
+  ats = resolved.ref;
+  const api = resolved.api;
   if (api.outcome === "listed") ageCtx.ats = api.age;
   if (page.ok) return combinePageAndAts(classify(page.page, now), api, ats.vendor);
   if (api.outcome === "unavailable") throw page.error;
