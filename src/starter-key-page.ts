@@ -101,14 +101,15 @@ function formBody(options: { oauth: boolean; closed?: string }): string {
   if (!options.oauth) reasons.push("GitHub sign-in is not configured on this server yet.");
   const disabled = reasons.length > 0 ? " disabled" : "";
   const extra = reasons.length ? `<p class="note">${reasons.map((line) => esc(line)).join(" ")}</p>` : "";
-  return `<p>A starter key calls <code>POST /v1/verify</code>, <code>/v1/verify/job</code>, and <code>/v1/verify/listing</code>. 200 checks over 30 days. Confirm, Sentinel, and <code>/check</code> stay on a wallet. The free <a href="/job">/job</a> page has its own limits.</p>
+  return `<p>A starter key calls <code>POST /v1/verify</code>, <code>/v1/verify/job</code>, and <code>/v1/verify/listing</code>. 200 free checks over 30 days, no wallet needed. Other Livecheck tools still need a wallet. The free <a href="/job">/job</a> page has its own limits.</p>
 <p>${esc(STARTER_KEY_PRIVACY_LINE)}</p>
+<p>Accounts under 7 days old cannot get a key.</p>
 <form method="post" action="${STARTER_KEY_PAGE_PATH}/start">
   <label><input type="checkbox" name="contact" value="yes"> ${esc(STARTER_KEY_CONTACT_LABEL)}</label>
   <button type="submit"${disabled}>Continue with GitHub</button>
 </form>
 ${extra}
-<p class="muted">Sign-in uses GitHub's public profile only. We do not ask for your email. One key per GitHub account. Accounts under 7 days old cannot get a key. The key is shown once.</p>`;
+<p class="muted">Sign-in uses GitHub's public profile only. We do not ask for your email. One key per GitHub account. The key is shown once.</p>`;
 }
 
 function cookieOptions(c: Context, maxAge: number): {
@@ -290,9 +291,9 @@ export function registerStarterKeyRoutes(app: Hono): void {
       c,
       shell(
         "Your starter key",
-        `<p>This is the only time the key is shown.</p>
+        `<p><strong>Copy this now. It's shown only once.</strong></p>
 <pre><code>${esc(issued.plaintext)}</code></pre>
-<p>Send it as <code>Authorization: Bearer</code> on <code>POST /v1/verify</code>, <code>/v1/verify/job</code>, and <code>/v1/verify/listing</code>. It expires ${esc(issued.expiresAt)}. Confirm, Sentinel, and <code>/check</code> stay on a wallet.</p>
+<p>Send it as <code>Authorization: Bearer</code> on <code>POST /v1/verify</code>, <code>/v1/verify/job</code>, and <code>/v1/verify/listing</code>. It expires ${esc(issued.expiresAt)}. Other Livecheck tools still need a wallet.</p>
 <p>${esc(STARTER_KEY_PRIVACY_LINE)}</p>`,
       ),
     );
