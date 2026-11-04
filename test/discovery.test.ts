@@ -29,6 +29,7 @@ import {
   VERIFY_DUAL_RAIL_PAYMENT,
   MPP_RETRY_RETENTION,
   MPP_UNCONFIRMED_503,
+  X402_STATUS_UNKNOWN_503,
   VERIFY_JOB_PAYMENT_DESCRIPTION,
   VERIFY_LISTING_PAYMENT_DESCRIPTION,
 } from "../src/config.js";
@@ -169,6 +170,8 @@ function assertLlmsTxt(res: Response, body: string) {
   assert.ok(body.includes(VERIFY_DUAL_RAIL_PAYMENT), "llms.txt must state both rails and the MPP-only 24h retention line");
   assert.ok(body.includes(MPP_RETRY_RETENTION));
   assert.ok(body.includes(MPP_UNCONFIRMED_503));
+  assert.ok(body.includes(X402_STATUS_UNKNOWN_503), "llms.txt must state the x402 payment_status_unknown 503");
+  assert.doesNotMatch(body, /charges? twice/i);
   assert.doesNotMatch(body, /\$0\.01 minimum/);
   assert.doesNotMatch(body, /minimumUsd/);
   assert.match(body, /POST \/v1\/verify, POST \/v1\/verify\/job, and POST \/v1\/verify\/listing/);
@@ -294,6 +297,8 @@ describe("discovery documents (mock gate)", () => {
     assert.equal("minimumUsd" in (mpp ?? {}), false);
     assert.ok(op.description?.includes(MPP_RETRY_RETENTION));
     assert.ok(op.description?.includes(MPP_UNCONFIRMED_503));
+    assert.ok(op.description?.includes(X402_STATUS_UNKNOWN_503));
+    assert.doesNotMatch(op.description ?? "", /charges? twice/i);
     assert.doesNotMatch(op.description ?? "", /minimum/);
     assert.ok(op.description?.includes(VERIFY_DUAL_RAIL_PAYMENT));
     assert.ok(job.description?.includes(VERIFY_DUAL_RAIL_PAYMENT));

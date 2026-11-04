@@ -379,6 +379,10 @@ export function migratePaidCallStore(db: DatabaseSync): void {
   // Grader / tester list (editable without a deploy). Seeded, idempotent.
   migrateTestWalletStore(db);
   db.exec(REFUND_CANDIDATES_SQL);
+  // Nov 4 2026: x402 late settles and undelivered answers. Add-only columns.
+  ensureColumn(db, "refund_candidates", "amount_usd", "amount_usd TEXT");
+  ensureColumn(db, "refund_candidates", "responded_at", "responded_at TEXT");
+  ensureColumn(db, "refund_candidates", "settled_at", "settled_at TEXT");
 }
 
 /**
@@ -1452,9 +1456,19 @@ export function queryProtocolRouteWindowsFromStore(
 export { PAYMENT_PROTOCOLS };
 
 /**
- * Paid calls that collected money but could not return a real answer
- * (MPP charges before the handler runs). One row per payment reference.
- * Nothing here is refunded automatically; it is the list to review.
+ * Paid calls that collected money (or may have) but could not return a real
+ * answer. One row per payment reference. Nothing here is refunded
+ * automatically; it is the list Craig reviews, and he approves each refund.
+ *
+ * Reasons:
+ * - MPP: `charge_outcome_unknown`, `handler_status_<n>`, `handler_threw`.
+ * - x402 `settled_after_status_unknown`: settle passed the 5s limit, the caller
+ *   got 503 payment_status_unknown, and the facilitator settled afterwards.
+ * - x402 `settle_timeout_unresolved` / `settle_error_unresolved`: the caller got
+ *   payment_status_unknown and the outcome was never learned (no tx). Look up
+ *   the payer's USDC transfers to our payTo around `responded_at`.
+ * - `settled_no_response_delivered` (x402 or MPP): the payment settled but the
+ *   caller disconnected before the answer was written.
  */
 export const REFUND_CANDIDATES_SQL = `
 CREATE TABLE IF NOT EXISTS refund_candidates (
@@ -1481,13 +1495,29 @@ export type RefundCandidate = {
   payer?: string;
   /** Livecheck's own status before it was replaced with the unknown answer. */
   http_status?: number;
+  /** Amount the payment was for, USD decimal string (e.g. "0.01"). */
+  amount_usd?: string;
+  /** When Livecheck answered "status unknown" (x402 late settle). Absent when no answer was delivered. */
+  responded_at?: string;
+  /** When the settlement was seen as successful. */
+  settled_at?: string;
 };
+
+function sanitizeUsd(value: string | undefined): string | null {
+  if (typeof value !== "string") return null;
+  return /^\d{1,9}(\.\d{1,6})?$/.test(value) ? value : null;
+}
+
+function sanitizeIsoTs(value: string | undefined): string | null {
+  if (typeof value !== "string") return null;
+  return /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,3})?Z$/.test(value) ? value : null;
+}
 
 export function insertRefundCandidate(db: DatabaseSync, candidate: RefundCandidate): boolean {
   const result = db
     .prepare(
-      `INSERT INTO refund_candidates (ts, protocol, payment_id, route, reason, payer, http_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO refund_candidates (ts, protocol, payment_id, route, reason, payer, http_status, amount_usd, responded_at, settled_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT DO NOTHING`,
     )
     .run(
@@ -1498,6 +1528,9 @@ export function insertRefundCandidate(db: DatabaseSync, candidate: RefundCandida
       candidate.reason.replace(/[^a-z0-9_:.-]/gi, "_").slice(0, 80),
       sanitizePayer(candidate.payer) ?? null,
       candidate.http_status ?? null,
+      sanitizeUsd(candidate.amount_usd),
+      sanitizeIsoTs(candidate.responded_at),
+      sanitizeIsoTs(candidate.settled_at),
     );
   return Number(result.changes) === 1;
 }
@@ -1514,12 +1547,13 @@ export function retainRefundCandidate(candidate: RefundCandidate): boolean {
   }
 }
 
-export function listRefundCandidates(db: DatabaseSync): RefundCandidate[] {
+export function listRefundCandidates(db: DatabaseSync, sinceIso?: string): RefundCandidate[] {
   const rows = db
     .prepare(
-      `SELECT ts, protocol, payment_id, route, reason, payer, http_status FROM refund_candidates ORDER BY ts ASC, id ASC`,
+      `SELECT ts, protocol, payment_id, route, reason, payer, http_status, amount_usd, responded_at, settled_at
+       FROM refund_candidates ${sinceIso ? "WHERE ts >= ?" : ""} ORDER BY ts ASC, id ASC`,
     )
-    .all() as Array<{
+    .all(...(sinceIso ? [sinceIso] : [])) as Array<{
     ts: string;
     protocol: string;
     payment_id: string | null;
@@ -1527,6 +1561,9 @@ export function listRefundCandidates(db: DatabaseSync): RefundCandidate[] {
     reason: string;
     payer: string | null;
     http_status: number | bigint | null;
+    amount_usd: string | null;
+    responded_at: string | null;
+    settled_at: string | null;
   }>;
   const out: RefundCandidate[] = [];
   for (const row of rows) {
@@ -1536,6 +1573,9 @@ export function listRefundCandidates(db: DatabaseSync): RefundCandidate[] {
     if (row.payment_id) item.payment_id = row.payment_id;
     if (row.payer) item.payer = row.payer;
     if (row.http_status !== null) item.http_status = Number(row.http_status);
+    if (row.amount_usd) item.amount_usd = row.amount_usd;
+    if (row.responded_at) item.responded_at = row.responded_at;
+    if (row.settled_at) item.settled_at = row.settled_at;
     out.push(item);
   }
   return out;

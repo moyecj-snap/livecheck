@@ -27,6 +27,7 @@ import {
   WATCH_PAYMENT_DESCRIPTION,
   WATCH_PRICE_LABEL,
   WATCH_RENEW_PAYMENT_DESCRIPTION,
+  FACILITATOR_SETTLE_OBSERVE_MS,
   isLiveSettlement,
   missingLiveKeyNames,
   readLiveKeys,
@@ -346,14 +347,15 @@ export function resourceServerFromFacilitator(facilitatorClient: FacilitatorClie
 
 /**
  * CDP facilitator client with an explicit HTTP deadline.
- * The SDK default is 30s and already aborts verify/settle/supported.
- * 5s matches the processor guard: a hung verify or settle becomes 503 and
- * is not collected. Settle expiry is indeterminate, so it is not retried.
+ * The processor guard answers the caller at 5s (FACILITATOR_TIMEOUT_MS). This
+ * HTTP request is allowed FACILITATOR_SETTLE_OBSERVE_MS (60s) so a settle that
+ * finishes after the caller got "payment status unknown" is still seen and
+ * listed as a refund candidate with its tx. Settle is never retried.
  */
 export function liveFacilitatorClient(keys: LiveKeys): HTTPFacilitatorClient {
   return new HTTPFacilitatorClient({
     ...createFacilitatorConfig(keys.cdpApiKeyId, keys.cdpApiKeySecret),
-    timeoutMs: resolveFacilitatorTimeoutMs(),
+    timeoutMs: Math.max(FACILITATOR_SETTLE_OBSERVE_MS, resolveFacilitatorTimeoutMs()),
   });
 }
 

@@ -181,9 +181,30 @@ export const MPP_RETRY_RETENTION =
   "With MPP (Tempo): Paid answers, including the checked link, are kept for 24 hours so retries are safe, then deleted.";
 export const VERIFY_DUAL_RAIL_PAYMENT =
   `The unpaid 402 offers both x402 (Base USDC) and MPP (Tempo USDC.e). Each charges exactly $0.01. MPP method is tempo/charge: USDC.e on Tempo (chain 4217). Stripe pays Tempo gas. ${MPP_RETRY_RETENTION}`;
-/** HTTP 503 error payment_unconfirmed when an MPP charge throws (src/mpp.ts). Capacity and x402 processor 503s are still before settlement. */
+/**
+ * HTTP 503 error payment_unconfirmed when an MPP charge throws (src/mpp.ts).
+ * Craig, Nov 4 2026: say only what is guaranteed. No "never charges twice".
+ */
 export const MPP_UNCONFIRMED_503 =
-  "An MPP 503 with error payment_unconfirmed means the payment could not be confirmed: a possible charge is logged for refund, and retrying with the same credential is safe and never charges twice.";
+  "An MPP 503 with error payment_unconfirmed means the payment could not be confirmed: a possible charge is logged for refund. Retry with the same credential, not a new payment.";
+/**
+ * x402 settle passed the FACILITATOR_TIMEOUT_MS (5s) limit. The facilitator may
+ * still settle it, so this 503 must never say "not charged" (Craig, Nov 4 2026,
+ * word for word). A late settle, and a settle whose answer never reached the
+ * caller, go on the refund-candidate list for Craig to approve.
+ */
+export const PAYMENT_STATUS_UNKNOWN_MESSAGE =
+  "Payment status unknown. Don't retry for 60 seconds. If you were charged and got no answer, we'll refund it.";
+/** Retry-After on the x402 payment_status_unknown 503. Matches the message above. */
+export const PAYMENT_STATUS_UNKNOWN_RETRY_AFTER_SECONDS = 60;
+export const X402_STATUS_UNKNOWN_503 =
+  `An x402 503 with error payment_status_unknown means the payment took longer than 5 seconds to settle: ${PAYMENT_STATUS_UNKNOWN_MESSAGE} Retry-After is 60.`;
+/**
+ * The guard answers the caller after FACILITATOR_TIMEOUT_MS, but the facilitator
+ * HTTP request keeps running up to this long so a late settle (and its tx) is
+ * seen and listed as a refund candidate.
+ */
+export const FACILITATOR_SETTLE_OBSERVE_MS = 60_000;
 export const OPENAPI_INFO_DESCRIPTION =
   `Live status of a specific product page, marketplace listing, or job posting, read from the page at call time. Returns live, closed, or unknown plus title and evidence signals. Also one-shot page condition checks, 30-day URL watchers, watcher renew, and signed confirmation of form submissions and orders. On POST /v1/verify, /v1/verify/job, and /v1/verify/listing: ${VERIFY_DUAL_RAIL_PAYMENT}`;
 export const OPENAPI_INFO_GUIDANCE =
@@ -206,19 +227,19 @@ export const OPENAPI_VERIFY_SUMMARY = "Is this listing, product, or job posting 
 export const LINKEDIN_UNSUPPORTED_COPY =
   "LinkedIn isn't supported (its robots.txt blocks automated checks). Use the company's own job link.";
 export const OPENAPI_VERIFY_DESCRIPTION =
-  `POST {"url"} for one specific product page, marketplace listing (eBay, Shopify, Etsy, Poshmark, Mercari), or job posting (Greenhouse, Lever, Workday, Ashby, company careers pages). Livecheck fetches the page at call time and returns status live, closed, or unknown, with title, evidence signals (e.g. in stock, sold out, ended, apply form present, 404), HTTP status, canonical URL, and confidence. Use it before recommending, buying, applying, or scraping, and to clean stale URLs out of search results or datasets. Search engines and job boards are snapshots; this reads the page now. Not a search engine: bring the URL. Reads HTML (no JavaScript). Ashby, Workday, Lever, and Greenhouse job URLs may also use that vendor's public job-board API (no API key): a Greenhouse or Workday missing posting is closed, a listed posting can confirm live, and API errors fall back to HTML. A Lever or Ashby posting missing from the public feed is not closed on that alone. Bot challenges stay unknown. Availability only, not legitimacy or fraud risk. Fixed $0.01. ${VERIFY_DUAL_RAIL_PAYMENT} On 503 over_capacity or x402 processor_unavailable, wait for Retry-After and retry; you were not charged. ${MPP_UNCONFIRMED_503} Do not treat 503 as closed or unknown. For a list of URLs, send up to 8 checks at a time.`;
+  `POST {"url"} for one specific product page, marketplace listing (eBay, Shopify, Etsy, Poshmark, Mercari), or job posting (Greenhouse, Lever, Workday, Ashby, company careers pages). Livecheck fetches the page at call time and returns status live, closed, or unknown, with title, evidence signals (e.g. in stock, sold out, ended, apply form present, 404), HTTP status, canonical URL, and confidence. Use it before recommending, buying, applying, or scraping, and to clean stale URLs out of search results or datasets. Search engines and job boards are snapshots; this reads the page now. Not a search engine: bring the URL. Reads HTML (no JavaScript). Ashby, Workday, Lever, and Greenhouse job URLs may also use that vendor's public job-board API (no API key): a Greenhouse or Workday missing posting is closed, a listed posting can confirm live, and API errors fall back to HTML. A Lever or Ashby posting missing from the public feed is not closed on that alone. Bot challenges stay unknown. Availability only, not legitimacy or fraud risk. Fixed $0.01. ${VERIFY_DUAL_RAIL_PAYMENT} On 503 over_capacity or x402 processor_unavailable, wait for Retry-After and retry; you were not charged. ${MPP_UNCONFIRMED_503} ${X402_STATUS_UNKNOWN_503} Do not treat 503 as closed or unknown. For a list of URLs, send up to 8 checks at a time.`;
 export const OPENAPI_VERIFY_TAGS = ["listing-status", "product-availability", "job-postings"] as const;
 /** OpenAPI POST /v1/verify/job. Same $0.01 handler as /v1/verify, plus public ATS board APIs. */
 export const OPENAPI_VERIFY_JOB_SUMMARY =
   "Is this job posting still open? Check one specific job URL before applying ($0.01)";
 export const OPENAPI_VERIFY_JOB_DESCRIPTION =
-  `POST {"url"} for one specific job posting page. Livecheck fetches the posting at call time and returns open or closed status as live, closed, or unknown, with the job title and evidence signals. Works on company careers pages and applicant tracking systems such as Greenhouse, Lever, Workday, Ashby, SmartRecruiters, and iCIMS. Detects closed postings from 404 and 410 responses, redirects back to the job board, empty ATS listings, and closure language such as "position filled", "no longer accepting applications", and "this job has expired". For Ashby, Workday, Lever, and Greenhouse posting URLs, may also consult that vendor's public job-board API (no API key). If Greenhouse or Workday reports the posting missing, the verdict is closed (ats_api_missing). A Lever or Ashby posting missing from the public feed is not closed on that alone (ats_not_in_public_feed): an apply form stays live, and closed still requires a 404, a redirect to the board, or a closure banner. If the API lists it and the page is live or a JavaScript-only shell, the verdict is live (ats_api_listed). If the page looks closed but the API still lists it, the verdict is unknown. Livecheck does not bypass Cloudflare or reCAPTCHA: a bot challenge page alone is unknown (challenge_page), and when the link carries a job id the vendor's public API answers instead. A job link that redirects to a search, list or board page, or loses its job id, is closed or unknown, never live. ${LINKEDIN_UNSUPPORTED_COPY} API timeouts and HTTP 5xx fall back to the HTML read and are never treated as closed. Not a job search: bring the posting URL. Fixed $0.01. ${VERIFY_DUAL_RAIL_PAYMENT} On 503 over_capacity or x402 processor_unavailable, wait for Retry-After and retry; you were not charged. ${MPP_UNCONFIRMED_503} Do not treat 503 as closed or unknown. For a list of URLs, send up to 8 checks at a time.`;
+  `POST {"url"} for one specific job posting page. Livecheck fetches the posting at call time and returns open or closed status as live, closed, or unknown, with the job title and evidence signals. Works on company careers pages and applicant tracking systems such as Greenhouse, Lever, Workday, Ashby, SmartRecruiters, and iCIMS. Detects closed postings from 404 and 410 responses, redirects back to the job board, empty ATS listings, and closure language such as "position filled", "no longer accepting applications", and "this job has expired". For Ashby, Workday, Lever, and Greenhouse posting URLs, may also consult that vendor's public job-board API (no API key). If Greenhouse or Workday reports the posting missing, the verdict is closed (ats_api_missing). A Lever or Ashby posting missing from the public feed is not closed on that alone (ats_not_in_public_feed): an apply form stays live, and closed still requires a 404, a redirect to the board, or a closure banner. If the API lists it and the page is live or a JavaScript-only shell, the verdict is live (ats_api_listed). If the page looks closed but the API still lists it, the verdict is unknown. Livecheck does not bypass Cloudflare or reCAPTCHA: a bot challenge page alone is unknown (challenge_page), and when the link carries a job id the vendor's public API answers instead. A job link that redirects to a search, list or board page, or loses its job id, is closed or unknown, never live. ${LINKEDIN_UNSUPPORTED_COPY} API timeouts and HTTP 5xx fall back to the HTML read and are never treated as closed. Not a job search: bring the posting URL. Fixed $0.01. ${VERIFY_DUAL_RAIL_PAYMENT} On 503 over_capacity or x402 processor_unavailable, wait for Retry-After and retry; you were not charged. ${MPP_UNCONFIRMED_503} ${X402_STATUS_UNKNOWN_503} Do not treat 503 as closed or unknown. For a list of URLs, send up to 8 checks at a time.`;
 export const OPENAPI_VERIFY_JOB_TAGS = ["job-postings", "job-status", "listing-status"] as const;
 /** OpenAPI POST /v1/verify/listing. Same $0.01 handler as /v1/verify. Craig Sept 30 brief, word for word. */
 export const OPENAPI_VERIFY_LISTING_SUMMARY =
   "Is this product listing still available or sold out? Check one eBay, Shopify, or product page URL ($0.01)";
 export const OPENAPI_VERIFY_LISTING_DESCRIPTION =
-  `POST {"url"} for one specific product page or marketplace listing. Livecheck fetches the page at call time and returns live, closed, or unknown with the title and evidence signals such as in-stock, sold-out, and eBay listing ended. Works on eBay item pages, Shopify product pages, and standard HTML product pages. Use it before recommending a product, before adding to cart or buying, and to remove sold-out or deleted items from shopping search results, price comparisons, and scraped product lists. Search engines and shopping indexes are snapshots; this reads the page now. Not a product search: bring the item URL. Reads HTML only; unknown means the page could not be read reliably. Availability only, not legitimacy or fraud risk. Fixed $0.01. ${VERIFY_DUAL_RAIL_PAYMENT} On 503 over_capacity or x402 processor_unavailable, wait for Retry-After and retry; you were not charged. ${MPP_UNCONFIRMED_503} Do not treat 503 as closed or unknown. For a list of URLs, send up to 8 checks at a time.`;
+  `POST {"url"} for one specific product page or marketplace listing. Livecheck fetches the page at call time and returns live, closed, or unknown with the title and evidence signals such as in-stock, sold-out, and eBay listing ended. Works on eBay item pages, Shopify product pages, and standard HTML product pages. Use it before recommending a product, before adding to cart or buying, and to remove sold-out or deleted items from shopping search results, price comparisons, and scraped product lists. Search engines and shopping indexes are snapshots; this reads the page now. Not a product search: bring the item URL. Reads HTML only; unknown means the page could not be read reliably. Availability only, not legitimacy or fraud risk. Fixed $0.01. ${VERIFY_DUAL_RAIL_PAYMENT} On 503 over_capacity or x402 processor_unavailable, wait for Retry-After and retry; you were not charged. ${MPP_UNCONFIRMED_503} ${X402_STATUS_UNKNOWN_503} Do not treat 503 as closed or unknown. For a list of URLs, send up to 8 checks at a time.`;
 export const OPENAPI_VERIFY_LISTING_TAGS = ["product-availability", "listing-status", "ecommerce"] as const;
 /**
  * ASCII-only 402 / health description for POST /v1/verify.
@@ -261,9 +282,12 @@ export const CHECK_TIMEOUT_SIGNAL = "check_timeout";
 /**
  * Each facilitator verify / settle HTTP call.
  * @x402/core defaults to 30s. 5s stops a stuck Coinbase/CDP verify or settle
- * from holding the only Fly machine. On timeout or processor error Livecheck
- * does not settle and returns 503. A settle timeout is indeterminate at the
- * facilitator, so Livecheck does not retry settle and does not record a paid call.
+ * from holding the only Fly machine. A verify timeout or processor error is
+ * before payment: 503 processor_unavailable, "You were not charged." A settle
+ * timeout or processor error is indeterminate at the facilitator: 503
+ * payment_status_unknown (Retry-After 60), never "not charged". Livecheck does
+ * not retry settle and does not record a paid call; a late settle is listed as
+ * a refund candidate (see FACILITATOR_SETTLE_OBSERVE_MS).
  */
 export const FACILITATOR_TIMEOUT_MS = 5_000;
 /**
@@ -275,7 +299,8 @@ export const FACILITATOR_TIMEOUT_MS = 5_000;
  * When every slot is taken, up to CHECK_QUEUE_MAX requests wait up to
  * CHECK_QUEUE_WAIT_MS for a free slot. The response is 503 + Retry-After
  * only when that queue is full or the wait expires, and only before
- * facilitator verify/settle, so the caller is not charged.
+ * facilitator verify/settle, so the caller is not charged (that 503 keeps
+ * "You were not charged.").
  * LIVECHECK_CHECK_QUEUE_MAX: integer 0–256, default 30 (0 rejects immediately).
  * LIVECHECK_CHECK_QUEUE_WAIT_MS: integer 1–120000, default 10000.
  */

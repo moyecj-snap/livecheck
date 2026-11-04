@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
+import { createServer as createHttpServer } from "node:http";
 import { serve } from "@hono/node-server";
 import type { FacilitatorClient } from "@x402/core/server";
 import type { MiddlewareHandler } from "hono";
@@ -558,6 +559,59 @@ describe("MPP dispatcher on the verify routes (real mppx, stand-in Tempo method)
     assert.ok(row, "the payment still counts as a paid call");
     assert.equal(row.status, "unknown");
     assert.equal(row.protocol, "mpp_tempo");
+  });
+
+  it("caller disconnects after the MPP payment settles: listed as settled_no_response_delivered", async () => {
+    const held: Array<import("node:http").ServerResponse> = [];
+    let pageHits = 0;
+    const page = createHttpServer((req, res) => {
+      if (req.url === "/robots.txt") {
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end("User-agent: *\nAllow: /\n");
+        return;
+      }
+      pageHits += 1;
+      held.push(res); // hang: the handler is still running when the caller leaves
+    });
+    await new Promise<void>((resolve) => page.listen(0, "127.0.0.1", () => resolve()));
+    const address = page.address();
+    if (!address || typeof address === "string") throw new Error("expected tcp address");
+    try {
+      const target = `http://127.0.0.1:${address.port}/slow-job`;
+      const body = JSON.stringify({ url: target });
+      const unpaid = await post(mpp.origin, "/v1/verify/job", body);
+      const hash = txHash(0x5d);
+      const controller = new AbortController();
+      const pending = fetch(`${mpp.origin}/v1/verify/job`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: credentialFor(unpaid, hash) },
+        body,
+        signal: controller.signal,
+      }).catch((error: unknown) => error);
+      const started = Date.now();
+      while (pageHits === 0) {
+        if (Date.now() - started > 3_000) throw new Error("handler never fetched the page");
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      controller.abort();
+      assert.ok((await pending) instanceof Error);
+      const seen = Date.now();
+      while (!listRefundCandidatesFromStore().some((r) => r.payment_id === hash)) {
+        if (Date.now() - seen > 3_000) throw new Error("no refund candidate for the undelivered answer");
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      const stored = listRefundCandidatesFromStore().find((r) => r.payment_id === hash)!;
+      assert.equal(stored.reason, "settled_no_response_delivered");
+      assert.equal(stored.protocol, "mpp_tempo");
+      assert.equal(stored.route, "verify/job");
+      assert.equal(stored.payer, PAYER);
+      assert.equal(stored.amount_usd, "0.01");
+      assert.ok(stored.settled_at);
+    } finally {
+      for (const res of held) res.destroy();
+      page.closeAllConnections();
+      await new Promise<void>((resolve) => page.close(() => resolve()));
+    }
   });
 
   it("settle throws: 503 payment_unconfirmed + refund candidate; retries re-check the same payment and never charge twice", async () => {

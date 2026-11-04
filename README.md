@@ -12,7 +12,7 @@ MPP method is `tempo/charge`: USDC.e on Tempo (chain 4217). Stripe pays Tempo ga
 
 With MPP (Tempo): Paid answers, including the checked link, are kept for 24 hours so retries are safe, then deleted.
 
-An MPP 503 with error `payment_unconfirmed` means the payment could not be confirmed: a possible charge is logged for refund, and retrying with the same credential is safe and never charges twice. A 503 `over_capacity` or x402 `processor_unavailable` means you were not charged. Do not treat either 503 as closed or unknown.
+An MPP 503 with error `payment_unconfirmed` means the payment could not be confirmed: a possible charge is logged for refund. Retry with the same credential, not a new payment. An x402 503 with error `payment_status_unknown` means the payment took longer than 5 seconds to settle: Payment status unknown. Don't retry for 60 seconds. If you were charged and got no answer, we'll refund it. Retry-After is 60. A 503 `over_capacity` or x402 `processor_unavailable` (the processor did not answer before payment) means you were not charged. Do not treat any of these 503s as closed or unknown.
 
 ## Verify-first: first paid call
 
@@ -236,6 +236,23 @@ On Fly, the same commands over ssh, for example `fly ssh console -a livecheck -C
 `keys:mark-internal` flags our own dry-run or test key, like `testers:add` for wallets. It leaves issued, activated, 20+ checks, free checks, out of credit, and the 7-day follow-up list. The key still works until revoked. The daily cap meter still counts its checks, because the cap guards load. `keys:delete` removes one account's key record and its per-key counts now, overriding the 90-day retention for that record so the same GitHub account can sign in for a fresh key. It logs the key id and login, never the key or its hash.
 
 Card top-up is not in this phase. `paid_left` stays 0. When it is built, a card-funded call should be a paid call with payer `key:<id>` (external, even on a docs-example URL).
+
+## Refund candidates (listing only)
+
+Payments that may have been collected without a delivered answer are listed in `refund_candidates` (and as a `livecheck.refund_candidate` stdout line). Nothing is refunded automatically; each refund is approved by hand.
+
+- `settled_after_status_unknown`: x402 settle passed 5 seconds, the caller got 503 `payment_status_unknown`, and the facilitator settled afterwards (tx recorded).
+- `settle_timeout_unresolved` / `settle_error_unresolved`: the caller got `payment_status_unknown` and the outcome was never learned (no tx; look up the payer's USDC transfers to our payTo around `responded_at`).
+- `settled_no_response_delivered`: x402 or MPP settled, then the caller disconnected before the answer was written. An MPP caller can still retry with the same credential and get the stored answer, so check before refunding.
+- MPP: `charge_outcome_unknown`, `handler_status_<n>`, `handler_threw`.
+
+Each row has payer, amount_usd, tx (`payment_id`), route, reason, `ts`, `responded_at` and `settled_at`. Read-only list for the nightly review:
+
+```sh
+npm run --silent refunds:list -- --since 2026-11-04 --json
+```
+
+A late-settled x402 payment is not written to `paid_calls` or Stripe; it appears only on this list.
 
 ## Free job check page (`GET /job`)
 

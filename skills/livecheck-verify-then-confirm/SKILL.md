@@ -132,7 +132,8 @@ Bodies are `{ "error": "<message>" }`. There is no `code` field and no `invalid_
 - 504: `Timed out fetching <url> after 8000ms.`
 - 502: `Could not fetch URL: <message>`
 - 503: `over_capacity` or `processor_unavailable`, with `message`. Wait for the `Retry-After` header and retry. You were not charged. Do not treat 503 as `closed` or `unknown`.
-- 503: MPP `payment_unconfirmed`. The payment could not be confirmed. A possible charge is logged for refund, and retrying with the same credential is safe and never charges twice. Do not treat this as `closed` or `unknown`.
+- 503: MPP `payment_unconfirmed`. The payment could not be confirmed. A possible charge is logged for refund. Retry with the same credential, not a new payment. Do not treat this as `closed` or `unknown`.
+- 503: x402 `payment_status_unknown`. Settlement took longer than 5 seconds. Payment status unknown. Don't retry for 60 seconds (Retry-After: 60). If you were charged and got no answer, we'll refund it. Do not treat this as `closed` or `unknown`.
 
 ## Capacity
 On HTTP 503, wait for `Retry-After` and retry. For a list of URLs, send up to 8 checks at a time.
