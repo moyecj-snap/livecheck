@@ -11,6 +11,8 @@ import {
   GH_JID_COMPANY_EMBED,
   GH_JID_COMPANY_PAGE_ERROR,
   GH_JID_COMPANY_PAGE_ERROR_MESSAGE,
+  GH_JID_COMPANY_PAGE_NOT_FOUND,
+  GH_JID_COMPANY_PAGE_NOT_FOUND_MESSAGE,
   parseAtsJobUrl,
 } from "./ats-api.js";
 import {
@@ -381,6 +383,8 @@ export function evidenceInPlainWords(signals: readonly string[], platform: strin
         add("Link opens this posting on the company's own careers page (same job id)");
       }
     } else if (signal === GH_JID_COMPANY_PAGE_ERROR) add(GH_JID_COMPANY_PAGE_ERROR_MESSAGE);
+    else if (signal === GH_JID_COMPANY_PAGE_NOT_FOUND) add(GH_JID_COMPANY_PAGE_NOT_FOUND_MESSAGE);
+    else if (signal === "http_404" && signals.includes(GH_JID_COMPANY_PAGE_NOT_FOUND)) continue;
     else if (signal === ATS_NOT_IN_PUBLIC_FEED) add(`Not in ${platform}'s public jobs feed; the posting page is what we use`);
     else if (signal.startsWith("ats_posted_at:")) {
       const day = formatDay(signal.slice("ats_posted_at:".length));

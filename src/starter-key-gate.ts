@@ -64,6 +64,42 @@ async function spendFromResponse(res: Response | undefined): Promise<{ charge: b
   }
 }
 
+/** `paid_with` on a verify answer that ran on a starter key. */
+export const FREE_CREDIT_PAID_WITH = "free_credit";
+
+/**
+ * A starter-key answer cost the caller nothing, so the body must say so.
+ * The verdict is built with the wallet price ($0.01); on a key it becomes
+ * `price_usd: 0`, `paid_with: "free_credit"`, `credits_remaining`, and
+ * `credit_used` (false when the answer did not spend a check, e.g. a
+ * robots.txt can't-tell). Nothing else in the verdict changes.
+ */
+async function markFreeCreditBody(c: Context, left: number, creditUsed: boolean): Promise<void> {
+  const res = c.res;
+  if (!res || res.status !== 200) return;
+  if (!(res.headers.get("content-type") ?? "").includes("json")) return;
+  let body: unknown;
+  try {
+    body = await res.clone().json();
+  } catch {
+    return;
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return;
+  const record = body as Record<string, unknown>;
+  if (!("price_usd" in record)) return;
+  const next = {
+    ...record,
+    price_usd: 0,
+    paid_with: FREE_CREDIT_PAID_WITH,
+    credits_remaining: left,
+    credit_used: creditUsed,
+  };
+  const headers = new Headers(res.headers);
+  headers.delete("content-length");
+  c.res = undefined;
+  c.res = new Response(JSON.stringify(next), { status: res.status, headers });
+}
+
 /**
  * Admit a starter-key verify. `admit` is the shared check-slot queue.
  * The credit reservation is released when the answer is not chargeable,
@@ -104,6 +140,7 @@ export async function runStarterKeyAdmission(c: Context, next: Next, token: stri
       const done = finishStarterCall(db, keyId, outcome, starterKeyNow());
       const left = Math.max(0, done.freeAllowance - done.freeUsed);
       c.res?.headers.set("x-livecheck-free-left", String(left));
+      await markFreeCreditBody(c, left, outcome.charge);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       console.warn(`[starter_keys] could not settle key ${keyId}: ${reason}`);

@@ -12,6 +12,12 @@ export type VerifyVerdict = {
   price_usd: number;
   /** Set when the caller should read why, such as robots.txt (unknown) or a Greenhouse-listed job whose company careers page errored (live). */
   message?: string;
+  /** Starter-key answers only: "free_credit". Paid x402 answers omit it and keep price_usd 0.01. */
+  paid_with?: "free_credit";
+  /** Starter-key answers only: free checks left on the key after this answer. */
+  credits_remaining?: number;
+  /** Starter-key answers only: false when the answer did not spend a check (e.g. robots.txt can't-tell). */
+  credit_used?: boolean;
 };
 
 export type ConfirmVerdictStatus = "confirmed" | "failed" | "unknown";
