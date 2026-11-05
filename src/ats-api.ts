@@ -1,6 +1,12 @@
 import { atsResponseCacheKey, joinAtsFetch, readAtsResponseCache, writeAtsResponseCache } from "./ats-cache.js";
 import { ATS_FETCH_TIMEOUT_MS, MAX_BODY_BYTES, PRICE_USD, USER_AGENT } from "./config.js";
 import { DeadlineError, linkedAbort, resolveDeadlineMs } from "./deadline.js";
+import {
+  greenhouseAgeEvidence,
+  simpleAgeEvidence,
+  workdayAgeEvidence,
+  type AgeEvidence,
+} from "./posting-age.js";
 import type { VerifyVerdict } from "./types.js";
 
 /**
@@ -68,8 +74,16 @@ export type AtsLookup =
       /** Employer display name when the board API gives one (Greenhouse company_name). */
       company?: string;
       canonicalUrl?: string;
-      /** ISO-8601 from the board payload (Greenhouse first_published / updated_at, etc.). */
+      /**
+       * ISO-8601 from the board payload (Greenhouse first_published / updated_at, etc.).
+       * Legacy v108 field: it only picks 0.97 vs 0.96 confidence and is kept
+       * exactly as it was so dates never change a confidence value. Age uses `age`.
+       */
       postedAt?: string;
+      /** True when `postedAt` is only Greenhouse updated_at (not a posted date; no ats_posted_at signal). */
+      postedAtFromUpdatedAt?: boolean;
+      /** Posting-age evidence (never updated_at as posted). Context only, never a verdict input. */
+      age?: AgeEvidence;
     }
   | { outcome: "missing"; httpStatus: number }
   | { outcome: "unavailable" };
@@ -289,6 +303,8 @@ function listed(input: {
   company?: string;
   canonicalUrl?: string;
   postedAt?: string;
+  postedAtFromUpdatedAt?: boolean;
+  age?: AgeEvidence;
 }): AtsLookup {
   return {
     outcome: "listed",
@@ -297,6 +313,8 @@ function listed(input: {
     ...(input.company ? { company: input.company } : {}),
     ...(input.canonicalUrl ? { canonicalUrl: input.canonicalUrl } : {}),
     ...(input.postedAt ? { postedAt: input.postedAt } : {}),
+    ...(input.postedAt && input.postedAtFromUpdatedAt ? { postedAtFromUpdatedAt: true } : {}),
+    age: input.age ?? { source: "none", precision: "unknown" },
   };
 }
 
@@ -343,6 +361,7 @@ function interpretAshby(status: number, text: string, truncated: boolean, jobId:
       title: typeof row.title === "string" ? row.title : undefined,
       canonicalUrl: httpUrl(jobUrl),
       postedAt: firstPostedAt([row.publishedAt]),
+      age: simpleAgeEvidence("ashby.publishedAt", row.publishedAt),
     });
   }
   if (truncated) return { outcome: "unavailable" };
@@ -364,6 +383,7 @@ function interpretLever(status: number, text: string, jobId: string): AtsLookup 
     title: typeof row.text === "string" ? row.text : undefined,
     canonicalUrl: httpUrl(typeof row.hostedUrl === "string" ? row.hostedUrl : undefined),
     postedAt: firstPostedAt([row.createdAt]),
+    age: simpleAgeEvidence("lever.createdAt", row.createdAt),
   });
 }
 
@@ -379,7 +399,10 @@ function interpretGreenhouse(status: number, text: string, jobId: string): AtsLo
     title: typeof row.title === "string" ? row.title : undefined,
     company: typeof row.company_name === "string" ? row.company_name : undefined,
     canonicalUrl: httpUrl(typeof row.absolute_url === "string" ? row.absolute_url : undefined),
+    // Legacy confidence date, unchanged (still falls back to updated_at).
     postedAt: firstPostedAt([row.first_published, row.published_at, row.updated_at]),
+    postedAtFromUpdatedAt: !firstPostedAt([row.first_published, row.published_at]) && Boolean(firstPostedAt([row.updated_at])),
+    age: greenhouseAgeEvidence(row),
   });
 }
 
@@ -400,6 +423,7 @@ function interpretWorkday(status: number, text: string): AtsLookup {
     title: typeof info.title === "string" ? info.title : undefined,
     canonicalUrl: httpUrl(typeof info.externalUrl === "string" ? info.externalUrl : undefined),
     postedAt: firstPostedAt([info.postedOn, info.postedDate]),
+    age: workdayAgeEvidence(info),
   });
 }
 
@@ -696,7 +720,7 @@ export function combinePageAndAts(page: VerifyVerdict, api: AtsLookup, vendor?: 
     };
   }
 
-  const posted = postedSignal(api.postedAt);
+  const posted = postedSignal(api.postedAtFromUpdatedAt ? undefined : api.postedAt);
   if (page.status === "closed" && isGreenhouseCompanyPageNotFound(page, vendor)) {
     return {
       ...page,
@@ -791,7 +815,7 @@ export function verdictFromAtsWithoutPage(
       price_usd: PRICE_USD,
     };
   }
-  const posted = api.outcome === "listed" ? postedSignal(api.postedAt) : [];
+  const posted = api.outcome === "listed" ? postedSignal(api.postedAtFromUpdatedAt ? undefined : api.postedAt) : [];
   const title = api.outcome === "listed" ? api.title : undefined;
   return {
     url,

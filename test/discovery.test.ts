@@ -142,7 +142,7 @@ function assertLlmsTxt(res: Response, body: string) {
   assert.ok(endpointLines && endpointLines.length >= 3, "expected endpoint lines");
   assert.equal(
     endpointLines[0],
-    '- POST /v1/verify/job ($0.01) — is this specific job posting still open? body {"url"} → {status: live|closed|unknown, title, signals[], confidence}',
+    '- POST /v1/verify/job ($0.01) — is this specific job posting still open? body {"url", optional "stale_after_days" (default 60, 7–365)} → {status: live|closed|unknown, title, signals[], confidence, age}',
   );
   assert.equal(
     endpointLines[1],
