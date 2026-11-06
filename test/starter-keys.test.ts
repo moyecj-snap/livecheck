@@ -23,6 +23,7 @@ import {
   setStarterKeySetting,
   starterKeyLimits,
   finishStarterCall,
+  githubTooYoungMessage,
 } from "../src/api-key-store.js";
 import {
   resetCheckSlotsForTests,
@@ -646,6 +647,27 @@ describe("starter key HTTP", () => {
     assert.doesNotMatch(html, /name="contact"[^>]*checked/);
   });
 
+  it("shows the approved /keys copy, with the 7-day rule above the sign-in button", async () => {
+    const app = createApp();
+    const html = await (await app.request("/keys")).text();
+    assert.equal(html.includes("200 free checks over 30 days, no wallet needed."), true);
+    assert.equal(html.includes("Other Livecheck tools still need a wallet."), true);
+    assert.doesNotMatch(html, /stay on a wallet/);
+    assert.doesNotMatch(html, /200 checks over 30 days/);
+    const rule = html.indexOf("<p>Accounts under 7 days old cannot get a key.</p>");
+    assert.ok(rule > 0);
+    assert.ok(rule < html.indexOf("Continue with GitHub"));
+    assert.equal(html.split("Accounts under 7 days old").length - 1, 1);
+  });
+
+  it("formats the young-account rejection with created_at + 7 days (UTC)", () => {
+    assert.equal(
+      githubTooYoungMessage("2026-11-04T18:00:00Z"),
+      "Your GitHub account must be at least 7 days old. Try again after November 11, 2026.",
+    );
+    assert.equal(githubTooYoungMessage("2026-12-28T23:59:00Z"), "Your GitHub account must be at least 7 days old. Try again after January 4, 2027.");
+  });
+
   it("lets the /keys form hand off to GitHub (CSP form-action allows github.com)", async () => {
     // Chrome enforces form-action on the redirect after POST /keys/start, so
     // form-action 'self' alone silently blocks the GitHub sign-in (Nov 2 local dry run).
@@ -662,6 +684,9 @@ describe("starter key HTTP", () => {
     const app = createApp();
     const issued = await signIn(app, { id: 42, login: "octocat", created_at: "2019-11-14T00:00:00Z" }, { contact: false });
     assert.match(issued.html, /lc_live_/);
+    assert.equal(issued.html.includes("Copy this now. It's shown only once."), true);
+    assert.doesNotMatch(issued.html, /only time the key is shown/);
+    assert.ok(issued.html.indexOf("Copy this now.") < issued.html.indexOf("lc_live_"));
     assert.match(issued.html, /We store your GitHub username to run your key\. Nothing is shared\./);
     assert.equal(issued.authorize.includes("user%3Aemail") || issued.authorize.includes("user:email"), false);
     assert.equal(new URL(issued.authorize).searchParams.get("scope"), null);
@@ -692,7 +717,7 @@ describe("starter key HTTP", () => {
     assert.equal(listStarterKeys(db()).find((row) => row.github_id === "77")?.contact_opt_in, 1);
     const young = await signIn(app, { id: 78, login: "baby", created_at: "2026-10-29T00:00:00Z" }, { allowMissing: true });
     assert.equal(young.status, 403);
-    assert.match(young.html, /under 7 days old/);
+    assert.match(young.html, /Your GitHub account must be at least 7 days old\. Try again after November 5, 2026\./);
     assert.equal(listStarterKeys(db()).some((row) => row.github_id === "78"), false);
   });
 

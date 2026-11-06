@@ -455,7 +455,7 @@ export function issueStarterKey(db: DatabaseSync, input: IssueInput, now = new D
       return {
         ok: false,
         error: "account_too_young",
-        message: "This GitHub account is under 7 days old. A starter key is available once the account is 7 days old.",
+        message: githubTooYoungMessage(input.accountCreatedAt),
       };
     }
     const day = utcDay(now);
@@ -855,4 +855,15 @@ export function starterKeyStats(now = new Date()): StarterKeyStats {
       l30d: emptyWindow(),
     };
   }
+}
+
+const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+/** Rejection copy for a GitHub account under 7 days old. Date is account created_at + 7 days, in UTC. */
+export function githubTooYoungMessage(accountCreatedAt: string): string {
+  const created = Date.parse(accountCreatedAt);
+  if (!Number.isFinite(created)) return "Your GitHub account must be at least 7 days old.";
+  const d = new Date(created + 7 * 24 * 60 * 60 * 1000);
+  const date = `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
+  return `Your GitHub account must be at least 7 days old. Try again after ${date}.`;
 }
