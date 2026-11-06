@@ -252,7 +252,7 @@ Each row has payer, amount_usd, tx (`payment_id`), route, reason, `ts`, `respond
 npm run --silent refunds:list -- --since 2026-11-04 --json
 ```
 
-A late-settled x402 payment is not written to `paid_calls` or Stripe; it appears only on this list.
+A late-settled x402 payment is written to `paid_calls` (marked `settle_late`) and to Stripe, in its usual `/stats` bucket. `settle_late_paid_calls` counts those rows as an overlap note and is not added into totals. It also appears on this list.
 
 ## Free job check page (`GET /job`)
 
@@ -704,7 +704,7 @@ Headline `sentinel` counts and confirm windows **include internal test traffic**
 | 4 | Unknown payer, but the target is a docs-example URL | `traffic.testers_probable` (own line, never dropped) |
 | 5 | Everything else | `traffic.external` |
 
-Internal is decided by payer wallet only; the `livecheck-internal/` user agent is a label. `traffic.reconciliation` checks that internal + graders + testers + unattributed + testers_probable + external equals `traffic.all` for calls and revenue in L7d and L30d (whole cents). If it does not, `reconciliation.ok` is false, `reconciliation.gap` shows the difference, and `/stats` shows a red warning at the top of the page. `traffic.docs_example` and `traffic.internal_label` are overlap counts, not buckets, and are not part of the sum.
+Internal is decided by payer wallet only; the `livecheck-internal/` user agent is a label. `traffic.reconciliation` checks that internal + graders + testers + unattributed + testers_probable + external equals `traffic.all` for calls and revenue in L7d and L30d (whole cents). If it does not, `reconciliation.ok` is false, `reconciliation.gap` shows the difference, and `/stats` shows a red warning at the top of the page. `traffic.docs_example` and `traffic.internal_label` are overlap counts, not buckets, and are not part of the sum. `store.settle_late_paid_calls` is also an overlap count: an x402 payment that settled after the 503 is a paid call in its usual bucket, marked `settle_late`, and is not added into totals.
 
 **Grader / tester wallets.** The list is the `test_wallets` table in the paid-calls SQLite file (`/data/paid-calls.sqlite` on Fly). Boot creates it and seeds the built-in list from `src/test-traffic.ts` with `INSERT OR IGNORE`, so restarts never duplicate a row, overwrite a label, or bring back a removed wallet. `/stats` reads the table on every request, so a change shows on the next page load with **no deploy and no restart**:
 

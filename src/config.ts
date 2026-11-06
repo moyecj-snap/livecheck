@@ -286,8 +286,9 @@ export const CHECK_TIMEOUT_SIGNAL = "check_timeout";
  * before payment: 503 processor_unavailable, "You were not charged." A settle
  * timeout or processor error is indeterminate at the facilitator: 503
  * payment_status_unknown (Retry-After 60), never "not charged". Livecheck does
- * not retry settle and does not record a paid call; a late settle is listed as
- * a refund candidate (see FACILITATOR_SETTLE_OBSERVE_MS).
+ * not retry settle. An unresolved settle is not a paid call. A late success is
+ * written as a paid call in its usual bucket, marked settle_late, and listed
+ * as a refund candidate (see FACILITATOR_SETTLE_OBSERVE_MS).
  */
 export const FACILITATOR_TIMEOUT_MS = 5_000;
 /**
