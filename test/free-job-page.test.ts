@@ -680,6 +680,12 @@ describe("free /job page", () => {
   });
 
   // ---- Must-pass 2: links never stored, including logs ----
+  it("GET /jobs redirects to /job", async () => {
+    const res = await app.request("/jobs");
+    assert.equal(res.status, 302);
+    assert.equal(res.headers.get("location"), "/job");
+  });
+
   it("links never stored: POST only, GET ignores ?url=, /check drops the query, no URL in logs/DB/limiter", async () => {
     const marker = `lcmarker${Date.now()}`;
     const getWithUrl = await app.request(`/job?url=${encodeURIComponent(u(`/jobs/1842?m=${marker}`))}`);

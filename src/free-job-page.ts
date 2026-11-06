@@ -917,4 +917,6 @@ export function registerFreeJobRoutes(app: Hono): void {
   // /check alias from the launch kit ("livecheck.fly.dev/job (or /check)").
   app.get("/check", (c) => c.redirect(FREE_JOB_PATH, 302));
   app.post("/check", (c) => c.redirect(FREE_JOB_PATH, 307));
+  // People type the plural; don't leave them on a dead end.
+  app.get("/jobs", (c) => c.redirect(FREE_JOB_PATH, 302));
 }
