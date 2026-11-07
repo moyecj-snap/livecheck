@@ -113,6 +113,10 @@ export function mergeFleetStats(local: StatsDocument, peers: readonly FleetPeerR
     l7d: local.store.confirm_unscoped_paid_calls.l7d,
     l30d: local.store.confirm_unscoped_paid_calls.l30d,
   };
+  const settleLate = {
+    l7d: local.store.settle_late_paid_calls?.l7d ?? 0,
+    l30d: local.store.settle_late_paid_calls?.l30d ?? 0,
+  };
   let sentinel = {
     active_watchers: local.sentinel.active_watchers,
     checks_run: local.sentinel.checks_run,
@@ -151,6 +155,8 @@ export function mergeFleetStats(local: StatsDocument, peers: readonly FleetPeerR
     if (doc.generated_at > generatedAt) generatedAt = doc.generated_at;
     unscoped.l7d += doc.store.confirm_unscoped_paid_calls.l7d;
     unscoped.l30d += doc.store.confirm_unscoped_paid_calls.l30d;
+    settleLate.l7d += doc.store.settle_late_paid_calls?.l7d ?? 0;
+    settleLate.l30d += doc.store.settle_late_paid_calls?.l30d ?? 0;
     sentinel = {
       active_watchers: sentinel.active_watchers + doc.sentinel.active_watchers,
       checks_run: sentinel.checks_run + doc.sentinel.checks_run,
@@ -199,6 +205,7 @@ export function mergeFleetStats(local: StatsDocument, peers: readonly FleetPeerR
       scope: complete ? "fleet_volumes" : "partial_fleet_volumes",
       machines,
       confirm_unscoped_paid_calls: unscoped,
+      settle_late_paid_calls: settleLate,
       note: volumeNote,
     },
     traffic: {

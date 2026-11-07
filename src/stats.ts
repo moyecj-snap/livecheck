@@ -22,6 +22,7 @@ import {
   queryConfirmIntentWindowsFromStore,
   queryPaidCallCountsForUrlHashesFromStore,
   queryRetentionWindowsFromStore,
+  querySettleLateCountsFromStore,
   queryIncludedPayerWindowsFromStore,
   queryInternalLabelCountsFromStore,
   queryUnattributedWindowsFromStore,
@@ -100,6 +101,12 @@ export type StatsStoreScope = {
   paid_calls: ReturnType<typeof paidCallStoreStatus>;
   receipts: ReturnType<typeof receiptStoreStatus>;
   confirm_unscoped_paid_calls: { l7d: number; l30d: number };
+  /**
+   * Overlap count, not a bucket: paid_calls marked settle_late (x402 settled
+   * after the caller got 503 payment_status_unknown). Each is already counted
+   * once in traffic.all and in its usual bucket, and is also a refund candidate.
+   */
+  settle_late_paid_calls?: { l7d: number; l30d: number };
   note: string;
 };
 
@@ -150,7 +157,7 @@ export const PROBABLE_TESTER_TRAFFIC_LABEL =
   "Unknown payer on a docs-example URL (bucket rule 4). Probably a tester. Counted in traffic.all and traffic.testers_probable. Omitted from traffic.external.";
 
 export const RECONCILIATION_LABEL =
-  "Each paid call lands in exactly one bucket: internal, graders, testers, unattributed, testers_probable, external. The buckets must add up to traffic.all for calls and revenue in every window. docs_example and internal_label are overlap counts and are not part of the sum.";
+  "Each paid call lands in exactly one bucket: internal, graders, testers, unattributed, testers_probable, external. The buckets must add up to traffic.all for calls and revenue in every window. docs_example and internal_label are overlap counts and are not part of the sum. store.settle_late_paid_calls is also an overlap count: an x402 payment that settled after the 503 is a paid call in its usual bucket, marked settle_late.";
 
 export const INTERNAL_LABEL_NOTE =
   "user_agent prefix livecheck-internal/ is a label only. It does not remove a call from traffic.external. External is decided by wallet.";
@@ -976,7 +983,7 @@ export function statsNotes(
   return notes;
 }
 
-function buildStoreScope(unscoped: { l7d: number; l30d: number }): StatsStoreScope {
+function buildStoreScope(unscoped: { l7d: number; l30d: number }, now = new Date()): StatsStoreScope {
   return {
     scope: "this_machine_volume",
     fly_app_name: process.env.FLY_APP_NAME?.trim() || null,
@@ -984,6 +991,7 @@ function buildStoreScope(unscoped: { l7d: number; l30d: number }): StatsStoreSco
     paid_calls: paidCallStoreStatus(),
     receipts: receiptStoreStatus(),
     confirm_unscoped_paid_calls: unscoped,
+    settle_late_paid_calls: querySettleLateCountsFromStore(now) ?? { l7d: 0, l30d: 0 },
     note: LOCAL_VOLUME_NOTE,
   };
 }
@@ -1875,7 +1883,7 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
     },
     sentinel: buildSentinelStats(watchAll, oneShotChecks),
     benches: loadConfirmBenches(),
-    store: buildStoreScope(unscoped),
+    store: buildStoreScope(unscoped, now),
     starter_keys: starterKeys,
     notes,
   };

@@ -513,7 +513,7 @@ describe("starter key store", () => {
       assert.deepEqual(excluded[window], before[window], window);
     }
     assert.equal(listFollowups(db(), weekLater).some((row) => row.id === issued.id), false);
-    const doc = buildStatsDocument();
+    const doc = buildStatsDocument(now);
     assert.deepEqual(doc.starter_keys.l7d, excluded.l7d);
     assert.match(statsHtml(doc), /Excludes \d+ internal test key/);
 

@@ -8,6 +8,7 @@ import { CheckError, runCheck } from "../src/check.js";
 import {
   ATS_FETCH_TIMEOUT_MS,
   CHECK_TIMEOUT_SIGNAL,
+  FACILITATOR_SETTLE_OBSERVE_MS,
   FACILITATOR_TIMEOUT_MS,
   FETCH_TIMEOUT_MS,
   VERIFY_DEADLINE_MS,
@@ -50,14 +51,15 @@ describe("timeout budgets", () => {
     assert.match(fly, /memory\s*=\s*"2gb"/);
   });
 
-  it("builds the live facilitator client with the shorter HTTP deadline", () => {
+  it("builds the live facilitator client with the observe window (guard still answers at 5s)", () => {
     const client = liveFacilitatorClient({
       stripeSecretKey: "sk_test_deadline",
       depositAddress: "0x2222222222222222222222222222222222222222",
       cdpApiKeyId: "test-key-id",
       cdpApiKeySecret: "test-key-secret",
     });
-    assert.equal(client.timeoutMs, FACILITATOR_TIMEOUT_MS);
+    assert.equal(client.timeoutMs, FACILITATOR_SETTLE_OBSERVE_MS);
+    assert.ok(FACILITATOR_SETTLE_OBSERVE_MS > FACILITATOR_TIMEOUT_MS);
   });
 
   it("page fetch still 504s on its own timeout, before the envelope", async () => {

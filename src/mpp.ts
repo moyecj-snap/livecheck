@@ -18,7 +18,8 @@ import {
   type PaidCallRoute,
   type PaymentProtocol,
 } from "./paid-call.js";
-import { retainRefundCandidate, type RefundCandidate } from "./paid-call-store.js";
+import { REFUND_CANDIDATE_EVENT, logRefundCandidate } from "./refund-candidate-log.js";
+import { noteSettledPayment } from "./settle-abort.js";
 import { publicOrigin, publicVerifyJobUrl, publicVerifyListingUrl, publicVerifyUrl } from "./public-url.js";
 import { stripTrackingParams } from "./tracking-params.js";
 import { VerifyError, parseTargetUrl, timeoutUnknownVerdict } from "./verify.js";
@@ -39,8 +40,8 @@ import { withWatchHint } from "./watch-hint.js";
  *     body) with the MPP `WWW-Authenticate: Payment` challenge appended. Empty
  *     and bodyless probes get it too, so MPP discovery tools see Tempo.
  *   - `Authorization: Payment`: validate the request before SETTLING (400,
- *     not charged). A retry with the same credential or tx never settles
- *     twice (see mpp-idempotency.ts).
+ *     not charged). A retry with the same credential or tx replays the
+ *     stored answer instead of settling again (see mpp-idempotency.ts).
  *     Then mppx verifies and settles the Tempo payment. After that the caller
  *     always gets 200 with the normal verify shape: a handler error becomes
  *     status "unknown" and a refund candidate is logged.
@@ -330,7 +331,7 @@ function current402(result: Response | void, c: Context): Response | undefined {
 export const MULTIPLE_CREDENTIALS_MESSAGE =
   "Send one payment credential: x402 (PAYMENT-SIGNATURE) or MPP (Authorization: Payment), not both. You were not charged.";
 
-export const REFUND_CANDIDATE_EVENT = "livecheck.refund_candidate" as const;
+export { REFUND_CANDIDATE_EVENT };
 
 export const POST_PAYMENT_UNKNOWN_SIGNAL = "post_payment_error";
 
@@ -345,7 +346,7 @@ export type MppDispatchOptions = {
 export const IDEMPOTENT_REPLAY_HEADER = "livecheck-idempotent-replay";
 
 export const PAYMENT_UNCONFIRMED_MESSAGE =
-  "The MPP payment could not be confirmed. If your wallet shows a charge for this request, it is logged for refund. Retrying with the same credential is safe: it is never charged twice.";
+  "The MPP payment could not be confirmed. If your wallet shows a charge for this request, it is logged for refund. Retry with the same credential, not a new payment.";
 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -384,22 +385,6 @@ function conflict(error: string, message: string, retryAfter?: number): Response
   const headers: Record<string, string> = { "content-type": "application/json", "cache-control": "no-store" };
   if (retryAfter !== undefined) headers["retry-after"] = String(retryAfter);
   return new Response(JSON.stringify({ error, message }), { status: 409, headers });
-}
-
-function logRefundCandidate(candidate: RefundCandidate, writer: (line: string) => void): void {
-  const line: Record<string, unknown> = {
-    event: REFUND_CANDIDATE_EVENT,
-    protocol: candidate.protocol,
-    payment_id: sanitizeTx(candidate.payment_id) ?? null,
-    route: candidate.route,
-    reason: candidate.reason,
-    ts: candidate.ts,
-  };
-  const payer = sanitizePayer(candidate.payer);
-  if (payer) line.payer = payer;
-  if (candidate.http_status !== undefined) line.http_status = candidate.http_status;
-  writer(JSON.stringify(line));
-  retainRefundCandidate(candidate);
 }
 
 export function withMppDispatch(
@@ -477,7 +462,7 @@ export function withMppDispatch(
       if (existing.state === "pending") {
         return conflict(
           "payment_in_progress",
-          "This MPP payment is being settled by another request. Retry shortly with the same credential; it will not be charged twice.",
+          "This MPP payment is being settled by another request. Retry shortly with the same credential, not a new payment.",
           2,
         );
       }
@@ -504,6 +489,7 @@ export function withMppDispatch(
           ...(credentialTx ? { payment_id: credentialTx } : {}),
           route,
           reason: "charge_outcome_unknown",
+          amount_usd: MPP_VERIFY_AMOUNT,
         },
         writer,
       );
@@ -536,6 +522,16 @@ export function withMppDispatch(
     }
 
     // Paid. From here the caller always gets a 200 answer.
+    const settledAt = isoTs(now());
+    // If the caller is gone before that answer is written, list it for refund review.
+    noteSettledPayment({
+      protocol: gateway.protocol,
+      route,
+      ...(outcome.reference ? { payment_id: outcome.reference } : {}),
+      ...(outcome.payer ? { payer: outcome.payer } : {}),
+      amount_usd: MPP_VERIFY_AMOUNT,
+      settled_at: settledAt,
+    });
     deferPaidCallEmit();
     let threw: unknown;
     try {
@@ -563,6 +559,8 @@ export function withMppDispatch(
           route,
           reason,
           payer: outcome.payer,
+          amount_usd: MPP_VERIFY_AMOUNT,
+          settled_at: settledAt,
           ...(threw === undefined && status !== undefined ? { http_status: status } : {}),
         },
         writer,

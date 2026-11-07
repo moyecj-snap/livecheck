@@ -19,6 +19,8 @@ import {
   CHECK_QUEUE_MAX,
   CHECK_QUEUE_WAIT_MS,
   NETWORK,
+  PAYMENT_STATUS_UNKNOWN_MESSAGE,
+  PAYMENT_STATUS_UNKNOWN_RETRY_AFTER_SECONDS,
   TEST_MODE_HEADER,
   TEST_MODE_SECRET_ENV,
 } from "../src/config.js";
@@ -264,6 +266,7 @@ describe("check concurrency", () => {
       assert.equal(overflow.headers.get("cache-control"), "no-store");
       const overflowBody = await readJson(overflow);
       assert.equal(overflowBody.error, "over_capacity");
+      assert.match(String(overflowBody.message), /You were not charged\./, "capacity 503 keeps \"You were not charged.\"");
       assert.equal(counts().verifyCalls, 1, "overflow must not call facilitator verify");
       assert.equal(counts().settleCalls, 0, "overflow must not settle");
       assert.equal(checkQueueDepthForTests(), 1);
@@ -304,6 +307,7 @@ describe("check concurrency", () => {
       assert.equal(expired.headers.get("cache-control"), "no-store");
       const body = await readJson(expired);
       assert.equal(body.error, "over_capacity");
+      assert.match(String(body.message), /You were not charged\./);
       assert.equal(counts().verifyCalls, 1, "expired waiter must not call facilitator verify");
       assert.equal(counts().settleCalls, 0, "expired waiter must not settle");
       assert.equal(checkQueueDepthForTests(), 0);
@@ -393,6 +397,7 @@ describe("payment processor deadline", () => {
     const body = await readJson(res);
     assert.equal(res.status, 503);
     assert.equal(body.error, "processor_unavailable");
+    assert.equal(body.message, "Payment processor did not respond. You were not charged.");
     assert.equal(res.headers.get("retry-after"), String(CHECK_CAPACITY_RETRY_AFTER_SECONDS));
     assert.ok(Date.now() - started < 1_000);
     assert.equal(counts().verifyCalls, 1);
@@ -411,7 +416,7 @@ describe("payment processor deadline", () => {
     assert.equal(counts().collected, false);
   });
 
-  it("settle timeout or error is 503 and does not collect", async () => {
+  it("settle timeout or error is 503 payment_status_unknown (never \"not charged\") with Retry-After 60", async () => {
     setFacilitatorTimeoutForTests(40);
     const original = globalThis.fetch;
     globalThis.fetch = async () => htmlResponse(LIVE_HTML);
@@ -422,7 +427,11 @@ describe("payment processor deadline", () => {
       const res = await paid(hung.app, accepted);
       const body = await readJson(res);
       assert.equal(res.status, 503);
-      assert.equal(body.error, "processor_unavailable");
+      assert.equal(body.error, "payment_status_unknown");
+      assert.equal(body.message, PAYMENT_STATUS_UNKNOWN_MESSAGE);
+      assert.doesNotMatch(String(body.message), /not charged/i);
+      assert.equal(res.headers.get("retry-after"), String(PAYMENT_STATUS_UNKNOWN_RETRY_AFTER_SECONDS));
+      assert.equal(res.headers.get("retry-after"), "60");
       assert.ok(Date.now() - started < 1_000);
       assert.equal(hung.counts().settleCalls, 1);
       assert.equal(hung.counts().collected, false);
@@ -432,7 +441,9 @@ describe("payment processor deadline", () => {
       const failedRes = await paid(failed.app, failedAccept);
       const failedBody = await readJson(failedRes);
       assert.equal(failedRes.status, 503);
-      assert.equal(failedBody.error, "processor_unavailable");
+      assert.equal(failedBody.error, "payment_status_unknown");
+      assert.doesNotMatch(String(failedBody.message), /not charged/i);
+      assert.equal(failedRes.headers.get("retry-after"), "60");
       assert.equal(failed.counts().collected, false);
     } finally {
       globalThis.fetch = original;
