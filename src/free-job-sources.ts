@@ -37,6 +37,7 @@ export const SOURCE_DISTINCT_CAP = 50;
  * "clawhub" is the ClawHub skill try-it link (?ref=clawhub).
  * "hn", "reddit", "cursorforum", "devto", "indiehackers" are the Show HN week
  * posted links (?ref=hn and friends).
+ * "agensi" is a builder channel (?ref=agensi on /job and /keys).
  */
 export const LAUNCH_UTM_TAGS = [
   "producthunt",
@@ -50,6 +51,7 @@ export const LAUNCH_UTM_TAGS = [
   "cursorforum",
   "devto",
   "indiehackers",
+  "agensi",
 ] as const;
 export const LAUNCH_REFERRER_DOMAINS = ["producthunt.com", "linkedin.com", "x.com", "t.co"] as const;
 
@@ -210,6 +212,17 @@ export function referrerSource(referer: string | null | undefined, selfHosts: re
 
 const UTM_OK = new RegExp(`^[a-z0-9][a-z0-9._-]{0,${UTM_MAX_LENGTH - 1}}$`);
 const RESERVED_VALUES = new Set(["none", "direct", "self", "other"]);
+
+/**
+ * Launch-tag bucket for a utm_source or ref.
+ * Absent → "none". Odd, or not on the allowlist → "other".
+ * The same list /job uses, including tags added at runtime.
+ */
+export function bucketLaunchSource(value: string | null | undefined, allow: ReadonlySet<string>): string {
+  const tag = utmSource(value);
+  if (tag === "none" || tag === "other") return tag;
+  return allow.has(tag) ? tag : "other";
+}
 
 /** utm_source / ref value -> sanitized token, "none" when absent, "other" when odd. */
 export function utmSource(value: string | null | undefined): string {

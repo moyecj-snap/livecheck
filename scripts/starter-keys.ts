@@ -25,8 +25,9 @@
  *   wind_down 1       /keys sign-up closes. Unexpired keys keep their
  *                     remaining checks until they expire. Set 0 to reopen.
  *
- * Our own dry-run/test key: mark-internal (leaves every starter-key stat and
- * the follow-up list; the key still works), then revoke (stops the key, keeps
+ * Our own dry-run/test key: mark-internal (leaves every starter-key stat,
+ * including that key's issued-by-source bucket, and the follow-up list; the
+ * key still works), then revoke (stops the key, keeps
  * the record), then optionally delete (removes the record and its per-key
  * counts now, overriding the 90-day retention, so the same GitHub account can
  * get a fresh key). Each takes a key id, GitHub numeric id, or login (@ optional).

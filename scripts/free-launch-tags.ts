@@ -1,6 +1,6 @@
 /**
  * Ops: free /job launch utm/ref tags (free_page_launch_utm in free-page.sqlite).
- * Built-ins (producthunt, linkedin, x, email, test, clawhub, hn, reddit, cursorforum, devto, indiehackers) are always on.
+ * Built-ins (producthunt, linkedin, x, email, test, clawhub, hn, reddit, cursorforum, devto, indiehackers, agensi) are always on.
  * Extra tags can be added here and are read on the next /job hit — no deploy.
  *
  *   npm run --silent free:launch-tags:list

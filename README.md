@@ -196,6 +196,8 @@ A starter-key answer says what it cost: `"price_usd": 0`, `"paid_with": "free_cr
 
 Sign-in is GitHub OAuth with no `user` or `user:email` scope. The server stores the GitHub username and id, the SHA-256 of the key, an opt-in bit, and counts. The `/keys` page says: "We store your GitHub username to run your key. Nothing is shared." The checkbox "OK to contact me about my experience" is off unless the person checks it. Accounts under 7 days old are refused. One key per GitHub account. Records are deleted 90 days after the key expires (`npm run keys:cleanup`, also on a daily sweep).
 
+`/keys?ref=agensi` (or `utm_source=`, same launch-tag allowlist as `/job`, including tags added with `free:launch-tags`) counts starter keys issued per channel. The tag rides in the existing signed `/keys` cookie. Counts are on token-gated `GET /job/stats` (`starter_keys.by_source`), not on public `/stats`. The tag is not a column on the key, so activation is not split by source. The durable counter is `api_key_source_daily` (issue time, source, count). A key-id row in `api_key_issue_source` exists only so `keys:mark-internal` can subtract the right bucket, and it is deleted with the key. A sign-in already in flight at deploy (cookie with no tag) still completes and counts as `none`.
+
 Env (Fly secrets, not in git):
 
 ```bash
