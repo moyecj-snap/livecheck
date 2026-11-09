@@ -53,7 +53,8 @@ export const STARTER_KEY_MIN_ACCOUNT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 export const STARTER_KEY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const STARTER_KEY_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
-export const STARTER_KEY_PRIVACY_LINE = "We store your GitHub username to run your key. Nothing is shared.";
+export const STARTER_KEY_PRIVACY_LINE =
+  "We store your GitHub username and which link you came from, to run your key. Nothing is shared.";
 export const STARTER_KEY_CONTACT_LABEL = "OK to contact me about my experience";
 
 /**
@@ -64,12 +65,12 @@ export const STARTER_KEY_CONTACT_LABEL = "OK to contact me about my experience";
 export const STARTER_SOURCE_STATS_PUBLIC = false;
 
 /**
- * false (default): no source column on api_keys. Issued counts live in
- * api_key_source_daily. Activation and 20+ checks are not split by source.
- * true is not built: it would add a nullable api_keys.source column and
- * those splits. Leave this false until that migration is written.
+ * true: api_keys.source holds the sanitized allowlisted tag, written on insert.
+ * Issued stays in api_key_source_daily so it survives key expiry. Activated
+ * and reached_20 are counted from the key row (free_used), internal keys excluded.
+ * false would stop storing the tag on the key; this build always writes the column.
  */
-export const STARTER_SOURCE_ON_KEY_ROW = false;
+export const STARTER_SOURCE_ON_KEY_ROW = true;
 
 export const CARD_FUNDED_PAYER_PREFIX = "key:";
 const KEY_ID_RE = /^k_[a-f0-9]{16}$/;
