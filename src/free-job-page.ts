@@ -43,8 +43,10 @@ import { VerifyError, parseTargetUrl, verifyUrl } from "./verify.js";
  * Free "Is this job still open?" page for the Product Hunt launch
  * (livecheck-gtm/product-hunt/LAUNCH-KIT-2026-10-27.md §1).
  *
- * - GET /job: one text box. POST /job: the same check as POST /v1/verify/job
- *   (`verifyUrl` with the ATS APIs on), no wallet, no signup.
+ * - GET /job: one text box, with a filled-job example result already on the
+ *   page (from the example cache, not a visitor check). POST /job: the same
+ *   check as POST /v1/verify/job (`verifyUrl` with the ATS APIs on), no wallet,
+ *   no signup.
  * - 5 free checks per visitor per Pacific day, counted by cookie AND by IP.
  *   A global hourly cap and a small concurrency pool of its own; when either
  *   is full the page says "Busy, try again in a few minutes". The paid API's
@@ -476,6 +478,10 @@ export type FreeJobView =
       example?: ExampleKey;
       /** Employer of the example posting actually checked (primary or backup). */
       exampleEmployer?: string;
+      /** Painted on GET /job before the visitor pastes anything. Not a check. */
+      sample?: boolean;
+      /** Closed card used when the filled example could not be fetched. */
+      sampleBackup?: boolean;
     };
 
 function priceLabel(): string {
@@ -497,17 +503,21 @@ function resultHtml(view: FreeJobView, remaining: number | undefined): string {
   const evidence = view.evidence.length
     ? `<ul class="evidence">${view.evidence.map((line) => `<li>${esc(line)}</li>`).join("")}</ul>`
     : "";
-  return `<section class="result ${cls}" aria-live="polite">
+  const employer = esc(view.exampleEmployer ?? (view.example ? FREE_JOB_EXAMPLES[view.example].employer : ""));
+  const minutes = Math.round(EXAMPLE_TTL_MS / 60_000);
+  const exampleNote = view.sampleBackup
+    ? `<p class="muted small">Example result. The live check didn't answer, so this sample stays Closed. It doesn't use your free checks.</p>`
+    : view.example
+      ? `<p class="muted small">Example: a real check of a ${employer} posting, refreshed every ${minutes} minutes. It doesn't use your free checks.</p>`
+      : "";
+  return `<section class="result ${cls}${view.sample ? " sample" : ""}" aria-live="polite">
+    ${view.sample ? `<p class="kicker">Example result</p>` : ""}
     <p class="verdict">${esc(view.label)}</p>
     ${view.title ? `<p class="title${view.titleUnavailable ? " gone" : ""}">${esc(view.title)}</p>` : ""}
     <p class="platform">${esc(view.platform)}</p>
     ${view.explanation ? `<p class="explain">${esc(view.explanation)}</p>` : ""}
     ${evidence}
-    ${
-      view.example
-        ? `<p class="muted small">Example: a real check of a ${esc(view.exampleEmployer ?? FREE_JOB_EXAMPLES[view.example].employer)} posting, refreshed every ${Math.round(EXAMPLE_TTL_MS / 60_000)} minutes. It doesn't use your free checks.</p>`
-        : ""
-    }
+    ${exampleNote}
     ${remaining !== undefined ? `<p class="muted small">${remaining} free check${remaining === 1 ? "" : "s"} left today.</p>` : ""}
   </section>`;
 }
@@ -522,8 +532,8 @@ export function freeJobHtml(
   const pageUrl = `${origin}${FREE_JOB_PATH}`;
   const imageUrl = `${origin}${OG_IMAGE_PATH}`;
   const examplesForm = `<form class="examples" method="post" action="${action}">
-    <button class="try" type="submit" name="example" value="open">Try an example</button>
-    <span>No link handy? We'll check a real, live posting, or a <button class="link" type="submit" name="example" value="filled">${esc(FREE_JOB_EXAMPLES.filled.label)}</button>.</span>
+    <button class="try" type="submit" name="example" value="filled">Try a ${esc(FREE_JOB_EXAMPLES.filled.label)}</button>
+    <span>No link handy? We'll check a real, live posting, or an <button class="link" type="submit" name="example" value="open">${esc(FREE_JOB_EXAMPLES.open.label)}</button>.</span>
   </form>`;
   return `<!doctype html>
 <html lang="en">
@@ -569,7 +579,9 @@ export function freeJobHtml(
     form.examples button.try { font-family:inherit; font-size:1.05rem; padding:0.6rem 1.2rem; border:2px solid var(--ink); border-radius:4px; background:#fffdf8; color:var(--ink); cursor:pointer; }
     form.examples span { flex:1 1 12rem; }
     form.examples button.link { font:inherit; color:var(--ink); background:none; border:0; padding:0; text-decoration:underline; text-underline-offset:0.15em; cursor:pointer; }
+    .kicker { margin:0 0 0.35rem; font-size:0.78rem; font-weight:700; letter-spacing:0.04em; color:var(--soft); }
     .result { margin:1.6rem 0; padding:1.2rem 1.3rem; border-left:8px solid var(--rule); background:#fffdf8; }
+    .result.sample { margin-top:0; }
     .result.open { border-color:var(--open); } .result.closed { border-color:var(--closed); } .result.cant { border-color:var(--cant); }
     .verdict { font-size:2.6rem; font-weight:700; margin:0; line-height:1.1; }
     .open .verdict { color:var(--open); } .closed .verdict { color:var(--closed); } .cant .verdict { color:var(--cant); }
@@ -602,13 +614,14 @@ export function freeJobHtml(
 <main class="wrap">
   <h1>Is this job still open?</h1>
   <p class="lede">Paste a job link. Livecheck checks the posting and the hiring platform right now and tells you Open, Closed, or Can't tell.</p>
+  ${view.kind === "result" && view.sample ? resultHtml(view, options.remaining) : ""}
   <form class="check" method="post" action="${action}">
     <label for="url">Paste a job posting link</label>
     <input id="url" name="url" type="url" required maxlength="2048" placeholder="Paste a job posting link" value="${esc(value)}" autocomplete="off" inputmode="url" />
     <button type="submit">Check</button>
   </form>
   ${examplesForm}
-  ${resultHtml(view, options.remaining)}
+  ${view.kind === "result" && view.sample ? "" : resultHtml(view, options.remaining)}
   <p class="muted small">Free: ${options.perDay} checks per day, no wallet, no signup. We don't store the links you check. These limits are separate from a starter key.</p>
   <section class="cta">
     <p><strong>Building an AI agent?</strong> Same check by API: <code>POST /v1/verify/job</code>. A wallet pays ${priceLabel()}. Builders: <a href="/keys">sign in with GitHub for 200 free checks</a>, no wallet needed.
@@ -850,18 +863,61 @@ export function statsTokenOk(c: Context): boolean {
   return timingSafeEqual(sha(provided), sha(secret));
 }
 
+/**
+ * Closed card for the filled example when that posting can't be fetched.
+ * The open example still has its own backup posting (Databricks). This card
+ * is the sample's backup: a clear Closed result, never an error page.
+ */
+function closedSampleFallback(): FreeJobView {
+  return {
+    kind: "result",
+    url: "",
+    label: "Closed",
+    platform: platformFor(FREE_JOB_EXAMPLES.filled.url),
+    evidence: ["Example of a filled posting"],
+    example: "filled",
+    exampleEmployer: FREE_JOB_EXAMPLES.filled.employer,
+    sample: true,
+    sampleBackup: true,
+  };
+}
+
+/**
+ * The on-load sample. Uses the filled example's cache (about 10 minutes, one
+ * upstream check per TTL, not the visitor cap). The posting URL stays off the
+ * page. A failed fetch keeps the Closed backup.
+ */
+async function sampleForPage(): Promise<FreeJobView> {
+  try {
+    const view = (await examples.get("filled")).value;
+    if (view.kind === "result" && (view.label === "Open" || view.label === "Closed")) {
+      return { ...view, url: "", sample: true };
+    }
+  } catch {
+    // No cached card. The backup below is the page.
+  }
+  return closedSampleFallback();
+}
+
 export function registerFreeJobRoutes(app: Hono): void {
-  app.get(FREE_JOB_PATH, (c) => {
+  app.get(FREE_JOB_PATH, async (c) => {
     const config = currentFreeJobConfig();
     if (!config.enabled) return c.text("Not found", 404);
     const now = clock();
     const visitor = ensureVisitor(c);
     bumpFreePageMetric("views", now);
     // Link previews, crawlers and headless clients are kept out of the people counts.
+    // The sample render is not a check and not an example click.
     const automated = isAutomatedUa(c.req.header("user-agent"));
     bumpFreePageMetric(automated ? "views_automated" : "views_people", now);
     countSource(c, automated ? "bot_view" : "view", now);
-    return page(c, { kind: "form" }, 200, config, limiter.remaining(clientIp(c), visitor, config, now));
+    let view: FreeJobView;
+    try {
+      view = await sampleForPage();
+    } catch {
+      view = closedSampleFallback();
+    }
+    return page(c, view, 200, config, limiter.remaining(clientIp(c), visitor, config, now));
   });
   app.post(FREE_JOB_PATH, async (c) => {
     try {

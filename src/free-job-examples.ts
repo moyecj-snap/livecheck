@@ -17,9 +17,10 @@
  */
 
 /**
- * SWAP THE EXAMPLES HERE. `open` is the "Try an example" button on /job, so it
- * should be a long-running role at a large company. If it stops giving a clear
- * Open/Closed answer, the cache falls back to `open.backup`. None of these are
+ * SWAP THE EXAMPLES HERE. `filled` is the primary example button on /job and
+ * the result shown when the page loads. `open` stays the secondary button.
+ * `open` should be a long-running role at a large company. If it stops giving
+ * a clear Open/Closed answer, the cache falls back to `open.backup`. None of these are
  * Stripe postings. Livecheck also accepts Stripe machine payments, and a
  * Stripe job sample would suggest Stripe is part of the check.
  * Checked 2026-10-22 with Livecheck's own verify (Greenhouse board API listed
