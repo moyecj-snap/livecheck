@@ -17,11 +17,13 @@ import {
   listFollowups,
   listStarterKeys,
   markFollowupDrafted,
+  queryStarterKeySourceBuckets,
   queryStarterKeyStats,
   reserveStarterCall,
   revokeStarterKey,
   setStarterKeySetting,
   starterKeyLimits,
+  starterKeySourceReport,
   finishStarterCall,
   githubTooYoungMessage,
 } from "../src/api-key-store.js";
@@ -33,8 +35,11 @@ import {
 import { CHECK_TIMEOUT_SIGNAL, TEST_MODE_HEADER, TEST_MODE_SECRET_ENV } from "../src/config.js";
 import { FIXTURES } from "../src/fixtures.js";
 import { PAID_CALL_EVENT } from "../src/paid-call.js";
+import { upsertLaunchUtmTagIn } from "../src/free-job-sources.js";
+import { closeFreePageStore, freePageDbForTests, initFreePageStore } from "../src/free-job-store.js";
+import { FREE_PAGE_STATS_TOKEN_ENV, setFreeJobClockForTests } from "../src/free-job-page.js";
 import { closePaidCallStore, initPaidCallStore } from "../src/paid-call-store.js";
-import { setGithubFetchForTests } from "../src/starter-key-page.js";
+import { setGithubFetchForTests, signStarterOauthCookieForTests, STARTER_OAUTH_COOKIE } from "../src/starter-key-page.js";
 import {
   GITHUB_OAUTH_CLIENT_ID_ENV,
   GITHUB_OAUTH_CLIENT_SECRET_ENV,
@@ -43,6 +48,8 @@ import {
   STARTER_KEY_CONTACT_EMAIL,
   STARTER_KEY_CONTACT_LABEL,
   STARTER_KEY_PRIVACY_LINE,
+  STARTER_SOURCE_ON_KEY_ROW,
+  STARTER_SOURCE_STATS_PUBLIC,
   WIND_DOWN_MESSAGE,
   BOARD_URL_SHAPE_MESSAGE,
   cardFundedPayer,
@@ -69,7 +76,7 @@ function db() {
   return database;
 }
 
-function issue(partial: { githubId?: string; login?: string; ip?: string; optIn?: boolean; createdAt?: string } = {}) {
+function issue(partial: { githubId?: string; login?: string; ip?: string; optIn?: boolean; createdAt?: string; source?: string } = {}) {
   const now = new Date("2026-10-30T12:00:00Z");
   const result = issueStarterKey(
     db(),
@@ -79,6 +86,7 @@ function issue(partial: { githubId?: string; login?: string; ip?: string; optIn?
       accountCreatedAt: partial.createdAt ?? "2020-01-01T00:00:00Z",
       contactOptIn: partial.optIn ?? false,
       ipSubject: partial.ip ?? "ip:unit",
+      ...(partial.source !== undefined ? { source: partial.source } : {}),
     },
     now,
   );
@@ -639,7 +647,7 @@ describe("starter key HTTP", () => {
     const res = await app.request("/keys");
     assert.equal(res.status, 200);
     const html = await res.text();
-    assert.match(html, /We store your GitHub username to run your key\. Nothing is shared\./);
+    assert.match(html, /We store your GitHub username and which link you came from, to run your key\. Nothing is shared\./);
     assert.equal(html.includes(STARTER_KEY_PRIVACY_LINE), true);
     assert.match(html, /OK to contact me about my experience/);
     assert.equal(html.includes(STARTER_KEY_CONTACT_LABEL), true);
@@ -687,7 +695,7 @@ describe("starter key HTTP", () => {
     assert.equal(issued.html.includes("Copy this now. It's shown only once."), true);
     assert.doesNotMatch(issued.html, /only time the key is shown/);
     assert.ok(issued.html.indexOf("Copy this now.") < issued.html.indexOf("lc_live_"));
-    assert.match(issued.html, /We store your GitHub username to run your key\. Nothing is shared\./);
+    assert.match(issued.html, /We store your GitHub username and which link you came from, to run your key\. Nothing is shared\./);
     assert.equal(issued.authorize.includes("user%3Aemail") || issued.authorize.includes("user:email"), false);
     assert.equal(new URL(issued.authorize).searchParams.get("scope"), null);
     assert.equal(issued.seen.secret, CLIENT_SECRET);
@@ -1111,6 +1119,487 @@ describe("keys script", () => {
   });
 });
 
+describe("starter keys by source", () => {
+  // Fixed clock: the rolling window and the boundary second must not depend on the day the suite runs.
+  const now = new Date("2026-06-15T12:00:00Z");
+
+  before(() => {
+    initPaidCallStore(":memory:");
+    initFreePageStore(":memory:");
+  });
+  after(() => {
+    closePaidCallStore();
+    closeFreePageStore();
+    setStarterKeyClockForTests(null);
+    setFreeJobClockForTests(() => new Date());
+    setGithubFetchForTests(null);
+    delete process.env[FREE_PAGE_STATS_TOKEN_ENV];
+  });
+  beforeEach(() => {
+    process.env[GITHUB_OAUTH_CLIENT_ID_ENV] = CLIENT_ID;
+    process.env[GITHUB_OAUTH_CLIENT_SECRET_ENV] = CLIENT_SECRET;
+    process.env[FREE_PAGE_STATS_TOKEN_ENV] = "starter-source-token";
+    setStarterKeySetting(db(), "emergency_stop", 0, now);
+    setStarterKeySetting(db(), "wind_down", 0, now);
+    setStarterKeyClockForTests(() => now);
+    setFreeJobClockForTests(() => now);
+    setGithubFetchForTests(null);
+  });
+  afterEach(() => {
+    setGithubFetchForTests(null);
+    setStarterKeyClockForTests(null);
+  });
+
+  function issuedAt(when: Date, partial: { githubId: string; login: string; source?: string }) {
+    const result = issueStarterKey(
+      db(),
+      {
+        githubId: partial.githubId,
+        githubLogin: partial.login,
+        accountCreatedAt: "2020-01-01T00:00:00Z",
+        contactOptIn: false,
+        ipSubject: `ip:${partial.login}`,
+        ...(partial.source !== undefined ? { source: partial.source } : {}),
+      },
+      when,
+    );
+    assert.equal(result.ok, true);
+    if (!result.ok) throw new Error("issue failed");
+    return result;
+  }
+
+  function sumIssued(buckets: Record<string, { issued: number }>): number {
+    return Object.values(buckets).reduce((total, bucket) => total + bucket.issued, 0);
+  }
+
+  function sumField(buckets: Record<string, { activated: number; reached_20: number }>, field: "activated" | "reached_20"): number {
+    return Object.values(buckets).reduce((total, bucket) => total + bucket[field], 0);
+  }
+
+  function assertBucketsMatch(at: Date): void {
+    const stats = queryStarterKeyStats(db(), at);
+    const buckets = queryStarterKeySourceBuckets(db(), at);
+    for (const window of ["l7d", "l30d"] as const) {
+      assert.equal(sumIssued(buckets[window]), stats[window].issued, `${window} issued`);
+      assert.equal(sumField(buckets[window], "activated"), stats[window].activated, `${window} activated`);
+      assert.equal(sumField(buckets[window], "reached_20"), stats[window].reached_20, `${window} reached_20`);
+    }
+  }
+
+  it("stores the sanitized tag on the key and counts allowlisted, none, and other", () => {
+    assert.equal(STARTER_SOURCE_ON_KEY_ROW, true);
+    assert.equal(STARTER_SOURCE_STATS_PUBLIC, false);
+    const columns = (db().prepare(`PRAGMA table_info(api_keys)`).all() as Array<{ name: string }>).map((col) => col.name);
+    assert.equal(columns.includes("source"), true);
+    const aggregateColumns = (db().prepare(`PRAGMA table_info(api_key_source_daily)`).all() as Array<{ name: string }>).map((col) => col.name);
+    for (const name of ["key_id", "github_login", "ip"]) assert.equal(aggregateColumns.includes(name), false, name);
+    assert.equal(
+      db().prepare(`SELECT 1 AS hit FROM sqlite_master WHERE type = 'table' AND name = 'api_key_issue_source'`).get(),
+      undefined,
+    );
+
+    issuedAt(now, { githubId: "501", login: "lane", source: "reddit" });
+    issuedAt(now, { githubId: "502", login: "ada", source: "agensi" });
+    issuedAt(now, { githubId: "503", login: "quiet" });
+    issuedAt(now, { githubId: "504", login: "oddtag", source: "not-a-launch-tag" });
+    const byLogin = (login: string) => listStarterKeys(db()).find((row) => row.github_login === login)?.source;
+    assert.equal(byLogin("lane"), "reddit");
+    assert.equal(byLogin("ada"), "agensi");
+    assert.equal(byLogin("quiet"), "none");
+    assert.equal(byLogin("oddtag"), "other");
+    const report = starterKeySourceReport(now);
+    assert.equal(report.by_source.l7d.reddit?.issued, 1);
+    assert.equal(report.by_source.l7d.agensi?.issued, 1);
+    assert.equal(report.by_source.l7d.none?.issued, 1);
+    assert.equal(report.by_source.l7d.other?.issued, 1);
+    assert.equal(report.by_source.l7d.reddit?.activated, 0);
+    assert.equal(report.by_source.l7d.reddit?.reached_20, 0);
+    assert.equal(report.by_source.l7d["not-a-launch-tag"], undefined);
+    assertBucketsMatch(now);
+
+    const keyDump = JSON.stringify(db().prepare(`SELECT * FROM api_keys WHERE github_login IN ('lane', 'ada', 'quiet', 'oddtag')`).all());
+    assert.equal(keyDump.includes("not-a-launch-tag"), false);
+    assert.equal(keyDump.includes("http"), false);
+    assert.equal(keyDump.includes("ip:"), false);
+    const aggregate = JSON.stringify(db().prepare(`SELECT * FROM api_key_source_daily`).all());
+    assert.equal(aggregate.includes("lane"), false);
+    assert.equal(aggregate.includes("ip:"), false);
+    assert.equal(aggregate.includes("not-a-launch-tag"), false);
+  });
+
+  it("a second sign-in does not count again or change the source", () => {
+    const first = issuedAt(now, { githubId: "511", login: "returner", source: "hn" });
+    const before = queryStarterKeySourceBuckets(db(), now).l7d.hn?.issued ?? 0;
+    const again = issueStarterKey(
+      db(),
+      {
+        githubId: "511",
+        githubLogin: "returner",
+        accountCreatedAt: "2020-01-01T00:00:00Z",
+        contactOptIn: false,
+        ipSubject: "ip:returner",
+        source: "reddit",
+      },
+      now,
+    );
+    assert.equal(again.ok, false);
+    assert.equal(listStarterKeys(db()).find((row) => row.id === first.id)?.source, "hn");
+    assert.equal(queryStarterKeySourceBuckets(db(), now).l7d.hn?.issued, before);
+    const stats = queryStarterKeyStats(db(), now);
+    assert.equal(sumIssued(queryStarterKeySourceBuckets(db(), now).l7d), stats.l7d.issued);
+    assert.equal(sumIssued(queryStarterKeySourceBuckets(db(), now).l30d), stats.l30d.issued);
+  });
+
+  it("mark-internal decrements that source, and the buckets still add up", () => {
+    const before = queryStarterKeyStats(db(), now);
+    const redditBefore = queryStarterKeySourceBuckets(db(), now).l7d.reddit?.issued ?? 0;
+    const issued = issuedAt(now, { githubId: "521", login: "internal-src", source: "reddit" });
+    assert.equal(queryStarterKeySourceBuckets(db(), now).l7d.reddit?.issued, redditBefore + 1);
+    assert.equal(markStarterKeyInternal(db(), "@internal-src", now)?.internal, 1);
+    assert.equal(queryStarterKeySourceBuckets(db(), now).l7d.reddit?.issued ?? 0, redditBefore);
+    assert.equal(markStarterKeyInternal(db(), "internal-src", now)?.internal, 1);
+    assert.equal(queryStarterKeySourceBuckets(db(), now).l7d.reddit?.issued ?? 0, redditBefore);
+    const after = queryStarterKeyStats(db(), now);
+    assert.equal(after.l7d.issued, before.l7d.issued);
+    assert.equal(after.internal_keys_excluded, before.internal_keys_excluded + 1);
+    assertBucketsMatch(now);
+    assert.equal(listStarterKeys(db()).find((row) => row.id === issued.id)?.source, "reddit");
+  });
+
+  it("counts activated and reached_20 by source, and mark-internal removes them", () => {
+    const tag = "cursorforum";
+    const before = queryStarterKeySourceBuckets(db(), now).l7d[tag] ?? { issued: 0, activated: 0, reached_20: 0 };
+    const once = issuedAt(now, { githubId: "561", login: "once-cf", source: tag });
+    const heavy = issuedAt(now, { githubId: "562", login: "heavy-cf", source: tag });
+    const first = reserveStarterCall(db(), once.plaintext, now);
+    assert.equal(first.ok, true);
+    if (!first.ok) return;
+    finishStarterCall(db(), first.key.id, { charge: true, blocked: false }, now);
+    for (let i = 0; i < 20; i += 1) {
+      const reserved = reserveStarterCall(db(), heavy.plaintext, now);
+      assert.equal(reserved.ok, true, `charge ${i}`);
+      if (!reserved.ok) return;
+      finishStarterCall(db(), reserved.key.id, { charge: true, blocked: false }, now);
+    }
+    const mid = queryStarterKeySourceBuckets(db(), now).l7d[tag];
+    assert.equal(mid?.issued, before.issued + 2);
+    assert.equal(mid?.activated, before.activated + 2);
+    assert.equal(mid?.reached_20, before.reached_20 + 1);
+    assert.equal(listStarterKeys(db()).find((row) => row.id === heavy.id)?.free_used, 20);
+    assert.equal(markStarterKeyInternal(db(), "once-cf", now)?.source, tag);
+    const after = queryStarterKeySourceBuckets(db(), now).l7d[tag];
+    assert.equal(after?.issued, before.issued + 1);
+    assert.equal(after?.activated, before.activated + 1);
+    assert.equal(after?.reached_20, before.reached_20 + 1);
+    assertBucketsMatch(now);
+  });
+
+  it("a key just outside the rolling window stays out, even on the same UTC day", () => {
+    const inside = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const outside = new Date(inside.getTime() - 1000);
+    assert.equal(isoStamp(inside).slice(0, 10), isoStamp(outside).slice(0, 10));
+    const before = queryStarterKeyStats(db(), now);
+    issuedAt(inside, { githubId: "531", login: "on-cutoff", source: "reddit" });
+    issuedAt(outside, { githubId: "532", login: "before-cutoff", source: "reddit" });
+    const stats = queryStarterKeyStats(db(), now);
+    const buckets = queryStarterKeySourceBuckets(db(), now);
+    assert.equal(stats.l7d.issued, before.l7d.issued + 1);
+    assert.equal(stats.l30d.issued, before.l30d.issued + 2);
+    assert.equal(sumIssued(buckets.l7d), stats.l7d.issued);
+    assert.equal(sumIssued(buckets.l30d), stats.l30d.issued);
+  });
+
+  it("expiry deletes the key and keeps the issued-by-source count", () => {
+    const created = new Date("2026-01-01T00:00:00Z");
+    const issued = issuedAt(created, { githubId: "541", login: "expires-src", source: "hn" });
+    const day = "2026-01-01";
+    const beforeDelete = db().prepare(`SELECT issued FROM api_key_source_daily WHERE created_at = ? AND source = ?`).get(
+      isoStamp(created),
+      "hn",
+    ) as { issued: number };
+    assert.equal(Number(beforeDelete.issued) >= 1, true);
+    const removed = deleteExpiredStarterKeys(db(), new Date("2026-05-02T00:00:00Z"));
+    assert.equal(removed >= 1, true);
+    assert.equal(listStarterKeys(db()).some((row) => row.id === issued.id), false);
+    const after = db().prepare(`SELECT issued FROM api_key_source_daily WHERE day = ? AND created_at = ? AND source = ?`).get(
+      day,
+      isoStamp(created),
+      "hn",
+    ) as { issued: number };
+    assert.equal(Number(after.issued), Number(beforeDelete.issued));
+    // Issued survives on the aggregate. Activated and reached_20 come from the
+    // key row, so they are gone with it. At deletion the key is outside l30d,
+    // which is when production cleanup runs (30-day life + 90-day retention).
+    const deletedAt = new Date("2026-05-02T00:00:00Z");
+    const report = starterKeySourceReport(deletedAt);
+    assert.equal(sumIssued(report.by_source.l7d), report.issued.l7d);
+    assert.equal(sumIssued(report.by_source.l30d), report.issued.l30d);
+    const stats = queryStarterKeyStats(db(), deletedAt);
+    assert.equal(sumField(report.by_source.l7d, "activated"), stats.l7d.activated);
+    assert.equal(sumField(report.by_source.l30d, "reached_20"), stats.l30d.reached_20);
+    assertBucketsMatch(now);
+  });
+
+  it("admin delete of a live key decrements the bucket; a second migrate does not double-count old keys", () => {
+    const issued = issuedAt(now, { githubId: "551", login: "admin-del", source: "devto" });
+    const before = queryStarterKeySourceBuckets(db(), now).l7d.devto?.issued ?? 0;
+    assert.equal(deleteStarterKeyRecord(db(), "admin-del", now)?.id, issued.id);
+    assert.equal(queryStarterKeySourceBuckets(db(), now).l7d.devto?.issued ?? 0, before - 1);
+    assert.equal(sumIssued(queryStarterKeySourceBuckets(db(), now).l7d), queryStarterKeyStats(db(), now).l7d.issued);
+
+    const old = new DatabaseSync(":memory:");
+    migrateApiKeyStore(old);
+    old.prepare(
+      `INSERT INTO api_keys (
+         id, key_sha256, github_id, github_login, contact_opt_in, created_at, expires_at, free_allowance, status
+       ) VALUES ('k_oldkey000000001', 'hash', '900', 'legacy', 0, '2026-06-15T12:00:00Z', '2026-07-15T12:00:00Z', 200, 'active')`,
+    ).run();
+    old.prepare(
+      `INSERT INTO api_keys (
+         id, key_sha256, github_id, github_login, contact_opt_in, created_at, expires_at, free_allowance, status, internal
+       ) VALUES ('k_oldkey000000002', 'hash2', '901', 'legacy-internal', 0, '2026-06-15T12:00:00Z', '2026-07-15T12:00:00Z', 200, 'active', 1)`,
+    ).run();
+    migrateApiKeyStore(old);
+    migrateApiKeyStore(old);
+    const buckets = queryStarterKeySourceBuckets(old, now);
+    assert.equal(buckets.l7d.none?.issued, 1);
+    assert.equal(sumIssued(buckets.l7d), queryStarterKeyStats(old, now).l7d.issued);
+    assert.equal(queryStarterKeyStats(old, now).l7d.issued, 1);
+    assert.equal((old.prepare(`SELECT source FROM api_keys WHERE github_login = 'legacy'`).get() as { source: string }).source, "none");
+    assert.equal((old.prepare(`SELECT source FROM api_keys WHERE github_login = 'legacy-internal'`).get() as { source: string }).source, "none");
+    old.close();
+  });
+
+  it("adds a nullable source column to a v112 key table and counts that key as none", () => {
+    const old = new DatabaseSync(":memory:");
+    old.exec(`CREATE TABLE api_keys (
+      id TEXT PRIMARY KEY, key_sha256 TEXT NOT NULL UNIQUE, github_id TEXT NOT NULL UNIQUE, github_login TEXT NOT NULL,
+      contact_opt_in INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+      free_allowance INTEGER NOT NULL, free_used INTEGER NOT NULL DEFAULT 0, paid_left INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active', suspended_reason TEXT, followup_drafted_at TEXT,
+      internal INTEGER NOT NULL DEFAULT 0 CHECK (internal IN (0, 1))
+    )`);
+    old.prepare(
+      `INSERT INTO api_keys (id, key_sha256, github_id, github_login, created_at, expires_at, free_allowance, free_used)
+       VALUES ('k_v112aaaaaaaaaaaa', 'h', '42', 'v112user', '2026-06-15T12:00:00Z', '2026-07-15T12:00:00Z', 200, 3)`,
+    ).run();
+    migrateApiKeyStore(old);
+    migrateApiKeyStore(old);
+    const row = old.prepare(`SELECT source, free_used FROM api_keys WHERE id = 'k_v112aaaaaaaaaaaa'`).get() as {
+      source: string;
+      free_used: number;
+    };
+    assert.equal(row.source, "none");
+    assert.equal(Number(row.free_used), 3);
+    const buckets = queryStarterKeySourceBuckets(old, now);
+    assert.deepEqual(buckets.l7d.none, { issued: 1, activated: 1, reached_20: 0 });
+    assert.equal(sumIssued(buckets.l7d), queryStarterKeyStats(old, now).l7d.issued);
+    assert.equal(sumField(buckets.l7d, "activated"), queryStarterKeyStats(old, now).l7d.activated);
+    // v112's INSERT does not name source. The column stays nullable so that insert still works.
+    old.prepare(
+      `INSERT INTO api_keys (id, key_sha256, github_id, github_login, created_at, expires_at, free_allowance)
+       VALUES ('k_v112bbbbbbbbbbbb', 'h2', '43', 'rolled-back', '2026-06-15T12:00:00Z', '2026-07-15T12:00:00Z', 200)`,
+    ).run();
+    assert.equal((old.prepare(`SELECT source FROM api_keys WHERE id = 'k_v112bbbbbbbbbbbb'`).get() as { source: string | null }).source, null);
+    old.close();
+  });
+
+  it("copies a previous api_key_issue_source row onto the column and drops that table", () => {
+    const old = new DatabaseSync(":memory:");
+    migrateApiKeyStore(old);
+    old.prepare(
+      `INSERT INTO api_keys (
+         id, key_sha256, github_id, github_login, contact_opt_in, created_at, expires_at, free_allowance, free_used, status
+       ) VALUES ('k_prev000000000001', 'h', '77', 'prev', 0, '2026-06-15T12:00:00Z', '2026-07-15T12:00:00Z', 200, 20, 'active')`,
+    ).run();
+    old.exec(`CREATE TABLE api_key_issue_source (
+      key_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      day TEXT NOT NULL,
+      source TEXT NOT NULL,
+      counted INTEGER NOT NULL
+    )`);
+    old.prepare(
+      `INSERT INTO api_key_issue_source (key_id, created_at, day, source, counted)
+       VALUES ('k_prev000000000001', '2026-06-15T12:00:00Z', '2026-06-15', 'reddit', 1)`,
+    ).run();
+    old.prepare(
+      `INSERT INTO api_key_source_daily (day, created_at, source, issued) VALUES ('2026-06-15', '2026-06-15T12:00:00Z', 'reddit', 1)`,
+    ).run();
+    migrateApiKeyStore(old);
+    assert.equal((old.prepare(`SELECT source FROM api_keys WHERE id = 'k_prev000000000001'`).get() as { source: string }).source, "reddit");
+    assert.equal(old.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'api_key_issue_source'`).get(), undefined);
+    const buckets = queryStarterKeySourceBuckets(old, now);
+    assert.equal(buckets.l7d.reddit?.issued, 1);
+    assert.equal(buckets.l7d.reddit?.activated, 1);
+    assert.equal(buckets.l7d.reddit?.reached_20, 1);
+    migrateApiKeyStore(old);
+    assert.equal(queryStarterKeySourceBuckets(old, now).l7d.reddit?.issued, 1);
+    old.close();
+  });
+
+  it("puts the tag on the form, folds unknown and junk tags, and does not echo the junk", async () => {
+    const app = createApp();
+    const reddit = await (await app.request("/keys?ref=reddit")).text();
+    assert.match(reddit, /action="\/keys\/start\?ref=reddit"/);
+    const agensi = await (await app.request("/keys?utm_source=Agensi")).text();
+    assert.match(agensi, /action="\/keys\/start\?ref=agensi"/);
+    const unknown = await (await app.request("/keys?ref=newsletter")).text();
+    assert.match(unknown, /action="\/keys\/start\?ref=other"/);
+    assert.equal(unknown.includes("newsletter"), false);
+    const junk = `"><script>alert(1)</script>`;
+    const hostile = await (await app.request(`/keys?ref=${encodeURIComponent(junk)}`)).text();
+    assert.match(hostile, /action="\/keys\/start\?ref=other"/);
+    assert.equal(hostile.includes("<script"), false);
+    assert.equal(hostile.includes("alert(1)"), false);
+    const plain = await (await app.request("/keys")).text();
+    assert.match(plain, /action="\/keys\/start"/);
+    assert.equal(plain.includes("ref=none"), false);
+    assert.match(plain, /We store your GitHub username and which link you came from, to run your key\. Nothing is shared\./);
+  });
+
+  it("issues from a mocked GitHub round trip under the tag, and a repeat visit does not count again", async () => {
+    const app = createApp();
+    const before = starterKeySourceReport(now);
+    const first = await signIn(app, { id: 88001, login: "oauth-reddit", created_at: "2020-01-01T00:00:00Z" }, { start: "/keys/start?ref=reddit" });
+    assert.match(first.html, /lc_live_/);
+    const authorize = new URL(first.authorize);
+    assert.equal(authorize.searchParams.get("scope"), null);
+    assert.equal(authorize.searchParams.get("state")?.includes("reddit"), false);
+    const cookieBody = JSON.parse(Buffer.from((first.cookie.split("=")[1] ?? "").split(".")[0] ?? "", "base64url").toString("utf8")) as {
+      r?: string;
+    };
+    assert.equal(cookieBody.r, "reddit");
+    const row = listStarterKeys(db()).find((item) => item.github_login === "oauth-reddit");
+    assert.ok(row);
+    assert.equal(row?.source, "reddit");
+    const after = starterKeySourceReport(now);
+    assert.equal(after.by_source.l7d.reddit?.issued, (before.by_source.l7d.reddit?.issued ?? 0) + 1);
+    assert.equal(sumIssued(after.by_source.l7d), after.issued.l7d);
+
+    const again = await signIn(
+      app,
+      { id: 88001, login: "oauth-reddit", created_at: "2020-01-01T00:00:00Z" },
+      { start: "/keys/start?ref=hn", allowMissing: true },
+    );
+    assert.match(again.html, /already has a starter key/);
+    assert.equal(listStarterKeys(db()).find((item) => item.id === row!.id)?.source, "reddit");
+    assert.equal(starterKeySourceReport(now).by_source.l7d.reddit?.issued, after.by_source.l7d.reddit?.issued);
+  });
+
+  it("a cookie from before the deploy (no r) still issues as none", async () => {
+    const app = createApp();
+    const state = "pre-deploy-state";
+    const cookieValue = signStarterOauthCookieForTests({ s: state, c: 0, e: now.getTime() + 60_000 }, CLIENT_SECRET);
+    assert.equal(JSON.parse(Buffer.from(cookieValue.split(".")[0] ?? "", "base64url").toString("utf8")).r, undefined);
+    setGithubFetchForTests(async (input) => {
+      const url = requestUrl(input);
+      if (url.startsWith("https://github.com/login/oauth/access_token")) return Response.json({ access_token: "gho_test" });
+      if (url === "https://api.github.com/user") {
+        return Response.json({ id: 88002, login: "inflight", created_at: "2020-01-01T00:00:00Z" });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const beforeNone = starterKeySourceReport(now).by_source.l7d.none?.issued ?? 0;
+    const callback = await app.request(`/keys/callback?code=code-old&state=${encodeURIComponent(state)}`, {
+      headers: { cookie: `${STARTER_OAUTH_COOKIE}=${cookieValue}`, "fly-client-ip": "203.0.113.50" },
+    });
+    const html = await callback.text();
+    assert.equal(callback.status, 200);
+    assert.match(html, /lc_live_/);
+    assert.equal(starterKeySourceReport(now).by_source.l7d.none?.issued, beforeNone + 1);
+    const row = listStarterKeys(db()).find((item) => item.github_login === "inflight");
+    assert.equal(row?.source, "none");
+  });
+
+  it("an edited cookie r fails the HMAC and uses the sign-in expired path", async () => {
+    const app = createApp();
+    const start = await app.request("/keys/start?ref=reddit", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", "fly-client-ip": "203.0.113.60" },
+      body: "",
+    });
+    assert.equal(start.status, 302);
+    const raw = (start.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+    const value = raw.slice(raw.indexOf("=") + 1);
+    const dot = value.lastIndexOf(".");
+    const parsed = JSON.parse(Buffer.from(value.slice(0, dot), "base64url").toString("utf8")) as { s: string; r: string };
+    parsed.r = "hn";
+    const tampered = `${Buffer.from(JSON.stringify(parsed), "utf8").toString("base64url")}.${value.slice(dot + 1)}`;
+    const callback = await app.request(`/keys/callback?code=nope&state=${encodeURIComponent(parsed.s)}`, {
+      headers: { cookie: `${STARTER_OAUTH_COOKIE}=${tampered}` },
+    });
+    assert.equal(callback.status, 400);
+    assert.match(await callback.text(), /Sign-in expired/);
+    assert.equal(listStarterKeys(db()).some((row) => row.github_login === "hn"), false);
+  });
+
+  it("honors a launch tag added at runtime", async () => {
+    const tag = upsertLaunchUtmTagIn(freePageDbForTests(), "partnerblog", now);
+    assert.equal(tag, "partnerblog");
+    const app = createApp();
+    const html = await (await app.request("/keys?ref=partnerblog")).text();
+    assert.match(html, /action="\/keys\/start\?ref=partnerblog"/);
+    const issued = await signIn(app, { id: 88003, login: "partner", created_at: "2020-01-01T00:00:00Z" }, { start: "/keys/start?ref=partnerblog" });
+    assert.match(issued.html, /lc_live_/);
+    assert.equal(starterKeySourceReport(now).by_source.l7d.partnerblog?.issued, 1);
+  });
+
+  it("carries /job?ref=hn onto the /keys links", async () => {
+    const app = createApp();
+    const page = await (await app.request("/job?ref=hn")).text();
+    assert.ok(page.includes('href="/keys?ref=hn"'));
+    assert.equal(page.split('href="/keys?ref=hn"').length - 1, 2);
+    const junk = await (await app.request(`/job?ref=${encodeURIComponent('"><script>')}`)).text();
+    assert.equal(junk.includes("<script>"), false);
+    assert.ok(junk.includes('href="/keys?ref=other"'));
+    const plain = await (await app.request("/job")).text();
+    assert.ok(plain.includes('href="/keys"'));
+    assert.equal(plain.includes("/keys?ref="), false);
+  });
+
+  it("shows by_source on token-gated /job/stats and leaves public /stats unchanged", async () => {
+    const app = createApp();
+    const token = process.env[FREE_PAGE_STATS_TOKEN_ENV] ?? "";
+    const before = starterKeySourceReport(now);
+    await signIn(app, { id: 88004, login: "agensi-user", created_at: "2020-01-01T00:00:00Z" }, { start: "/keys/start?ref=agensi" });
+    const priv = await app.request("/job/stats", { headers: { "x-livecheck-stats-token": token } });
+    assert.equal(priv.status, 200);
+    const body = (await priv.json()) as {
+      starter_keys: {
+        decisions: { public_stats: boolean; source_on_key_row: boolean };
+        issued: { l7d: number; l30d: number };
+        by_source: {
+          l7d: Record<string, { issued: number; activated: number; reached_20: number }>;
+          l30d: Record<string, { issued: number; activated: number; reached_20: number }>;
+        };
+      };
+    };
+    assert.equal(body.starter_keys.decisions.public_stats, false);
+    assert.equal(body.starter_keys.decisions.source_on_key_row, true);
+    assert.equal(body.starter_keys.by_source.l7d.agensi?.issued, (before.by_source.l7d.agensi?.issued ?? 0) + 1);
+    assert.equal(body.starter_keys.by_source.l7d.agensi?.activated, before.by_source.l7d.agensi?.activated ?? 0);
+    assert.equal(body.starter_keys.by_source.l7d.agensi?.reached_20, before.by_source.l7d.agensi?.reached_20 ?? 0);
+    assert.equal(sumIssued(body.starter_keys.by_source.l7d), body.starter_keys.issued.l7d);
+    assert.equal(sumIssued(body.starter_keys.by_source.l30d), body.starter_keys.issued.l30d);
+    assert.equal(body.starter_keys.issued.l7d, queryStarterKeyStats(db(), now).l7d.issued);
+    assert.equal(sumField(body.starter_keys.by_source.l7d, "activated"), queryStarterKeyStats(db(), now).l7d.activated);
+    assert.equal(sumField(body.starter_keys.by_source.l30d, "reached_20"), queryStarterKeyStats(db(), now).l30d.reached_20);
+
+    assert.equal((await app.request("/job/stats")).status, 404);
+    const publicJson = (await (await app.request("/stats?format=json")).json()) as { starter_keys: Record<string, unknown> };
+    assert.equal("by_source" in publicJson.starter_keys, false);
+    assert.equal(JSON.stringify(publicJson.starter_keys).includes("agensi"), false);
+    assert.equal(JSON.stringify(publicJson.starter_keys).includes("by_source"), false);
+    const publicHtml = await (await app.request("/stats?format=html")).text();
+    assert.equal(publicHtml.includes("by_source"), false);
+    assert.equal(publicHtml.includes("agensi"), false);
+    const doc = buildStatsDocument(now);
+    assert.equal("by_source" in doc.starter_keys, false);
+    assert.equal(JSON.stringify(doc.starter_keys).includes("agensi"), false);
+  });
+});
+
 function html(body: string, status: number): Response {
   return new Response(body, { status, headers: { "content-type": "text/html" } });
 }
@@ -1145,8 +1634,8 @@ function reconciliation(): unknown {
 async function signIn(
   app: ReturnType<typeof createApp>,
   profile: { id: number; login: string; created_at: string },
-  options: { contact?: boolean; ip?: string; allowMissing?: boolean } = {},
-): Promise<{ html: string; status: number; plaintext: string; authorize: string; seen: { secret?: string; redirect?: string } }> {
+  options: { contact?: boolean; ip?: string; allowMissing?: boolean; start?: string } = {},
+): Promise<{ html: string; status: number; plaintext: string; authorize: string; seen: { secret?: string; redirect?: string }; cookie: string }> {
   const seen: { secret?: string; redirect?: string } = {};
   setGithubFetchForTests(async (input, init) => {
     const url = requestUrl(input);
@@ -1168,7 +1657,7 @@ async function signIn(
     throw new Error(`unexpected GitHub call ${url}`);
   });
   const ip = options.ip ?? `203.0.113.${profile.id % 200}`;
-  const start = await app.request("/keys/start", {
+  const start = await app.request(options.start ?? "/keys/start", {
     method: "POST",
     headers: {
       "content-type": "application/x-www-form-urlencoded",
@@ -1188,5 +1677,5 @@ async function signIn(
   if (!plaintext && !options.allowMissing) {
     throw new Error(`sign-in for ${profile.login} returned ${callback.status}: ${html.slice(0, 500)}`);
   }
-  return { html, status: callback.status, plaintext, authorize, seen };
+  return { html, status: callback.status, plaintext, authorize, seen, cookie };
 }

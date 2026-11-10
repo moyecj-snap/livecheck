@@ -2,6 +2,8 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Context, Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import { apiKeyDb, issueStarterKey, starterKeyLimits } from "./api-key-store.js";
+import { bucketLaunchSource } from "./free-job-sources.js";
+import { currentLaunchUtmTags } from "./free-job-store.js";
 import { publicOrigin } from "./public-url.js";
 import {
   EMERGENCY_STOP_MESSAGE,
@@ -23,6 +25,9 @@ import {
  */
 
 const COOKIE = "lc_starter_oauth";
+
+/** Signed /keys OAuth cookie. Tests build a pre-deploy payload (no `r`) with this name. */
+export const STARTER_OAUTH_COOKIE = COOKIE;
 const GITHUB_AUTHORIZE = "https://github.com/login/oauth/authorize";
 const GITHUB_TOKEN = "https://github.com/login/oauth/access_token";
 const GITHUB_USER = "https://api.github.com/user";
@@ -95,7 +100,17 @@ function shell(title: string, body: string): string {
 </html>`;
 }
 
-function formBody(options: { oauth: boolean; closed?: string }): string {
+/** Allowlisted tag, "none", or "other". Read again on POST; the query can be edited. */
+function starterSourceFromQuery(source: string | undefined, ref: string | undefined): string {
+  return bucketLaunchSource(source ?? ref, currentLaunchUtmTags());
+}
+
+function startAction(source: string): string {
+  if (source === "none") return `${STARTER_KEY_PAGE_PATH}/start`;
+  return `${STARTER_KEY_PAGE_PATH}/start?ref=${encodeURIComponent(source)}`;
+}
+
+function formBody(options: { oauth: boolean; closed?: string; source: string }): string {
   const reasons: string[] = [];
   if (options.closed) reasons.push(options.closed);
   if (!options.oauth) reasons.push("GitHub sign-in is not configured on this server yet.");
@@ -104,7 +119,7 @@ function formBody(options: { oauth: boolean; closed?: string }): string {
   return `<p>A starter key calls <code>POST /v1/verify</code>, <code>/v1/verify/job</code>, and <code>/v1/verify/listing</code>. 200 free checks over 30 days, no wallet needed. Other Livecheck tools still need a wallet. The free <a href="/job">/job</a> page has its own limits.</p>
 <p>${esc(STARTER_KEY_PRIVACY_LINE)}</p>
 <p>Accounts under 7 days old cannot get a key.</p>
-<form method="post" action="${STARTER_KEY_PAGE_PATH}/start">
+<form method="post" action="${esc(startAction(options.source))}">
   <label><input type="checkbox" name="contact" value="yes"> ${esc(STARTER_KEY_CONTACT_LABEL)}</label>
   <button type="submit"${disabled}>Continue with GitHub</button>
 </form>
@@ -128,7 +143,12 @@ function cookieOptions(c: Context, maxAge: number): {
   };
 }
 
-type OauthState = { s: string; c: 0 | 1; e: number };
+type OauthState = { s: string; c: 0 | 1; e: number; r?: string };
+
+/** Test helper: sign a /keys OAuth cookie, including a pre-deploy payload with no `r`. */
+export function signStarterOauthCookieForTests(payload: OauthState, secret: string): string {
+  return signState(payload, secret);
+}
 
 function signState(payload: OauthState, secret: string): string {
   const body = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
@@ -150,7 +170,9 @@ function readState(cookie: string | undefined, secret: string, now: number): Oau
     const parsed = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as Partial<OauthState>;
     if (typeof parsed.s !== "string" || (parsed.c !== 0 && parsed.c !== 1) || typeof parsed.e !== "number") return undefined;
     if (parsed.e < now) return undefined;
-    return { s: parsed.s, c: parsed.c, e: parsed.e };
+    // A cookie signed before this deploy has no `r`. That is "none", not a rejection.
+    const source = typeof parsed.r === "string" ? parsed.r : undefined;
+    return { s: parsed.s, c: parsed.c, e: parsed.e, ...(source !== undefined ? { r: source } : {}) };
   } catch {
     return undefined;
   }
@@ -208,7 +230,8 @@ function signupClosedMessage(): string | undefined {
 
 export function registerStarterKeyRoutes(app: Hono): void {
   app.get(STARTER_KEY_PAGE_PATH, (c) => {
-    return page(c, shell("Starter key", formBody({ oauth: Boolean(githubOauthConfig()), closed: signupClosedMessage() })));
+    const source = starterSourceFromQuery(c.req.query("utm_source"), c.req.query("ref"));
+    return page(c, shell("Starter key", formBody({ oauth: Boolean(githubOauthConfig()), closed: signupClosedMessage(), source })));
   });
 
   app.post(`${STARTER_KEY_PAGE_PATH}/start`, async (c) => {
@@ -222,9 +245,10 @@ export function registerStarterKeyRoutes(app: Hono): void {
     if (closed) return page(c, shell("Starter key", `<p class="note">${esc(closed)}</p>`), 403);
     const body = await c.req.parseBody();
     const opted = body.contact === "yes";
+    const source = starterSourceFromQuery(c.req.query("utm_source"), c.req.query("ref"));
     const state = randomBytes(32).toString("base64url");
     const exp = starterKeyNow().getTime() + 10 * 60 * 1000;
-    setCookie(c, COOKIE, signState({ s: state, c: opted ? 1 : 0, e: exp }, oauth.clientSecret), cookieOptions(c, 600));
+    setCookie(c, COOKIE, signState({ s: state, c: opted ? 1 : 0, e: exp, r: source }, oauth.clientSecret), cookieOptions(c, 600));
     const redirectUri = starterKeyCallbackUrl(c.req.url, c.req.header("host"));
     const params = new URLSearchParams({ client_id: oauth.clientId, redirect_uri: redirectUri, state });
     return c.redirect(`${GITHUB_AUTHORIZE}?${params.toString()}`);
@@ -271,6 +295,7 @@ export function registerStarterKeyRoutes(app: Hono): void {
         accountCreatedAt: profile.createdAt,
         contactOptIn: saved.c === 1,
         ipSubject: starterKeyIpSubject(clientIp(c), oauth.clientSecret),
+        source: saved.r,
       },
       starterKeyNow(),
     );

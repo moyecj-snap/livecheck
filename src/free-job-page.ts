@@ -31,6 +31,7 @@ import {
   readFreePageStats,
   type FreePageSettings,
 } from "./free-job-store.js";
+import { starterKeySourceReport } from "./api-key-store.js";
 import { isAutomatedUa, referrerSource, registrableDomain, uaClass, utmSource, type SourceEvent } from "./free-job-sources.js";
 import { EXAMPLE_TTL_MS, ExampleCache, FREE_JOB_EXAMPLES, isExampleKey, type ExampleKey } from "./free-job-examples.js";
 import { lookupRole, roleLine, type RoleInfo } from "./free-job-role.js";
@@ -514,9 +515,10 @@ function resultHtml(view: FreeJobView, remaining: number | undefined): string {
 
 export function freeJobHtml(
   view: FreeJobView,
-  options: { remaining?: number; perDay: number; origin?: string; formAction?: string },
+  options: { remaining?: number; perDay: number; origin?: string; formAction?: string; keysHref?: string },
 ): string {
   const action = esc(options.formAction ?? FREE_JOB_PATH);
+  const keysHref = esc(options.keysHref ?? "/keys");
   const value = view.kind === "result" || view.kind === "invalid" ? (view.url ?? "") : "";
   const origin = (options.origin ?? "https://livecheck.fly.dev").replace(/\/+$/, "");
   const pageUrl = `${origin}${FREE_JOB_PATH}`;
@@ -611,13 +613,13 @@ export function freeJobHtml(
   ${resultHtml(view, options.remaining)}
   <p class="muted small">Free: ${options.perDay} checks per day, no wallet, no signup. We don't store the links you check. These limits are separate from a starter key.</p>
   <section class="cta">
-    <p><strong>Building an AI agent?</strong> Same check by API: <code>POST /v1/verify/job</code>. A wallet pays ${priceLabel()}. Builders: <a href="/keys">sign in with GitHub for 200 free checks</a>, no wallet needed.
+    <p><strong>Building an AI agent?</strong> Same check by API: <code>POST /v1/verify/job</code>. A wallet pays ${priceLabel()}. Builders: <a href="${keysHref}">sign in with GitHub for 200 free checks</a>, no wallet needed.
     &rarr; <a href="${FREE_JOB_PATH}/go/docs">Docs</a> &middot; <a href="${FREE_JOB_PATH}/go/skill">Agent skill</a></p>
   </section>
 </main>
 <footer class="site"><div class="wrap">
   <p>${esc(HOW_IT_WORKS)}</p>
-  <nav><a href="${FREE_JOB_PATH}/go/docs">Docs</a><a href="${FREE_JOB_PATH}/go/skill">Agent skill</a><a href="/keys">Starter key</a><a href="mailto:${CONTACT_EMAIL}">Contact</a></nav>
+  <nav><a href="${FREE_JOB_PATH}/go/docs">Docs</a><a href="${FREE_JOB_PATH}/go/skill">Agent skill</a><a href="${keysHref}">Starter key</a><a href="mailto:${CONTACT_EMAIL}">Contact</a></nav>
 </div></footer>
 </body>
 </html>`;
@@ -659,8 +661,10 @@ function page(c: Context, view: FreeJobView, status: number, config: FreeJobConf
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) c.header(name, value);
   if (view.kind === "busy") c.header("retry-after", "180");
   const origin = publicOrigin(c.req.url, c.req.header("host"));
-  const formAction = sourceFormAction(carriedSource(c));
-  return c.html(freeJobHtml(view, { perDay: config.perVisitorDaily, remaining, origin, formAction }), status as 200);
+  const source = carriedSource(c);
+  const formAction = sourceFormAction(source);
+  const keysHref = source.utm === "none" ? "/keys" : `/keys?ref=${encodeURIComponent(source.utm)}`;
+  return c.html(freeJobHtml(view, { perDay: config.perVisitorDaily, remaining, origin, formAction, keysHref }), status as 200);
 }
 
 /** Hosts that count as "self" for the referrer dimension. */
@@ -912,6 +916,8 @@ export function registerFreeJobRoutes(app: Hono): void {
       // MPP paid calls that could not return a real answer (review for refund).
       // Counts per UTC day only; this view is token-gated, never public /stats.
       mpp_refund_candidates: queryRefundCandidateDailyFromStore(now) ?? { available: false },
+      // Issued starter keys by launch tag. Same gate. Public /stats does not include it.
+      starter_keys: starterKeySourceReport(now),
     });
   });
   // /check alias from the launch kit ("livecheck.fly.dev/job (or /check)").

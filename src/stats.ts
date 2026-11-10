@@ -12,7 +12,8 @@ import {
 } from "./docs-example-url.js";
 import { graderWallets, testerWallets } from "./grader-wallets.js";
 import { internalWallets } from "./internal-wallets.js";
-import { starterKeyStats, type StarterKeyStats } from "./api-key-store.js";
+import { starterKeySourceReport, starterKeyStats, type StarterKeyStats } from "./api-key-store.js";
+import { STARTER_SOURCE_STATS_PUBLIC } from "./starter-key.js";
 import { PAID_CALL_ROUTES } from "./paid-call.js";
 import {
   emptyRouteCounts,
@@ -1779,6 +1780,16 @@ export function buildTrafficHonesty(
   };
 }
 
+/**
+ * Public starter_keys. by_source is attached only when STARTER_SOURCE_STATS_PUBLIC
+ * is flipped. The default leaves this object exactly as starterKeyStats returns it.
+ */
+function starterKeysForDocument(now: Date): StarterKeyStats {
+  const stats = starterKeyStats(now);
+  if (!STARTER_SOURCE_STATS_PUBLIC) return stats;
+  return Object.assign(stats, { by_source: starterKeySourceReport(now).by_source });
+}
+
 export function buildStatsDocument(now = new Date()): StatsDocument {
   const confirmWindows = queryConfirmIntentWindowsFromStore(now);
   const lead7 = countReceiptsSince(isoCutoff(now, 7), "lead_submit");
@@ -1791,7 +1802,7 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
   const scoped30: ConfirmIntentCounts | undefined = confirmWindows?.l30d;
   const unscoped = { l7d: scoped7?.unscoped ?? 0, l30d: scoped30?.unscoped ?? 0 };
   const notes = statsNotes(unscoped, LOCAL_VOLUME_NOTE, "volume");
-  const starterKeys = starterKeyStats(now);
+  const starterKeys = starterKeysForDocument(now);
   if (starterKeys.daily_cap_hit) {
     notes.push(
       `STARTER KEYS: daily free-key cap hit (${starterKeys.daily_cap_used}/${starterKeys.daily_cap}). Not raised. This is the operator flag for the nightly note.`,

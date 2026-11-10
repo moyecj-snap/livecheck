@@ -26,9 +26,11 @@ function openDb(): DatabaseSync {
 }
 
 describe("free /job launch utm tags", () => {
-  it("built-ins include clawhub", () => {
-    assert.ok((LAUNCH_UTM_TAGS as readonly string[]).includes("clawhub"));
-    assert.ok(effectiveLaunchUtmTags(null).has("clawhub"));
+  it("built-ins include clawhub and agensi", () => {
+    for (const tag of ["clawhub", "agensi"]) {
+      assert.ok((LAUNCH_UTM_TAGS as readonly string[]).includes(tag), tag);
+      assert.ok(effectiveLaunchUtmTags(null).has(tag), tag);
+    }
   });
 
   it("DB extras merge in and never fold on a single hit; remove works", () => {

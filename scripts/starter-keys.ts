@@ -25,8 +25,9 @@
  *   wind_down 1       /keys sign-up closes. Unexpired keys keep their
  *                     remaining checks until they expire. Set 0 to reopen.
  *
- * Our own dry-run/test key: mark-internal (leaves every starter-key stat and
- * the follow-up list; the key still works), then revoke (stops the key, keeps
+ * Our own dry-run/test key: mark-internal (leaves every starter-key stat,
+ * including that key's issued, activated, and 20+ source buckets, and the
+ * follow-up list; the key still works), then revoke (stops the key, keeps
  * the record), then optionally delete (removes the record and its per-key
  * counts now, overriding the 90-day retention, so the same GitHub account can
  * get a fresh key). Each takes a key id, GitHub numeric id, or login (@ optional).
@@ -181,6 +182,7 @@ try {
     suspended_reason: row.suspended_reason,
     followup_drafted_at: row.followup_drafted_at,
     internal: row.internal === 1,
+    source: row.source,
   }));
   const followups = listFollowups(db).map((row) => ({
     ...row,
@@ -203,7 +205,7 @@ try {
     if (keys.length === 0) console.log("no starter keys");
     for (const row of keys) {
       console.log(
-        `${row.id}  @${row.github_login}  github:${row.github_id}  ${row.status}  ${row.free_used}/${row.free_allowance} free  paid_left=${row.paid_left}  opt_in=${row.contact_opt_in}  created=${row.created_at}  expires=${row.expires_at}${row.internal ? "  internal" : ""}${row.suspended_reason ? `  reason=${row.suspended_reason}` : ""}`,
+        `${row.id}  @${row.github_login}  github:${row.github_id}  ${row.status}  ${row.free_used}/${row.free_allowance} free  paid_left=${row.paid_left}  opt_in=${row.contact_opt_in}  source=${row.source ?? "none"}  created=${row.created_at}  expires=${row.expires_at}${row.internal ? "  internal" : ""}${row.suspended_reason ? `  reason=${row.suspended_reason}` : ""}`,
       );
     }
     if (command === "followups") {

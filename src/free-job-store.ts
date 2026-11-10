@@ -239,6 +239,15 @@ export function freePageDbForTests(): DatabaseSync {
   return db().db;
 }
 
+/** Built-in launch tags plus any added with free:launch-tags. Built-ins if the read fails. */
+export function currentLaunchUtmTags(): ReadonlySet<string> {
+  try {
+    return effectiveLaunchUtmTags(db().db);
+  } catch {
+    return effectiveLaunchUtmTags(null);
+  }
+}
+
 const PT_DAY = new Intl.DateTimeFormat("en-CA", {
   timeZone: "America/Los_Angeles",
   year: "numeric",
@@ -368,7 +377,7 @@ export function readFreePageStats(now = new Date()): FreePageStats {
       const l30d = readSourceTotalsFrom(db().db, day(29));
       return {
         note:
-          "Daily totals only. view = people (browser UA); bot_view = crawlers, link previews, headless clients, scripts (not people; before this change, view included them); check = typed links; example = Try an example runs. referrer = Referer registrable domain (direct/self/other); utm = utm_source or ref, sanitized; ua = browser/bot/agent. Values seen fewer than 2 times in the window show as other, except launch tags (producthunt, linkedin, x, email, test, clawhub, hn, reddit, cursorforum, devto, indiehackers, plus any added via npm run free:launch-tags) and their domains. No IPs, URLs, cookies, or per-visit rows.",
+          "Daily totals only. view = people (browser UA); bot_view = crawlers, link previews, headless clients, scripts (not people; before this change, view included them); check = typed links; example = Try an example runs. referrer = Referer registrable domain (direct/self/other); utm = utm_source or ref, sanitized; ua = browser/bot/agent. Values seen fewer than 2 times in the window show as other, except launch tags (producthunt, linkedin, x, email, test, clawhub, hn, reddit, cursorforum, devto, indiehackers, agensi, plus any added via npm run free:launch-tags) and their domains. No IPs, URLs, cookies, or per-visit rows.",
         by_source: { today: sourceSummary(today), l7d: sourceSummary(l7d), l30d: sourceSummary(l30d) },
         today,
         l7d,

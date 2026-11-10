@@ -1,10 +1,14 @@
 import { DatabaseSync } from "node:sqlite";
+import { bucketLaunchSource } from "./free-job-sources.js";
+import { currentLaunchUtmTags } from "./free-job-store.js";
 import {
   EMERGENCY_STOP_MESSAGE,
   OUT_OF_CHECKS_MESSAGE,
   STARTER_KEY_RETENTION_MS,
   STARTER_KEY_SETTINGS,
   STARTER_KEY_TTL_MS,
+  STARTER_SOURCE_ON_KEY_ROW,
+  STARTER_SOURCE_STATS_PUBLIC,
   WIND_DOWN_MESSAGE,
   githubAccountTooYoung,
   hashStarterKey,
@@ -44,7 +48,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
   status TEXT NOT NULL CHECK (status IN ('active', 'suspended', 'revoked')),
   suspended_reason TEXT,
   followup_drafted_at TEXT,
-  internal INTEGER NOT NULL DEFAULT 0 CHECK (internal IN (0, 1))
+  internal INTEGER NOT NULL DEFAULT 0 CHECK (internal IN (0, 1)),
+  source TEXT
 );
 `;
 
@@ -94,6 +99,26 @@ CREATE TABLE IF NOT EXISTS api_key_cap_hits (
 );
 `;
 
+/**
+ * Issued starter keys by source. Counts only: no key id, login, IP, or URL.
+ *
+ * One row per (issue second, source). The second is the key's created_at, so
+ * a rolling 7-day or 30-day window matches starter_keys.issued exactly. `day`
+ * is that second's UTC date, for a per-day reading. Rows stay after the key
+ * is deleted at expiry, which is what "keys per post" needs.
+ *
+ * v112 does not read this table. Creating it does not change api_keys.
+ */
+const SOURCE_DAILY_SQL = `
+CREATE TABLE IF NOT EXISTS api_key_source_daily (
+  day TEXT NOT NULL CHECK (length(day) = 10),
+  created_at TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (length(source) BETWEEN 1 AND 40),
+  issued INTEGER NOT NULL CHECK (issued >= 0),
+  PRIMARY KEY (created_at, source)
+);
+`;
+
 export type ApiKeyStatus = "active" | "suspended" | "revoked";
 
 export type ApiKeyRow = {
@@ -112,6 +137,11 @@ export type ApiKeyRow = {
   followup_drafted_at: string | null;
   /** 1 = our own dry-run/test key (keys:mark-internal). Left out of every starter-key stat and follow-up. */
   internal: number;
+  /**
+   * Sanitized launch tag (or none / other). Null only before backfill of a
+   * row inserted without the column. Not a URL, login, or IP.
+   */
+  source: string | null;
 };
 
 export type IssueInput = {
@@ -122,6 +152,11 @@ export type IssueInput = {
   contactOptIn: boolean;
   /** Already an HMAC (`ip:…`). The raw IP never reaches this function. */
   ipSubject: string;
+  /**
+   * utm_source or ref, raw or already bucketed. Sanitized again here.
+   * Omitted, or a cookie from before this deploy, counts as "none".
+   */
+  source?: string;
 };
 
 export type IssueResult =
@@ -189,6 +224,12 @@ export function migrateApiKeyStore(db: DatabaseSync): void {
   db.exec(HOUR_SQL);
   migrateApiKeySettings(db);
   db.exec(CAP_HITS_SQL);
+  // Additive. v112 ignores the aggregate table. The source column is nullable,
+  // so v112's INSERT (which does not name it) still works.
+  db.exec(SOURCE_DAILY_SQL);
+  migrateSourceColumn(db);
+  retireIssueSourceTable(db);
+  backfillNullSources(db);
 }
 
 /** Files made before keys:mark-internal existed get the column, default 0. */
@@ -196,6 +237,13 @@ function migrateInternalColumn(db: DatabaseSync): void {
   const cols = db.prepare(`PRAGMA table_info(api_keys)`).all() as Array<{ name: string }>;
   if (cols.some((col) => col.name === "internal")) return;
   db.exec(`ALTER TABLE api_keys ADD COLUMN internal INTEGER NOT NULL DEFAULT 0 CHECK (internal IN (0, 1))`);
+}
+
+/** Nullable tag. Existing rows stay null until backfillNullSources sets them to none. */
+function migrateSourceColumn(db: DatabaseSync): void {
+  const cols = db.prepare(`PRAGMA table_info(api_keys)`).all() as Array<{ name: string }>;
+  if (cols.some((col) => col.name === "source")) return;
+  db.exec(`ALTER TABLE api_keys ADD COLUMN source TEXT`);
 }
 
 /**
@@ -345,11 +393,12 @@ function rowFrom(raw: Record<string, unknown> | undefined): ApiKeyRow | undefine
     suspended_reason: raw.suspended_reason == null ? null : String(raw.suspended_reason),
     followup_drafted_at: raw.followup_drafted_at == null ? null : String(raw.followup_drafted_at),
     internal: num(raw.internal ?? 0),
+    source: raw.source == null || raw.source === "" ? null : String(raw.source),
   };
 }
 
 const KEY_COLUMNS =
-  "id, key_sha256, github_id, github_login, contact_opt_in, created_at, expires_at, free_allowance, free_used, paid_left, status, suspended_reason, followup_drafted_at, internal";
+  "id, key_sha256, github_id, github_login, contact_opt_in, created_at, expires_at, free_allowance, free_used, paid_left, status, suspended_reason, followup_drafted_at, internal, source";
 
 export function readStarterKeySettings(db: DatabaseSync): StarterKeySettings {
   const out: StarterKeySettings = {};
@@ -423,6 +472,98 @@ function existingMessage(row: ApiKeyRow, nowIso: string): IssueResult {
   };
 }
 
+function sourceDay(createdAt: string): string {
+  return createdAt.slice(0, 10);
+}
+
+/** +1 on a new issue. -1 when that issue leaves the issued total. Never below 0. */
+function bumpSourceIssued(db: DatabaseSync, createdAt: string, source: string, delta: number): void {
+  const day = sourceDay(createdAt);
+  if (delta > 0) {
+    db.prepare(
+      `INSERT INTO api_key_source_daily (day, created_at, source, issued) VALUES (?, ?, ?, ?)
+       ON CONFLICT(created_at, source) DO UPDATE SET issued = issued + excluded.issued`,
+    ).run(day, createdAt, source, delta);
+    return;
+  }
+  if (delta < 0) {
+    db.prepare(
+      `UPDATE api_key_source_daily SET issued = issued + ? WHERE created_at = ? AND source = ? AND issued + ? >= 0`,
+    ).run(delta, createdAt, source, delta);
+    db.prepare(`DELETE FROM api_key_source_daily WHERE created_at = ? AND source = ? AND issued = 0`).run(createdAt, source);
+  }
+}
+
+function storedSource(source: string | null | undefined): string {
+  return source && source.length > 0 ? source : "none";
+}
+
+/**
+ * The previous commit of this branch kept key id → tag in api_key_issue_source.
+ * Copy that tag onto the column, subtract any internal key that was still
+ * counted, then drop the table. v112 never creates it. Fresh databases skip this.
+ */
+function retireIssueSourceTable(db: DatabaseSync): void {
+  const exists = db.prepare(`SELECT 1 AS hit FROM sqlite_master WHERE type = 'table' AND name = 'api_key_issue_source'`).get() as
+    | { hit: number }
+    | undefined;
+  if (!exists) return;
+  const rows = db
+    .prepare(
+      `SELECT s.key_id AS key_id, s.created_at AS created_at, s.source AS source, s.counted AS counted, k.internal AS internal
+       FROM api_key_issue_source s
+       JOIN api_keys k ON k.id = s.key_id`,
+    )
+    .all() as Array<{ key_id: string; created_at: string; source: string; counted: number | bigint; internal: number | bigint }>;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const setSource = db.prepare(`UPDATE api_keys SET source = ? WHERE id = ? AND source IS NULL`);
+    for (const row of rows) {
+      setSource.run(row.source, row.key_id);
+      if (num(row.counted) === 1 && num(row.internal) === 1) bumpSourceIssued(db, String(row.created_at), storedSource(row.source), -1);
+    }
+    db.exec(`DROP TABLE api_key_issue_source`);
+    db.exec("COMMIT");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // already closed
+    }
+    throw error;
+  }
+}
+
+/**
+ * Rows inserted before the column existed (or by v112, which does not set it)
+ * have no tag. Record them as none, once. Internal keys are not added to the
+ * issued aggregate; they are already out of the issued total.
+ */
+function backfillNullSources(db: DatabaseSync): void {
+  const missing = db.prepare(`SELECT id, created_at, internal FROM api_keys WHERE source IS NULL`).all() as Array<{
+    id: string;
+    created_at: string;
+    internal: number | bigint;
+  }>;
+  if (missing.length === 0) return;
+  const setSource = db.prepare(`UPDATE api_keys SET source = 'none' WHERE id = ? AND source IS NULL`);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const row of missing) {
+      const updated = setSource.run(row.id);
+      if (num(updated.changes) === 1 && num(row.internal) !== 1) bumpSourceIssued(db, String(row.created_at), "none", 1);
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // already closed
+    }
+    throw error;
+  }
+}
+
 export function issueStarterKey(db: DatabaseSync, input: IssueInput, now = new Date()): IssueResult {
   if (!/^[0-9]{1,20}$/.test(input.githubId)) {
     return { ok: false, error: "invalid_account", message: "GitHub did not return a usable account id." };
@@ -470,12 +611,13 @@ export function issueStarterKey(db: DatabaseSync, input: IssueInput, now = new D
     const plaintext = newStarterKeySecret();
     const id = newStarterKeyId();
     const expiresAt = isoStamp(new Date(now.getTime() + STARTER_KEY_TTL_MS));
+    const source = bucketLaunchSource(input.source, currentLaunchUtmTags());
     try {
       db.prepare(
         `INSERT INTO api_keys (
            id, key_sha256, github_id, github_login, contact_opt_in, created_at, expires_at,
-           free_allowance, free_used, paid_left, status
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'active')`,
+           free_allowance, free_used, paid_left, status, source
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'active', ?)`,
       ).run(
         id,
         hashStarterKey(plaintext),
@@ -485,6 +627,7 @@ export function issueStarterKey(db: DatabaseSync, input: IssueInput, now = new D
         nowIso,
         expiresAt,
         limits.freeAllowance,
+        source,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -499,6 +642,7 @@ export function issueStarterKey(db: DatabaseSync, input: IssueInput, now = new D
     }
     bumpDaily(db, day, input.ipSubject, "issued", 1);
     bumpDaily(db, day, GLOBAL, "issued", 1);
+    bumpSourceIssued(db, nowIso, source, 1);
     console.log(`starter_keys: issued id=${id}`);
     return { ok: true, plaintext, id, expiresAt, login: input.githubLogin };
   });
@@ -662,17 +806,21 @@ export function revokeStarterKey(db: DatabaseSync, idOrLogin: string, now = new 
 /**
  * Flag our own dry-run/test key as internal. Its key, checks, and 20+ status
  * leave every starter-key stat (issued, activated, reached_20, free_checks,
- * out_of_credit) and the 7-day follow-up list. The key itself keeps working
+ * out_of_credit) and the 7-day follow-up list. The same transaction subtracts
+ * one from that key's issued-by-source bucket. The key itself keeps working
  * until revoked. Like testers:add for wallets.
  */
 export function markStarterKeyInternal(db: DatabaseSync, idOrLogin: string, now = new Date()): ApiKeyRow | undefined {
-  const row = findStarterKey(db, idOrLogin);
-  if (!row) return undefined;
-  if (row.internal !== 1) {
-    db.prepare(`UPDATE api_keys SET internal = 1 WHERE id = ?`).run(row.id);
-    console.log(`starter_keys: marked internal id=${row.id} login=@${row.github_login} at=${isoStamp(now)}`);
-  }
-  return rowFrom(db.prepare(`SELECT ${KEY_COLUMNS} FROM api_keys WHERE id = ?`).get(row.id) as Record<string, unknown>);
+  return withTx(db, () => {
+    const row = findStarterKey(db, idOrLogin);
+    if (!row) return undefined;
+    if (row.internal !== 1) {
+      db.prepare(`UPDATE api_keys SET internal = 1 WHERE id = ?`).run(row.id);
+      bumpSourceIssued(db, row.created_at, storedSource(row.source), -1);
+      console.log(`starter_keys: marked internal id=${row.id} login=@${row.github_login} at=${isoStamp(now)}`);
+    }
+    return rowFrom(db.prepare(`SELECT ${KEY_COLUMNS} FROM api_keys WHERE id = ?`).get(row.id) as Record<string, unknown>);
+  });
 }
 
 /**
@@ -689,6 +837,7 @@ export function deleteStarterKeyRecord(
   return withTx(db, () => {
     const row = findStarterKey(db, idOrLogin);
     if (!row) return undefined;
+    if (row.internal !== 1) bumpSourceIssued(db, row.created_at, storedSource(row.source), -1);
     db.prepare(`DELETE FROM api_key_daily WHERE key_id = ?`).run(row.id);
     db.prepare(`DELETE FROM api_key_minute WHERE key_id = ?`).run(row.id);
     db.prepare(`DELETE FROM api_key_hour WHERE key_id = ?`).run(row.id);
@@ -751,6 +900,7 @@ export function deleteExpiredStarterKeys(db: DatabaseSync, now = new Date()): nu
   return withTx(db, () => {
     const ids = db.prepare(`SELECT id FROM api_keys WHERE expires_at <= ?`).all(cutoff) as Array<{ id: string }>;
     for (const { id } of ids) {
+      // Issued-by-source stays in api_key_source_daily. The key row, including its tag, does not.
       db.prepare(`DELETE FROM api_key_daily WHERE key_id = ?`).run(id);
       db.prepare(`DELETE FROM api_key_minute WHERE key_id = ?`).run(id);
       db.prepare(`DELETE FROM api_key_hour WHERE key_id = ?`).run(id);
@@ -772,6 +922,11 @@ export function sweepStarterKeys(now = new Date()): number {
 
 function emptyWindow(): StarterKeyWindow {
   return { issued: 0, activated: 0, reached_20: 0, free_checks: 0, out_of_credit: 0 };
+}
+
+function rollingCutoff(now: Date, days: number): { iso: string; day: string } {
+  const at = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+  return { iso: isoStamp(at), day: utcDay(at) };
 }
 
 function windowStats(db: DatabaseSync, sinceIso: string, sinceDay: string): StarterKeyWindow {
@@ -805,8 +960,8 @@ export function queryStarterKeyStats(db: DatabaseSync, now = new Date()): Starte
   const limits = starterKeyLimits(db);
   const day = utcDay(now);
   const used = readDaily(db, day, GLOBAL, "free_charged") + readDaily(db, day, GLOBAL, "free_reserved");
-  const l7 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const l30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const l7 = rollingCutoff(now, 7);
+  const l30 = rollingCutoff(now, 30);
   const internal = num((db.prepare(`SELECT COUNT(*) AS n FROM api_keys WHERE internal = 1`).get() as { n: number | bigint }).n);
   return {
     available: true,
@@ -817,9 +972,110 @@ export function queryStarterKeyStats(db: DatabaseSync, now = new Date()): Starte
     daily_cap_used: used,
     daily_cap_hit: capHitOn(db, day),
     note: STATS_NOTE,
-    l7d: windowStats(db, isoStamp(l7), utcDay(l7)),
-    l30d: windowStats(db, isoStamp(l30), utcDay(l30)),
+    l7d: windowStats(db, l7.iso, l7.day),
+    l30d: windowStats(db, l30.iso, l30.day),
   };
+}
+
+export type StarterSourceBucket = { issued: number; activated: number; reached_20: number };
+export type StarterSourceBuckets = Record<string, StarterSourceBucket>;
+
+export type StarterKeySourceReport = {
+  available: boolean;
+  note: string;
+  /** The two storage/visibility defaults. Flip the constants in starter-key.ts. */
+  decisions: { public_stats: boolean; source_on_key_row: boolean };
+  /** Same rolling windows as starter_keys.l7d.issued and l30d.issued. */
+  issued: { l7d: number; l30d: number };
+  by_source: { l7d: StarterSourceBuckets; l30d: StarterSourceBuckets };
+};
+
+const SOURCE_STATS_NOTE =
+  "Starter keys by the link that started sign-in (utm_source or ref) after the launch-tag allowlist. The tag is the sanitized value on the key (none = no tag, including a sign-in already in flight at deploy; other = not on the allowlist). issued is the daily aggregate and survives key expiry. activated (free_used >= 1) and reached_20 (free_used >= 20) are counted from the key row and drop when the key is deleted. Internal test keys (keys:mark-internal) are left out. Each bucket's issued adds up to starter_keys issued for the same rolling window, and the same for activated and reached_20. Public /stats does not include this block.";
+
+function sourceDecisions(): StarterKeySourceReport["decisions"] {
+  return { public_stats: STARTER_SOURCE_STATS_PUBLIC, source_on_key_row: STARTER_SOURCE_ON_KEY_ROW };
+}
+
+function sourceBuckets(db: DatabaseSync, sinceIso: string): StarterSourceBuckets {
+  const issuedRows = db
+    .prepare(`SELECT source, SUM(issued) AS n FROM api_key_source_daily WHERE created_at >= ? GROUP BY source`)
+    .all(sinceIso) as Array<{ source: string; n: number | bigint }>;
+  const useRows = db
+    .prepare(
+      `SELECT COALESCE(NULLIF(source, ''), 'none') AS source,
+              SUM(CASE WHEN free_used >= 1 THEN 1 ELSE 0 END) AS activated,
+              SUM(CASE WHEN free_used >= 20 THEN 1 ELSE 0 END) AS reached_20
+       FROM api_keys
+       WHERE internal = 0 AND created_at >= ?
+       GROUP BY COALESCE(NULLIF(source, ''), 'none')`,
+    )
+    .all(sinceIso) as Array<{ source: string; activated: number | bigint; reached_20: number | bigint }>;
+  const buckets = new Map<string, StarterSourceBucket>();
+  const bucket = (source: string): StarterSourceBucket => {
+    const existing = buckets.get(source);
+    if (existing) return existing;
+    const created = { issued: 0, activated: 0, reached_20: 0 };
+    buckets.set(source, created);
+    return created;
+  };
+  for (const row of issuedRows) {
+    const issued = num(row.n);
+    if (issued > 0) bucket(row.source).issued = issued;
+  }
+  for (const row of useRows) {
+    const activated = num(row.activated);
+    const reached = num(row.reached_20);
+    if (activated > 0 || reached > 0) {
+      const item = bucket(row.source);
+      item.activated = activated;
+      item.reached_20 = reached;
+    }
+  }
+  const entries = [...buckets.entries()].filter(([, item]) => item.issued > 0 || item.activated > 0 || item.reached_20 > 0);
+  entries.sort((a, b) => b[1].issued - a[1].issued || b[1].activated - a[1].activated || a[0].localeCompare(b[0]));
+  return Object.fromEntries(entries);
+}
+
+export function queryStarterKeySourceBuckets(db: DatabaseSync, now = new Date()): { l7d: StarterSourceBuckets; l30d: StarterSourceBuckets } {
+  return {
+    l7d: sourceBuckets(db, rollingCutoff(now, 7).iso),
+    l30d: sourceBuckets(db, rollingCutoff(now, 30).iso),
+  };
+}
+
+export function starterKeySourceReport(now = new Date()): StarterKeySourceReport {
+  const decisions = sourceDecisions();
+  const empty = { l7d: {}, l30d: {} };
+  if (!bound) {
+    return {
+      available: false,
+      note: `${SOURCE_STATS_NOTE} The store is not open on this process.`,
+      decisions,
+      issued: { l7d: 0, l30d: 0 },
+      by_source: empty,
+    };
+  }
+  try {
+    const stats = queryStarterKeyStats(bound, now);
+    return {
+      available: true,
+      note: SOURCE_STATS_NOTE,
+      decisions,
+      issued: { l7d: stats.l7d.issued, l30d: stats.l30d.issued },
+      by_source: queryStarterKeySourceBuckets(bound, now),
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(`[starter_keys] source stats read failed: ${reason}`);
+    return {
+      available: false,
+      note: `${SOURCE_STATS_NOTE} The store read failed.`,
+      decisions,
+      issued: { l7d: 0, l30d: 0 },
+      by_source: empty,
+    };
+  }
 }
 
 export function starterKeyStats(now = new Date()): StarterKeyStats {
