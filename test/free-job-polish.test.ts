@@ -140,8 +140,8 @@ describe("free /job polish", () => {
   it("examples: POST buttons under the box, production links fixed, no link in any href or query", async () => {
     const page = await (await app.request("/job")).text();
     assert.match(page, /<form class="examples" method="post" action="\/job">/);
-    assert.match(page, /<button class="try" type="submit" name="example" value="open">Try an example<\/button>/);
-    assert.match(page, /<button class="link" type="submit" name="example" value="filled">filled job<\/button>/);
+    assert.match(page, /<button class="try" type="submit" name="example" value="filled">Try a filled job<\/button>/);
+    assert.match(page, /<button class="link" type="submit" name="example" value="open">open job<\/button>/);
     assert.equal(/href="[^"]*(stripe|gh_jid)/.test(page), false, "no example link in an href");
     assert.equal(FREE_JOB_EXAMPLES.open.employer, "Figma");
     assert.equal(FREE_JOB_EXAMPLES.open.url, "https://job-boards.greenhouse.io/figma/jobs/6223155004");
@@ -419,20 +419,118 @@ describe("free /job polish", () => {
   });
 
   // ---- Launch prep: Try an example, bot filtering, check source ----
-  it("Try an example: one big button right under Check; employer and URL come from FREE_JOB_EXAMPLES", async () => {
+  it("Try an example: filled job is the primary button under Check; employer and URL come from FREE_JOB_EXAMPLES", async () => {
     const page = await (await app.request("/job")).text();
     const check = page.indexOf('<button type="submit">Check</button>');
-    const tryIt = page.indexOf('value="open">Try an example</button>');
-    assert.ok(check > 0 && tryIt > check, "example button follows the Check button");
-    assert.ok(tryIt < page.indexOf('class="cta"'), "and comes before anything else below the box");
+    const tryIt = page.indexOf('value="filled">Try a filled job</button>');
+    assert.ok(check > 0 && tryIt > check, "filled example button follows the Check button");
+    assert.ok(tryIt < page.indexOf('value="open">open job</button>'), "open example stays the secondary control");
+    assert.ok(tryIt < page.indexOf('class="cta"'), "and comes before the API pitch");
     assert.match(page, /No link handy\? We&#39;ll check a real, live posting|No link handy\? We'll check a real, live posting/);
     assert.equal(page.includes(FREE_JOB_EXAMPLES.open.url), false, "the URL is not in the page until the button is used");
+    assert.equal(page.includes(FREE_JOB_EXAMPLES.filled.url), false, "the sample does not print the posting URL");
     assert.match(page, /form\.examples button\.try \{ width:100%; font-size:17px; \}/, "full-width tap target on phones");
     // One click: the box comes back pre-filled with the example link and a verdict.
     const result = await (await post({ example: "open" })).text();
     assert.equal(verdictOf(result), "Open");
     assert.match(result, new RegExp(`value="${u("/jobs/1842").replace(/[.?]/g, "\\$&")}"`));
     assert.match(result, new RegExp(`a real check of a ${FREE_JOB_EXAMPLES.open.employer} posting`));
+  });
+
+  const chrome = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36";
+
+  it("GET /job shows a labeled Closed sample before the paste box, from the filled example", async () => {
+    // Clock is the suite clock (2026-10-27T16:00:00Z), not the wall clock.
+    const res = await app.request("/job", { headers: { "user-agent": chrome } });
+    assert.equal(res.status, 200);
+    const page = await res.text();
+    assert.match(page, /<p class="kicker">Example result<\/p>/);
+    assert.match(page, /class="result closed sample"/);
+    assert.equal(verdictOf(page), "Closed");
+    assert.match(page, /Link now redirects to the job board, not the posting/);
+    assert.match(page, /a real check of a Discord posting/);
+    assert.match(page, /It doesn't use your free checks\./);
+    assert.match(page, /5 free checks left today\./);
+    const sampleAt = page.indexOf('class="kicker">Example result');
+    const boxAt = page.indexOf('<form class="check"');
+    assert.ok(sampleAt > 0 && sampleAt < boxAt, "the sample is on the page before the paste box");
+    assert.match(page, /placeholder="Paste a job posting link" value=""/);
+    assert.equal(page.includes(FREE_JOB_EXAMPLES.filled.url), false);
+    assert.equal(page.includes("gh_jid"), false);
+    assert.match(page, /<button class="try" type="submit" name="example" value="filled">Try a filled job<\/button>/);
+    assert.match(page, /<button class="link" type="submit" name="example" value="open">open job<\/button>/);
+    const stats = readFreePageStats(now);
+    assert.equal(stats.generated_at, "2026-10-27T16:00:00Z");
+    assert.equal(stats.today.views_people, 1);
+    assert.equal(stats.today.views_automated, 0);
+    assert.equal(stats.today.checks, 0);
+    assert.equal(stats.today.example_filled, 0);
+    assert.equal(stats.today.example_open, 0);
+    assert.equal(stats.today.verdict_closed, 0);
+    assert.equal(stats.today.link_typed, 0);
+    assert.deepEqual(stats.events.today, { example_clicked: 0, link_typed: 0, check_completed: { example: 0, typed: 0 } });
+    assert.deepEqual(stats.sources.today.view.ua, { browser: 1 });
+    assert.deepEqual(stats.sources.today.check, { referrer: {}, utm: {}, ua: {} });
+    assert.deepEqual(stats.sources.today.example, { referrer: {}, utm: {}, ua: {} });
+  });
+
+  it("sample page loads share one cached filled check and do not spend the hourly cap", async () => {
+    freePageDbForTests()
+      .prepare("INSERT INTO free_page_settings (key, value, updated_at) VALUES ('hourly_cap', 1, '2026-10-27T16:00:00Z')")
+      .run();
+    const pages = await Promise.all(
+      Array.from({ length: 12 }, () => app.request("/job", { headers: { "user-agent": chrome } })),
+    );
+    assert.ok(pages.every((r) => r.status === 200));
+    assert.ok((await Promise.all(pages.map(async (r) => verdictOf(await r.text())))).every((v) => v === "Closed"));
+    assert.equal(hits.filter((h) => h.startsWith("/jobs/search")).length, 1, "one upstream check for every page load");
+    const stats = readFreePageStats(now);
+    assert.equal(stats.generated_at, "2026-10-27T16:00:00Z");
+    assert.equal(stats.today.views_people, 12);
+    assert.equal(stats.today.checks, 0);
+    assert.equal(stats.today.example_filled, 0);
+    assert.equal(stats.today.verdict_closed, 0);
+    assert.deepEqual(stats.events.today.check_completed, { example: 0, typed: 0 });
+    const sourceEvents = freePageDbForTests().prepare("SELECT DISTINCT event FROM free_page_sources").all() as Array<{ event: string }>;
+    assert.deepEqual(sourceEvents.map((row) => row.event), ["view"]);
+    // The cap of 1 counted none of the samples: one typed check works, the next is busy.
+    assert.equal((await post({ url: u("/jobs/1842") }, { cookie: visitor(70), ip: "198.51.100.70" })).status, 200);
+    assert.equal((await post({ url: u("/jobs/1842") }, { cookie: visitor(71), ip: "198.51.100.71" })).status, 503);
+    assert.equal(readFreePageStats(now).today.checks, 1);
+    assert.equal((await app.request("/job", { headers: { "user-agent": chrome } })).status, 200);
+    assert.equal(hits.filter((h) => h.startsWith("/jobs/search")).length, 1, "still cached after the cap is full");
+    assert.equal(readFreePageStats(now).today.checks, 1);
+    assert.equal(readFreePageStats(now).today.views_people, 13);
+  });
+
+  it("a failed filled example still loads a Closed sample, and the failure is cached", async () => {
+    setFreeJobExampleUrlsForTests({ open: u("/jobs/1842"), filled: u("/to-metadata") });
+    const first = await app.request("/job", { headers: { "user-agent": chrome } });
+    assert.equal(first.status, 200);
+    const page = await first.text();
+    assert.match(page, /<p class="kicker">Example result<\/p>/);
+    assert.equal(verdictOf(page), "Closed");
+    assert.match(page, /class="result closed sample"/);
+    assert.match(page, /Example of a filled posting/);
+    assert.match(page, /this sample stays Closed/);
+    assert.equal(page.includes("Something went wrong"), false);
+    assert.equal(page.includes("169.254"), false);
+    assert.equal(/class="result cant"/.test(page), false);
+    const upstream = () => hits.filter((h) => h !== "/robots.txt").length;
+    const once = upstream();
+    assert.ok(once >= 1, "the failed posting was attempted");
+    const second = await app.request("/job", { headers: { "user-agent": chrome } });
+    assert.equal(second.status, 200);
+    assert.equal(verdictOf(await second.text()), "Closed");
+    assert.equal(upstream(), once, "the failed fetch is cached for the failure TTL");
+    const stats = readFreePageStats(now);
+    assert.equal(stats.generated_at, "2026-10-27T16:00:00Z");
+    assert.equal(stats.today.views_people, 2);
+    assert.equal(stats.today.checks, 0);
+    assert.equal(stats.today.example_filled, 0);
+    assert.equal(stats.today.verdict_closed, 0);
+    assert.equal(stats.events.today.example_clicked, 0);
+    assert.deepEqual(stats.events.today.check_completed, { example: 0, typed: 0 });
   });
 
   it("automated UAs: link previews, crawlers, headless clients; in-app browsers still count as people", () => {
