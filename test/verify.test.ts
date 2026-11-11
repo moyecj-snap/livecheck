@@ -114,8 +114,12 @@ describe("verifyUrl against local fixtures", () => {
     const missing = await verifyUrl(`${origin}/fixtures/products/missing`);
     assert.equal(live.status, "live");
     assert.ok(live.signals.includes("in-stock"));
-    assert.equal(sold.status, "closed");
-    assert.ok(sold.signals.includes("sold-out"));
+    // Variant rule 3 (Craig, Nov 11, 2026): the fixture server has no
+    // product.js and the page has no per-variant offers, so an HTML-only
+    // sold-out reading is can't tell, never closed.
+    assert.equal(sold.status, "unknown");
+    assert.ok(sold.signals.includes("variant_check_unavailable"));
+    assert.equal(sold.signals.includes("sold-out"), false);
     assert.equal(collection.status, "unknown");
     assert.equal(missing.status, "closed");
   });
