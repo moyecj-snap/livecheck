@@ -35,7 +35,7 @@ import { DEMO_THANK_YOU_PATH, demoThankYouHtml } from "./demo-thank-you.js";
 import { discoveryHeaders, openApiDocument, wellKnownX402 } from "./discovery.js";
 import { isBoardUrlShape } from "./classify.js";
 import { FIXTURES } from "./fixtures.js";
-import { BOARD_PAGE_API_MESSAGE, boardPageApiMessage, registerFreeJobRoutes } from "./free-job-page.js";
+import { BOARD_PAGE_API_MESSAGE, boardPageApiMessage, recordDemoPageSource, registerFreeJobRoutes } from "./free-job-page.js";
 import { registerStarterKeyRoutes } from "./starter-key-page.js";
 import { LLMS_TXT, llmsTxtHeaders } from "./llms.js";
 import { NOHUMANS_CLAIM_PATH, nohumansClaimResponse } from "./nohumans-claim.js";
@@ -172,6 +172,8 @@ export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): 
   });
 
   app.get("/", (c) => {
+    // Outreach links use /?ref= or ?utm_source=. Count the tag; still serve the demo page.
+    recordDemoPageSource(c);
     const origin = new URL(c.req.url).origin;
     return c.html(demoHtml(origin));
   });
