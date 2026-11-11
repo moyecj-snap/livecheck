@@ -120,7 +120,7 @@ After payment verifies and settles:
 }
 ```
 
-`status` is `live`, `closed`, or `unknown`. Paid 200 Verify (and Confirm / Confirm-order) responses include `watch` — an in-band hint to `POST /v1/watch` at **$2.50** with default detector `status_change`. Unpaid 402 bodies and `payment-required` headers do not include `watch`.
+`status` is `live`, `closed`, or `unknown`. Paid 200 Confirm / Confirm-order responses, and paid 200 Verify responses whose `status` is `live`, include `watch` — an in-band hint to `POST /v1/watch` at **$2.50** with default detector `status_change`. A `closed` or `unknown` Verify answer has no `watch` field. On an HTTP 404 the page's own `<title>` (usually the site's error page) is not returned as `title`. Unpaid 402 bodies and `payment-required` headers do not include `watch`.
 
 - **closed** — HTTP 404/410 (one exception: a company careers link carrying a Greenhouse `?gh_jid=`, or a greenhouse.io link handed off to one, that answers a plain 404 while Greenhouse's posting API still lists that exact id is **live** at API-listed confidence, with `gh_jid_company_page_not_found` and a `message` saying the careers page returned 404; a 410, closure copy, or a redirect that dropped the id still close); job close language (“no longer accepting applications”, “this job is closed to new applications”, …); a Greenhouse/Lever/Ashby job URL that redirects to a board with no job; or a specific product page with sold-out / out of stock / currently unavailable language.
 - **live** — HTTP 200 on a specific job posting with an apply/submit affordance and no close language, or a specific product page with add to cart / add to bag / buy now and no sold-out phrase. A recaptcha/hcaptcha widget on that page is not a bot wall.

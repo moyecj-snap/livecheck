@@ -22,3 +22,12 @@ export function watchHint(): WatchHint {
 export function withWatchHint<T extends object>(body: T): T & { watch: WatchHint } {
   return { ...body, watch: watchHint() };
 }
+
+/**
+ * Verify answers: suggest a watch only on a live result. A closed or unknown
+ * answer gets no $2.50 cross-sell (a status_change watch on a closed posting
+ * has nothing left to watch). Confirm keeps withWatchHint.
+ */
+export function withWatchHintIfLive<T extends { status: string }>(body: T): T | (T & { watch: WatchHint }) {
+  return body.status === "live" ? withWatchHint(body) : body;
+}

@@ -62,7 +62,7 @@ import { buildStatsDocument, statsHtml } from "./stats.js";
 import { stripTrackingParams } from "./tracking-params.js";
 import { VerifyError, parseTargetUrl, verifyUrl } from "./verify.js";
 import { WatchError, createWatch, deleteWatch, listWatchEventsForOwner, readWatch, renewWatch, topupWatchChain, watchErrorBody } from "./watch.js";
-import { withWatchHint } from "./watch-hint.js";
+import { withWatchHint, withWatchHintIfLive } from "./watch-hint.js";
 import { resolveWatchPayer, withWatchPayerContext } from "./watch-payer.js";
 
 export function createApp(paymentGate: MiddlewareHandler = applyPaymentGate()): Hono {
@@ -292,7 +292,7 @@ async function handlePaidVerify(c: Context) {
     // A board we only learn about after the fetch (redirect, or a list page
     // whose URL was not an obvious board) is a real answer and stays $0.01.
     const message = boardPageApiMessage(verdict);
-    return c.json(withWatchHint({ ...verdict, route, ...(message ? { message } : {}) }));
+    return c.json(withWatchHintIfLive({ ...verdict, route, ...(message ? { message } : {}) }));
   } catch (error) {
     if (error instanceof VerifyError) {
       return c.json({ error: error.message }, error.status as 400 | 502 | 504);

@@ -6,7 +6,7 @@ import { WATCH_PRICE_USD } from "../src/config.js";
 import { VERIFY_EXAMPLE, VERIFY_PAID_EXAMPLE } from "../src/bazaar.js";
 import { openApiDocument } from "../src/discovery.js";
 import { decodePaymentRequired } from "../src/x402-payload.js";
-import { watchHint } from "../src/watch-hint.js";
+import { watchHint, withWatchHintIfLive } from "../src/watch-hint.js";
 import { closeWatchStore, initWatchStore } from "../src/watch-store.js";
 
 type WatchField = {
@@ -42,6 +42,14 @@ describe("watchHint helper", () => {
       detector: "status_change",
       price_usd: 2.5,
     });
+  });
+});
+
+describe("withWatchHintIfLive", () => {
+  it("adds watch only when status is live", () => {
+    assert.deepEqual((withWatchHintIfLive({ status: "live" }) as { watch?: unknown }).watch, watchHint());
+    assert.equal("watch" in withWatchHintIfLive({ status: "closed" }), false);
+    assert.equal("watch" in withWatchHintIfLive({ status: "unknown" }), false);
   });
 });
 
@@ -88,6 +96,26 @@ describe("paid Verify / Confirm watch hints", () => {
     const confirmBody = (await confirm.json()) as { watch?: WatchField };
     assert.deepEqual(body.watch, confirmBody.watch);
     assert.deepEqual(body.watch, VERIFY_PAID_EXAMPLE.watch);
+  });
+
+  it("mock-paid POST /v1/verify closed answers have no watch field; a 404 has no page title", async () => {
+    for (const fixture of ["gone-404", "closed-to-new-applications"]) {
+      const res = await fetch(`${origin}/v1/verify`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-livecheck-mock": "1" },
+        body: JSON.stringify({ url: `${origin}/fixtures/${fixture}` }),
+      });
+      assert.equal(res.status, 200, fixture);
+      const body = (await res.json()) as Record<string, unknown>;
+      assert.equal(body.status, "closed", fixture);
+      assertNoWatchField(body, `${fixture} closed verify`);
+      if (fixture === "gone-404") {
+        assert.equal(body.http_status, 404);
+        assert.equal("title" in body, false, "404 error-page title is not returned");
+      } else {
+        assert.equal(typeof body.title, "string", "a non-404 closed page keeps its title");
+      }
+    }
   });
 
   it("mock-paid POST /v1/confirm 200 includes watch", async () => {

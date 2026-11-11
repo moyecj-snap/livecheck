@@ -539,7 +539,7 @@ describe("MPP dispatcher on the verify routes (real mppx, stand-in Tempo method)
     assert.deepEqual(verdict.signals, [POST_PAYMENT_UNKNOWN_SIGNAL]);
     assert.equal(verdict.confidence, 0);
     assert.equal(verdict.url, target);
-    assert.ok(verdict.watch);
+    assert.equal(verdict.watch, undefined, "an unknown answer gets no watch cross-sell");
     assert.equal(Receipt.fromResponse(res).reference, hash);
 
     const refundLine = lines.map((l) => JSON.parse(l) as Record<string, unknown>).find((l) => l.payment_id === hash);

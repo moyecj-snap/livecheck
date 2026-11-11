@@ -17,7 +17,7 @@ import { WATCH_HINT_DETECTOR, WATCH_HINT_SUGGEST } from "./watch-hint.js";
 export const WATCH_HINT_SCHEMA = {
   type: "object",
   description:
-    "Present on paid 200 responses. Cross-sell hint to POST /v1/watch ($2.50, 30-day standard watcher). Default detector is status_change. Not included on unpaid 402.",
+    "Present on paid 200 Confirm responses, and on paid 200 Verify responses only when status is live (omitted on closed and unknown). Cross-sell hint to POST /v1/watch ($2.50, 30-day standard watcher). Default detector is status_change. Not included on unpaid 402.",
   properties: {
     suggest: { type: "string", enum: [WATCH_HINT_SUGGEST] },
     detector: { type: "string", enum: [WATCH_HINT_DETECTOR] },
