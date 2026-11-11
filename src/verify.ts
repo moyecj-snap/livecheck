@@ -6,7 +6,15 @@ import { classify } from "./classify.js";
 import { ROBOTS_FETCH_TIMEOUT_MS, robotsAllows, robotsStrictTimeoutMs, type RobotsMode } from "./robots.js";
 import { DeadlineError, isAbortLike, linkedAbort, resolveDeadlineMs, withDeadline } from "./deadline.js";
 import { isEbayAdapterEnabled, logEbayAdapterDisabled, parseEbayItemUrl, verifyEbayItem } from "./ebay.js";
-import { applyShopifyAvailability, lookupShopifyAvailable, shopifyProductJsUrl } from "./shopify.js";
+import { shopifyProductJsUrl } from "./shopify.js";
+import {
+  applyVariantDecision,
+  backupFailed,
+  decideVariants,
+  linkedVariantSelector,
+  lookupShopifyProduct,
+  schemaVariants,
+} from "./product-variants.js";
 import { stripTrackingParams } from "./tracking-params.js";
 import type { FetchedPage, VerifyVerdict } from "./types.js";
 import { AGE_CONFLICT_SIGNAL, DEFAULT_STALE_AFTER_DAYS, jsonLdJobPosting, resolvePostingAge, type AgeEvidence } from "./posting-age.js";
@@ -270,14 +278,28 @@ export async function fetchPage(
 async function withShopify(
   requested: string,
   verdict: VerifyVerdict,
+  html: string,
   fetcher: typeof fetch,
   signal: AbortSignal,
 ): Promise<VerifyVerdict> {
   const jsUrl = shopifyProductJsUrl(verdict.canonical_url) ?? shopifyProductJsUrl(requested);
   if (!jsUrl) return verdict;
-  const found = await lookupShopifyAvailable(jsUrl, fetcher, signal);
-  if (!found) return verdict;
-  return applyShopifyAvailability(verdict, found);
+  // The link the caller sent names the variant (?variant=, ?color=, ...).
+  const selector = linkedVariantSelector(requested);
+  const found = await lookupShopifyProduct(jsUrl, fetcher, signal);
+  if (found) {
+    const decision = decideVariants(found.variants, selector, found.available);
+    if (decision) return applyVariantDecision(verdict, decision, "shopify", found.title);
+    return verdict;
+  }
+  // product.js is missing (headless storefronts 404 it). Read per-variant
+  // schema.org offers from the page; if there are none, can't tell.
+  if (verdict.http_status >= 200 && verdict.http_status < 300) {
+    const variants = schemaVariants(html);
+    const decision = variants.length ? decideVariants(variants, selector) : null;
+    if (decision) return applyVariantDecision(verdict, decision, "schema");
+  }
+  return backupFailed(verdict);
 }
 
 export async function verifyUrl(
@@ -350,7 +372,7 @@ async function verifyUrlWithin(
   }
   if (!ats || !atsLookup) {
     if (!page.ok) throw page.error;
-    return withShopify(url, classify(page.page, now), fetcher, signal);
+    return withShopify(url, classify(page.page, now), page.page.html, fetcher, signal);
   }
   const firstApi = await atsLookup;
   const resolved = await resolveGuessedGreenhouseMiss(url, ats, firstApi, fetcher, {
