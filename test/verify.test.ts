@@ -48,6 +48,7 @@ describe("verifyUrl against local fixtures", () => {
     const verdict = await verifyUrl(`${origin}/fixtures/gone-404`);
     assert.equal(verdict.status, "closed");
     assert.equal(verdict.http_status, 404);
+    assert.equal(verdict.title, undefined, "a 404 page title (site error page) is left empty");
   });
 
   it("classifies a recaptcha-tagged open job as live", async () => {

@@ -577,7 +577,9 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
     status,
     http_status: page.httpStatus,
     checked_at: checkedAt.toISOString().replace(/\.\d{3}Z$/, "Z"),
-    ...(page.title ? { title: page.title } : {}),
+    // A 404 page's <title> is the site's error page ("Jobs", "404 - Page not
+    // found | ..."), not the posting. Leave title empty rather than show it.
+    ...(page.title && page.httpStatus !== 404 ? { title: page.title } : {}),
     signals,
     confidence,
     price_usd: PRICE_USD,

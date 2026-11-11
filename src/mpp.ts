@@ -23,7 +23,7 @@ import { noteSettledPayment } from "./settle-abort.js";
 import { publicOrigin, publicVerifyJobUrl, publicVerifyListingUrl, publicVerifyUrl } from "./public-url.js";
 import { stripTrackingParams } from "./tracking-params.js";
 import { VerifyError, parseTargetUrl, timeoutUnknownVerdict } from "./verify.js";
-import { withWatchHint } from "./watch-hint.js";
+import { withWatchHintIfLive } from "./watch-hint.js";
 
 /**
  * MPP (Machine Payments Protocol, Stripe + Tempo) next to x402.
@@ -565,7 +565,7 @@ export function withMppDispatch(
         },
         writer,
       );
-      const body = withWatchHint({ ...verdict, route });
+      const body = withWatchHintIfLive({ ...verdict, route });
       const replacement = outcome.withReceipt(
         new Response(JSON.stringify(body), {
           status: 200,

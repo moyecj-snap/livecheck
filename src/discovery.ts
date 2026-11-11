@@ -74,7 +74,7 @@ export const PAID_DISCOVERY_ROUTES = [
 const VERIFY_URL_FIELD_DESCRIPTION =
   "Absolute http(s) URL of the specific job, product, or eBay item page to check. Not a search-results URL.";
 const VERIFY_200_DESCRIPTION =
-  "Primary-source live, closed, or unknown verdict. Paid 200 includes watch suggest for POST /v1/watch (detector status_change, $2.50). Unpaid 402 has no watch field.";
+  "Primary-source live, closed, or unknown verdict. Paid 200 with status live includes watch suggest for POST /v1/watch (detector status_change, $2.50); closed and unknown have no watch field. Unpaid 402 has no watch field.";
 
 function verifyPostOperation(input: {
   operationId: string;
