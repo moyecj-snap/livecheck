@@ -574,6 +574,90 @@ describe("free /job page", () => {
     assert.deepEqual(stats.sources.by_source.today.test, { views: 1, checks: 0, examples: 0, bot_views: 0 });
   });
 
+  const BROWSER =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36";
+
+  function sourceRows(): Array<{ event: string; dimension: string; value: string; n: number }> {
+    return (
+      freePageDbForTests().prepare("SELECT event, dimension, value, n FROM free_page_sources ORDER BY event, dimension, value").all() as Array<{
+        event: string;
+        dimension: string;
+        value: string;
+        n: number | bigint;
+      }>
+    ).map((row) => ({ event: row.event, dimension: row.dimension, value: row.value, n: Number(row.n) }));
+  }
+
+  it("GET /?ref=<registered tag> is 200 with no Location and writes a view row under that tag", async () => {
+    const plain = await (await app.request("/")).text();
+    const res = await app.request("/?ref=hn&foo=1", { headers: { "user-agent": BROWSER } });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("location"), null);
+    assert.equal(await res.text(), plain, "extra query params do not change the demo page");
+    assert.deepEqual(sourceRows(), [
+      { event: "view", dimension: "referrer", value: "direct", n: 1 },
+      { event: "view", dimension: "ua", value: "browser", n: 1 },
+      { event: "view", dimension: "utm", value: "hn", n: 1 },
+    ]);
+    assert.deepEqual(freePageDbForTests().prepare("SELECT metric, n FROM free_page_daily").all(), []);
+  });
+
+  it("GET /?utm_source=<registered tag> records the same way", async () => {
+    const plain = await (await app.request("/")).text();
+    const res = await app.request("/?utm_source=linkedin&foo=1", { headers: { "user-agent": BROWSER } });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("location"), null);
+    assert.equal(await res.text(), plain);
+    assert.deepEqual(sourceRows(), [
+      { event: "view", dimension: "referrer", value: "direct", n: 1 },
+      { event: "view", dimension: "ua", value: "browser", n: 1 },
+      { event: "view", dimension: "utm", value: "linkedin", n: 1 },
+    ]);
+  });
+
+  it("GET / with an unregistered tag counts that source as other", async () => {
+    const res = await app.request("/?ref=audit-ozbargain&foo=1", { headers: { "user-agent": BROWSER } });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("location"), null);
+    const rows = sourceRows();
+    assert.deepEqual(rows, [
+      { event: "view", dimension: "referrer", value: "direct", n: 1 },
+      { event: "view", dimension: "ua", value: "browser", n: 1 },
+      { event: "view", dimension: "utm", value: "other", n: 1 },
+    ]);
+    assert.equal(JSON.stringify(rows).includes("audit-ozbargain"), false);
+  });
+
+  it("GET / with no ref or utm_source writes no source rows", async () => {
+    const before = sourceRows();
+    assert.deepEqual(before, [], "a fresh store has no source rows");
+    const plain = await app.request("/");
+    assert.equal(plain.status, 200);
+    assert.equal(plain.headers.get("location"), null);
+    const html = await plain.text();
+    assert.match(html, /Is it still there\?/);
+    assert.deepEqual(sourceRows(), before);
+    const extra = await app.request("/?foo=1&bar=two");
+    assert.equal(extra.status, 200);
+    assert.equal(extra.headers.get("location"), null);
+    assert.equal(await extra.text(), html, "a query without ref or utm_source does not change the page");
+    assert.deepEqual(sourceRows(), before);
+    assert.deepEqual(freePageDbForTests().prepare("SELECT metric, n FROM free_page_daily").all(), []);
+  });
+
+  it("GET /job source counting is unchanged", async () => {
+    await app.request("/job", { headers: { "user-agent": BROWSER } });
+    await app.request("/job?ref=hn", { headers: { "user-agent": BROWSER } });
+    await app.request("/job?ref=oneoff-random", { headers: { "user-agent": BROWSER } });
+    assert.deepEqual(sourceRows(), [
+      { event: "view", dimension: "referrer", value: "direct", n: 3 },
+      { event: "view", dimension: "ua", value: "browser", n: 3 },
+      { event: "view", dimension: "utm", value: "hn", n: 1 },
+      { event: "view", dimension: "utm", value: "none", n: 1 },
+      { event: "view", dimension: "utm", value: "oneoff-random", n: 1 },
+    ]);
+  });
+
   it("no new cookies and no third-party trackers: source carry is the form address only", async () => {
     // First visit with a source: exactly one cookie, the existing free-check limit cookie.
     const first = await app.request("/job?utm_source=producthunt", {

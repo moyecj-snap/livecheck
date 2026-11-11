@@ -26,13 +26,14 @@ import { BlockedTargetError, DEFAULT_FETCH_POLICY, guardedFetch, vetTarget, type
 import {
   bumpFreePageMetric,
   bumpFreePageSources,
+  currentLaunchUtmTags,
   pacificDay,
   readFreePageSettings,
   readFreePageStats,
   type FreePageSettings,
 } from "./free-job-store.js";
 import { starterKeySourceReport } from "./api-key-store.js";
-import { isAutomatedUa, referrerSource, registrableDomain, uaClass, utmSource, type SourceEvent } from "./free-job-sources.js";
+import { bucketLaunchSource, isAutomatedUa, referrerSource, registrableDomain, uaClass, utmSource, type SourceEvent } from "./free-job-sources.js";
 import { EXAMPLE_TTL_MS, ExampleCache, FREE_JOB_EXAMPLES, isExampleKey, type ExampleKey } from "./free-job-examples.js";
 import { lookupRole, roleLine, type RoleInfo } from "./free-job-role.js";
 import { queryRefundCandidateDailyFromStore } from "./paid-call-store.js";
@@ -714,9 +715,26 @@ function sourceFormAction(source: { utm: string; referrer: string }): string {
   return query ? `${FREE_JOB_PATH}?${query}` : FREE_JOB_PATH;
 }
 
-function countSource(c: Context, event: SourceEvent, now: Date): void {
+function countSource(c: Context, event: SourceEvent, now: Date, utmOverride?: string): void {
   const { utm, referrer } = carriedSource(c);
-  bumpFreePageSources(event, { referrer, utm, ua: uaClass(c.req.header("user-agent")) }, now);
+  bumpFreePageSources(event, { referrer, utm: utmOverride ?? utm, ua: uaClass(c.req.header("user-agent")) }, now);
+}
+
+/**
+ * GET / stays the demo page. A ref or utm_source on that URL is counted with
+ * the same writer as a /job view (referrer, UA class, view vs bot_view) after
+ * the launch-tag allowlist: a registered tag keeps its name, anything else is
+ * "other". No tag param: write nothing, same as a plain GET /.
+ */
+export function recordDemoPageSource(c: Context): void {
+  const raw = c.req.query("utm_source") ?? c.req.query("ref");
+  if (raw === undefined) return;
+  countSource(
+    c,
+    isAutomatedUa(c.req.header("user-agent")) ? "bot_view" : "view",
+    clock(),
+    bucketLaunchSource(raw, currentLaunchUtmTags()),
+  );
 }
 
 async function readSubmitted(c: Context): Promise<{ url?: unknown; example?: unknown }> {
