@@ -16,6 +16,7 @@ import {
 } from "./own-listing.js";
 import { shopifyProductJsUrl } from "./shopify.js";
 import { withAvailabilityLabels } from "./availability-label.js";
+import { applyHtmlStructuredAvailability, applyStructuredPageConflict } from "./structured-availability.js";
 import {
   applyVariantDecision,
   backupFailed,
@@ -299,31 +300,32 @@ async function withShopify(
   html: string,
   fetcher: typeof fetch,
   signal: AbortSignal,
-): Promise<{ verdict: VerifyVerdict; ownFieldFound: boolean }> {
+): Promise<{ verdict: VerifyVerdict; ownFieldFound: boolean; variantIds: string[] }> {
   // The product URL landed on a homepage or other non-product page. Offers on
   // that landing page (and a stale product.js for the old handle) are not this
   // product, so they must not override gone.
   if (verdict.signals.includes("redirected_away_from_product")) {
-    return { verdict, ownFieldFound: false };
+    return { verdict, ownFieldFound: false, variantIds: [] };
   }
   const jsUrl = shopifyProductJsUrl(verdict.canonical_url) ?? shopifyProductJsUrl(requested);
-  if (!jsUrl) return { verdict, ownFieldFound: false };
+  if (!jsUrl) return { verdict, ownFieldFound: false, variantIds: [] };
   // The link the caller sent names the variant (?variant=, ?color=, ...).
   const selector = linkedVariantSelector(requested);
   const found = await lookupShopifyProduct(jsUrl, fetcher, signal);
   if (found) {
+    const variantIds = found.variants.map((v) => v.id).filter((id): id is string => Boolean(id));
     const decision = decideVariants(found.variants, selector, found.available);
-    if (decision) return { verdict: applyVariantDecision(verdict, decision, "shopify", found.title), ownFieldFound: true };
-    return { verdict, ownFieldFound: false };
+    if (decision) return { verdict: applyVariantDecision(verdict, decision, "shopify", found.title), ownFieldFound: true, variantIds };
+    return { verdict, ownFieldFound: false, variantIds };
   }
   // product.js is missing (headless storefronts 404 it). Read per-variant
   // schema.org offers from the page; if there are none, can't tell.
   if (verdict.http_status >= 200 && verdict.http_status < 300) {
     const variants = schemaVariants(html);
     const decision = variants.length ? decideVariants(variants, selector) : null;
-    if (decision) return { verdict: applyVariantDecision(verdict, decision, "schema"), ownFieldFound: true };
+    if (decision) return { verdict: applyVariantDecision(verdict, decision, "schema"), ownFieldFound: true, variantIds: [] };
   }
-  return { verdict: backupFailed(verdict), ownFieldFound: false };
+  return { verdict: backupFailed(verdict), ownFieldFound: false, variantIds: [] };
 }
 
 export async function verifyUrl(
@@ -419,12 +421,15 @@ async function verifyUrlWithin(
       );
     }
     const shop = await withShopify(url, classify(page.page, now), page.page.html, fetcher, signal);
-    const labeled = await withAvailabilityLabels(url, shop.verdict, page.page.html, fetcher, signal);
+    const structured = applyHtmlStructuredAvailability(url, shop.verdict, page.page.html, shop.ownFieldFound);
+    const labeled = await withAvailabilityLabels(url, structured.verdict, page.page.html, fetcher, signal);
+    const verdict = applyStructuredPageConflict(labeled.verdict, page.page.html, shop.variantIds);
     // A page cut before the listing's own availability field is can't tell.
     return guardTruncatedVerdict(
-      labeled.verdict,
+      verdict,
       page.page.truncated,
       shop.ownFieldFound ||
+        structured.ownFieldFound ||
         labeled.ownFieldFound ||
         (page.page.truncated ? hasStructuredAvailability(page.page.html) : false),
     );

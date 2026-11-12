@@ -348,15 +348,15 @@ const REPLACED = new Set([
   "shopify_unavailable",
 ]);
 
-/** Apply a variant decision. `source` is "shopify" (product.js) or "schema" (JSON-LD offers). */
+/** Apply a variant decision. `source` is "shopify" (product.js), "schema" (JSON-LD offers), or "woo" (form variations). */
 export function applyVariantDecision(
   page: VerifyVerdict,
   decision: VariantDecision,
-  source: "shopify" | "schema",
+  source: "shopify" | "schema" | "woo",
   title?: string,
 ): VerifyVerdict {
   const rest = page.signals.filter((signal) => !REPLACED.has(signal));
-  const sourceSignal = source === "shopify" ? "shopify" : "schema_variant";
+  const sourceSignal = source === "shopify" ? "shopify" : source === "woo" ? "woo" : "schema_variant";
   if (decision.status === "live") {
     return {
       ...page,
