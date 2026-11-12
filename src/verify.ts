@@ -6,6 +6,13 @@ import { classify } from "./classify.js";
 import { ROBOTS_FETCH_TIMEOUT_MS, robotsAllows, robotsStrictTimeoutMs, type RobotsMode } from "./robots.js";
 import { DeadlineError, isAbortLike, linkedAbort, resolveDeadlineMs, withDeadline } from "./deadline.js";
 import { isEbayAdapterEnabled, logEbayAdapterDisabled, parseEbayItemUrl, verifyEbayItem } from "./ebay.js";
+import {
+  applyOwnListingAvailability,
+  applyPoshmarkAvailability,
+  ebayOwnHtmlReading,
+  poshmarkListingId,
+  poshmarkOwnAvailability,
+} from "./own-listing.js";
 import { shopifyProductJsUrl } from "./shopify.js";
 import {
   applyVariantDecision,
@@ -372,6 +379,18 @@ async function verifyUrlWithin(
   }
   if (!ats || !atsLookup) {
     if (!page.ok) throw page.error;
+    if (ebay) {
+      // HTML fallback (Browse adapter off): the item's own offer decides;
+      // "Similar sold items" on the page is ignored.
+      const verdict = classify(page.page, now);
+      return applyOwnListingAvailability(verdict, ebayOwnHtmlReading(page.page.html, ebay.itemId), "ebay_item");
+    }
+    const posh = poshmarkListingId(page.page.canonicalUrl) ?? poshmarkListingId(url);
+    if (posh) {
+      // The listing's own availability field decides; similar-items and
+      // Sold Listings text on the page is ignored.
+      return applyPoshmarkAvailability(classify(page.page, now), poshmarkOwnAvailability(page.page.html, posh));
+    }
     return withShopify(url, classify(page.page, now), page.page.html, fetcher, signal);
   }
   const firstApi = await atsLookup;
