@@ -164,6 +164,24 @@ const SHOPIFY_SOLD_OUT = `<!doctype html>
 </html>
 `;
 
+
+const SHOP_HOME = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Example Shop</title>
+</head>
+<body>
+  <h1>Example Shop</h1>
+  <p>Featured this week.</p>
+  <button type="submit">Add to cart</button>
+  <script type="application/ld+json">
+    {"@context":"https://schema.org","@type":"Product","name":"Featured mug","offers":{"@type":"Offer","availability":"https://schema.org/InStock"}}
+  </script>
+</body>
+</html>
+`;
+
 const SHOPIFY_COLLECTION = `<!doctype html>
 <html lang="en">
 <head>
@@ -554,6 +572,24 @@ export const FIXTURES: Record<FixtureId, FixtureSpec> = {
     status: 200,
     body: SHOPIFY_SOLD_OUT,
     label: "Shopify product page that is sold out",
+  },
+  "shop-home": {
+    id: "shop-home",
+    status: 200,
+    body: SHOP_HOME,
+    label: "Shop homepage with a featured Add to cart control",
+  },
+  "products/retired-widget": {
+    id: "products/retired-widget",
+    status: 302,
+    location: "/fixtures/shop-home",
+    label: "Product URL that redirects to the shop homepage",
+  },
+  "products/retired-mug": {
+    id: "products/retired-mug",
+    status: 302,
+    location: "/fixtures/collections/rings",
+    label: "Product URL that redirects to a collection page",
   },
   "collections/rings": {
     id: "collections/rings",

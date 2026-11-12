@@ -299,6 +299,12 @@ async function withShopify(
   fetcher: typeof fetch,
   signal: AbortSignal,
 ): Promise<{ verdict: VerifyVerdict; ownFieldFound: boolean }> {
+  // The product URL landed on a homepage or other non-product page. Offers on
+  // that landing page (and a stale product.js for the old handle) are not this
+  // product, so they must not override gone.
+  if (verdict.signals.includes("redirected_away_from_product")) {
+    return { verdict, ownFieldFound: false };
+  }
   const jsUrl = shopifyProductJsUrl(verdict.canonical_url) ?? shopifyProductJsUrl(requested);
   if (!jsUrl) return { verdict, ownFieldFound: false };
   // The link the caller sent names the variant (?variant=, ?color=, ...).

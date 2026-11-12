@@ -502,3 +502,131 @@ describe("passive bot-management script on a rendered posting", () => {
     assert.equal(v.status, "unknown");
   });
 });
+
+describe("product URL that redirects away from the product", () => {
+  const PRODUCT = "https://shop.example/products/retired-widget";
+  const HOME_HTML = FIXTURES["shop-home"].body!;
+  const PRODUCT_HTML = FIXTURES["products/ridge-wallet"].body!;
+  const COLLECTION_HTML = FIXTURES["collections/rings"].body!;
+
+  it("marks a redirect to the shop homepage as closed (gone), not live", () => {
+    const v = classify(
+      page({
+        requestedUrl: PRODUCT,
+        canonicalUrl: "https://shop.example/",
+        redirected: true,
+        httpStatus: 200,
+        html: HOME_HTML,
+      }),
+    );
+    assert.equal(v.status, "closed");
+    assert.ok(v.signals.includes("redirected_away_from_product"));
+    assert.equal(v.signals.includes("in-stock"), false);
+  });
+
+  it("marks a redirect to a collection or category page as closed (gone)", () => {
+    const v = classify(
+      page({
+        requestedUrl: PRODUCT,
+        canonicalUrl: "https://shop.example/collections/rings",
+        redirected: true,
+        httpStatus: 200,
+        html: COLLECTION_HTML,
+      }),
+    );
+    assert.equal(v.status, "closed");
+    assert.ok(v.signals.includes("redirected_away_from_product"));
+    assert.equal(v.signals.includes("in-stock"), false);
+  });
+
+  it("does not treat a trailing-slash canonical as gone", () => {
+    const v = classify(
+      page({
+        requestedUrl: PRODUCT,
+        canonicalUrl: "https://shop.example/products/retired-widget/",
+        redirected: false,
+        httpStatus: 200,
+        html: PRODUCT_HTML,
+      }),
+    );
+    assert.equal(v.status, "live");
+    assert.ok(v.signals.includes("in-stock"));
+    assert.equal(v.signals.includes("redirected_away_from_product"), false);
+  });
+
+  it("does not treat http to https on the same product as gone", () => {
+    const v = classify(
+      page({
+        requestedUrl: "http://shop.example/products/ridge-wallet",
+        canonicalUrl: "https://shop.example/products/ridge-wallet",
+        redirected: true,
+        httpStatus: 200,
+        html: PRODUCT_HTML,
+      }),
+    );
+    assert.equal(v.status, "live");
+    assert.ok(v.signals.includes("in-stock"));
+    assert.equal(v.signals.includes("redirected_away_from_product"), false);
+  });
+
+  it("does not treat a www canonical on the same product as gone", () => {
+    const v = classify(
+      page({
+        requestedUrl: "https://shop.example/products/ridge-wallet",
+        canonicalUrl: "https://www.shop.example/products/ridge-wallet",
+        redirected: true,
+        httpStatus: 200,
+        html: PRODUCT_HTML,
+      }),
+    );
+    assert.equal(v.status, "live");
+    assert.ok(v.signals.includes("in-stock"));
+    assert.equal(v.signals.includes("redirected_away_from_product"), false);
+  });
+
+  it("does not treat a locale-prefix canonical on the same product as gone", () => {
+    const v = classify(
+      page({
+        requestedUrl: "https://shop.example/products/ridge-wallet",
+        canonicalUrl: "https://shop.example/en-us/products/ridge-wallet",
+        redirected: true,
+        httpStatus: 200,
+        html: PRODUCT_HTML,
+      }),
+    );
+    assert.equal(v.status, "live");
+    assert.ok(v.signals.includes("in-stock"));
+    assert.equal(v.signals.includes("redirected_away_from_product"), false);
+  });
+
+  it("does not treat a Shopify variant-query canonical on the same product as gone", () => {
+    const v = classify(
+      page({
+        requestedUrl: "https://shop.example/products/ridge-wallet?variant=123",
+        canonicalUrl: "https://shop.example/products/ridge-wallet",
+        redirected: true,
+        httpStatus: 200,
+        html: PRODUCT_HTML,
+      }),
+    );
+    assert.equal(v.status, "live");
+    assert.ok(v.signals.includes("in-stock"));
+    assert.equal(v.signals.includes("redirected_away_from_product"), false);
+  });
+
+  it("does not treat a Shopify collection-path product URL as gone", () => {
+    const v = classify(
+      page({
+        requestedUrl: "https://shop.example/collections/wallets/products/ridge-wallet",
+        canonicalUrl: "https://shop.example/products/ridge-wallet",
+        redirected: true,
+        httpStatus: 200,
+        html: PRODUCT_HTML,
+      }),
+    );
+    assert.equal(v.status, "live");
+    assert.ok(v.signals.includes("in-stock"));
+    assert.equal(v.signals.includes("redirected_away_from_product"), false);
+  });
+});
+
