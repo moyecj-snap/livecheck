@@ -170,3 +170,63 @@ export function bucketPaidCallRows(
   }
   return out;
 }
+
+/** Public /stats form: 0x + 4 hex + ellipsis + last 4 hex. Full addresses stay off the document. */
+export function shortWalletAddress(address: string): string {
+  const a = address.trim().toLowerCase();
+  if (!a.startsWith("0x") || a.length < 10) return a;
+  return `${a.slice(0, 6)}…${a.slice(-4)}`;
+}
+
+export type GraderWalletWindow = {
+  address: string;
+  label: string;
+  l7d: { calls: number; revenue_cents: number };
+  l30d: { calls: number; revenue_cents: number };
+};
+
+/**
+ * Per-grader calls and revenue, using the same bucket rule as traffic.graders
+ * (internal wallets win, so a wallet on both lists is not counted here).
+ * Every configured grader is listed, including zeros.
+ */
+export function graderWalletWindows(
+  rows: readonly BucketSourceRow[],
+  cutoffs: { l7d: string; l30d: string },
+  lists: TrafficBucketLists,
+  wallets: readonly { address: string; label: string }[],
+): GraderWalletWindow[] {
+  const normalized = normalizeLists(lists);
+  const out: GraderWalletWindow[] = [];
+  const index = new Map<string, GraderWalletWindow>();
+  for (const wallet of wallets) {
+    const address = wallet.address.trim().toLowerCase();
+    if (!address || index.has(address)) continue;
+    const row: GraderWalletWindow = {
+      address,
+      label: wallet.label,
+      l7d: { calls: 0, revenue_cents: 0 },
+      l30d: { calls: 0, revenue_cents: 0 },
+    };
+    index.set(address, row);
+    out.push(row);
+  }
+  for (const row of rows) {
+    if (!isPaidCallRoute(row.route)) continue;
+    if (classifyNormalized(row, normalized) !== "graders") continue;
+    const payer = (row.payer ?? "").trim().toLowerCase();
+    const slot = index.get(payer);
+    if (!slot) continue;
+    const cents = ROUTE_PRICE_CENTS[row.route];
+    if (row.ts >= cutoffs.l30d) {
+      slot.l30d.calls += 1;
+      slot.l30d.revenue_cents += cents;
+    }
+    if (row.ts >= cutoffs.l7d) {
+      slot.l7d.calls += 1;
+      slot.l7d.revenue_cents += cents;
+    }
+  }
+  return out;
+}
+

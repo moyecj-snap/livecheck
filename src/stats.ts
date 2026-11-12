@@ -10,7 +10,7 @@ import {
   DOCS_EXAMPLE_URLS,
   docsExampleUrlHashes,
 } from "./docs-example-url.js";
-import { graderWallets, testerWallets } from "./grader-wallets.js";
+import { activeTestTrafficWallets, graderWallets, testerWallets } from "./grader-wallets.js";
 import { internalWallets } from "./internal-wallets.js";
 import { starterKeySourceReport, starterKeyStats, type StarterKeyStats } from "./api-key-store.js";
 import { STARTER_SOURCE_STATS_PUBLIC } from "./starter-key.js";
@@ -28,6 +28,7 @@ import {
   queryInternalLabelCountsFromStore,
   queryUnattributedWindowsFromStore,
   queryTrafficBucketWindowsFromStore,
+  queryGraderWalletWindowsFromStore,
   type ConfirmIntentCounts,
   type PaidRouteCounts,
   type RouteCounts,
@@ -39,8 +40,10 @@ import {
   ROUTE_PRICE_CENTS,
   TRAFFIC_BUCKET_ORDER,
   TRAFFIC_BUCKET_RULES,
+  shortWalletAddress,
   type BucketWindow,
   type BucketWindows,
+  type GraderWalletWindow,
   type TrafficBucket,
 } from "./traffic-buckets.js";
 import {
@@ -316,7 +319,51 @@ export type TrafficHonesty = {
   external: TrafficSlice;
 };
 
+/** Headline on /stats: outside customer revenue, not graders, internal, or testers. */
+export const CUSTOMER_HEADLINE_LABEL =
+  "Outside customer revenue. Excludes internal wallets, graders, testers, unattributed calls, and testers_probable.";
+
+export type StatsHeadline = {
+  label: typeof CUSTOMER_HEADLINE_LABEL;
+  /** False when revenue or bucket reconciliation is not a measurement on this response. */
+  available: boolean;
+  /** Equals traffic.external / the external bucket: customer calls only. */
+  calls: { l7d: number; l30d: number };
+  /** Equals traffic.revenue.external. */
+  revenue: TrafficRevenueWindow;
+  /** COUNT(DISTINCT payer) in the external bucket. Null on a fleet document. */
+  outside_payers: { l7d: number | null; l30d: number | null };
+};
+
+export const GRADER_WALLETS_SECTION_LABEL =
+  "Grader wallets, listed separately from customers. These are test traffic and are omitted from the headline and from traffic.external. Full addresses stay off this document.";
+
+/** One configured grader. `wallet` is the truncated form (0xabcd…1234). */
+export type GraderWalletRow = {
+  label: string;
+  wallet: string;
+  calls: { l7d: number; l30d: number };
+  revenue: TrafficRevenueWindow;
+};
+
+/** Top-level graders section. traffic.graders stays the aggregate-only field. */
+export type GraderWalletsSection = {
+  label: typeof GRADER_WALLETS_SECTION_LABEL;
+  available: boolean;
+  /** False when a fleet peer did not publish the per-wallet list. Totals can still be a measurement. */
+  wallets_complete: boolean;
+  wallets_configured: number;
+  calls: { l7d: number; l30d: number };
+  revenue: TrafficRevenueWindow;
+  unique_payers: { l7d: number | null; l30d: number | null };
+  wallets: GraderWalletRow[];
+};
+
 export type StatsDocument = {
+  /** First field: customer revenue, not graders or testers. */
+  headline: StatsHeadline;
+  /** Per-grader calls and revenue. Separate from traffic.graders (counts only). */
+  graders: GraderWalletsSection;
   ok: true;
   service: "livecheck";
   generated_at: string;
@@ -1790,6 +1837,154 @@ function starterKeysForDocument(now: Date): StarterKeyStats {
   return Object.assign(stats, { by_source: starterKeySourceReport(now).by_source });
 }
 
+
+export function emptyStatsHeadline(): StatsHeadline {
+  return {
+    label: CUSTOMER_HEADLINE_LABEL,
+    available: false,
+    calls: { l7d: 0, l30d: 0 },
+    revenue: { l7d_usd: 0, l30d_usd: 0 },
+    outside_payers: { l7d: null, l30d: null },
+  };
+}
+
+export function emptyGraderWalletsSection(): GraderWalletsSection {
+  return {
+    label: GRADER_WALLETS_SECTION_LABEL,
+    available: false,
+    wallets_complete: false,
+    wallets_configured: 0,
+    calls: { l7d: 0, l30d: 0 },
+    revenue: { l7d_usd: 0, l30d_usd: 0 },
+    unique_payers: { l7d: null, l30d: null },
+    wallets: [],
+  };
+}
+
+export function headlineFromTraffic(
+  traffic: TrafficHonesty,
+  opts: { fleet?: boolean; outsidePayers?: { l7d: number | null; l30d: number | null } } = {},
+): StatsHeadline {
+  const rec = traffic.reconciliation;
+  const available = Boolean(traffic.revenue?.available && rec?.checked);
+  const calls = rec?.checked
+    ? { l7d: rec.l7d.by_bucket.external.calls, l30d: rec.l30d.by_bucket.external.calls }
+    : { l7d: 0, l30d: 0 };
+  const revenue = traffic.revenue?.available
+    ? { l7d_usd: traffic.revenue.external.l7d_usd, l30d_usd: traffic.revenue.external.l30d_usd }
+    : { l7d_usd: 0, l30d_usd: 0 };
+  const outside_payers = opts.fleet
+    ? { l7d: null, l30d: null }
+    : (opts.outsidePayers ?? { l7d: null, l30d: null });
+  return {
+    label: CUSTOMER_HEADLINE_LABEL,
+    available,
+    calls,
+    revenue,
+    outside_payers,
+  };
+}
+
+function publishGraderWallet(row: GraderWalletWindow): GraderWalletRow {
+  return {
+    label: row.label,
+    wallet: shortWalletAddress(row.address),
+    calls: { l7d: row.l7d.calls, l30d: row.l30d.calls },
+    revenue: { l7d_usd: row.l7d.revenue_cents / 100, l30d_usd: row.l30d.revenue_cents / 100 },
+  };
+}
+
+export function graderWalletsSectionFrom(
+  aggregate: GraderTraffic,
+  wallets: readonly GraderWalletRow[],
+  walletsComplete = true,
+): GraderWalletsSection {
+  return {
+    label: GRADER_WALLETS_SECTION_LABEL,
+    available: aggregate.available,
+    wallets_complete: walletsComplete,
+    wallets_configured: aggregate.wallets_configured,
+    calls: aggregate.calls,
+    revenue: aggregate.revenue ?? { l7d_usd: 0, l30d_usd: 0 },
+    unique_payers: aggregate.unique_payers,
+    wallets: [...wallets],
+  };
+}
+
+export function mergeGraderWalletsSection(
+  local: StatsDocument,
+  peers: readonly { included: boolean; doc?: StatsDocument }[],
+  aggregate: GraderTraffic,
+): GraderWalletsSection {
+  const rows = new Map<string, GraderWalletRow>();
+  let complete = true;
+  const addDoc = (doc?: StatsDocument) => {
+    if (!doc) {
+      complete = false;
+      return;
+    }
+    if (!doc.graders?.wallets) {
+      complete = false;
+      return;
+    }
+    for (const row of doc.graders.wallets) {
+      const key = `${row.wallet}|${row.label}`;
+      const prev = rows.get(key);
+      if (!prev) {
+        rows.set(key, {
+          label: row.label,
+          wallet: row.wallet,
+          calls: { l7d: row.calls.l7d, l30d: row.calls.l30d },
+          revenue: { l7d_usd: row.revenue.l7d_usd, l30d_usd: row.revenue.l30d_usd },
+        });
+        continue;
+      }
+      prev.calls.l7d += row.calls.l7d;
+      prev.calls.l30d += row.calls.l30d;
+      prev.revenue.l7d_usd = (toCents(prev.revenue.l7d_usd) + toCents(row.revenue.l7d_usd)) / 100;
+      prev.revenue.l30d_usd = (toCents(prev.revenue.l30d_usd) + toCents(row.revenue.l30d_usd)) / 100;
+    }
+  };
+  addDoc(local);
+  for (const peer of peers) {
+    if (!peer.included) continue;
+    addDoc(peer.doc);
+  }
+  return graderWalletsSectionFrom(aggregate, [...rows.values()], complete);
+}
+
+/** Put headline and the graders section first; keep every existing field. */
+export function orderStatsDocument(doc: StatsDocument): StatsDocument {
+  const {
+    headline,
+    graders,
+    ok,
+    service,
+    generated_at,
+    traffic,
+    intents,
+    sentinel,
+    benches,
+    store,
+    starter_keys,
+    notes,
+  } = doc;
+  return {
+    headline,
+    graders,
+    ok,
+    service,
+    generated_at,
+    traffic,
+    intents,
+    sentinel,
+    benches,
+    store,
+    starter_keys,
+    notes,
+  };
+}
+
 export function buildStatsDocument(now = new Date()): StatsDocument {
   const confirmWindows = queryConfirmIntentWindowsFromStore(now);
   const lead7 = countReceiptsSince(isoCutoff(now, 7), "lead_submit");
@@ -1864,7 +2059,26 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
     now,
     rec?.checked ? { l7d: { ...rec.l7d.total }, l30d: { ...rec.l30d.total } } : null,
   );
-  return {
+  const configuredGraders = activeTestTrafficWallets().filter((wallet) => wallet.role === "grader");
+  const graderWindows = queryGraderWalletWindowsFromStore(now, {
+    internal: wallets,
+    graders,
+    testers,
+    docsExampleUrlSha256: exampleHashes,
+  }, configuredGraders);
+  const graderSection = graderWalletsSectionFrom(
+    graderTraffic,
+    (graderWindows ?? []).map(publishGraderWallet),
+    graderWindows !== undefined,
+  );
+  const headline = headlineFromTraffic(traffic, {
+    outsidePayers: buckets
+      ? { l7d: buckets.external.l7d.unique_payers, l30d: buckets.external.l30d.unique_payers }
+      : { l7d: null, l30d: null },
+  });
+  return orderStatsDocument({
+    headline,
+    graders: graderSection,
     ok: true,
     service: "livecheck",
     generated_at: now.toISOString().replace(/\.\d{3}Z$/, "Z"),
@@ -1897,7 +2111,7 @@ export function buildStatsDocument(now = new Date()): StatsDocument {
     store: buildStoreScope(unscoped, now),
     starter_keys: starterKeys,
     notes,
-  };
+  });
 }
 
 function escHtml(value: string): string {
@@ -2128,6 +2342,70 @@ function starterKeysHtml(doc: StatsDocument): string {
   <p class="muted">L7d: ${l7.issued} issued, ${l7.activated} activated, ${l7.reached_20} with 20+ checks, ${l7.free_checks} free checks, ${l7.out_of_credit} out of credit. L30d: ${l30.issued} issued, ${l30.activated} activated, ${l30.reached_20} with 20+ checks, ${l30.free_checks} free checks, ${l30.out_of_credit} out of credit.${keys.internal_keys_excluded ? ` Excludes ${keys.internal_keys_excluded} internal test key${keys.internal_keys_excluded === 1 ? "" : "s"}.` : ""}</p>`;
 }
 
+function payerCountCell(value: number | null): string {
+  return value === null ? "withheld" : String(value);
+}
+
+function headlineHtml(doc: StatsDocument): string {
+  const row = doc.headline;
+  const label = escHtml(row?.label ?? CUSTOMER_HEADLINE_LABEL);
+  if (!row?.available) {
+    return `<section class="headline" aria-label="Outside customer revenue">
+  <h2>Outside customer revenue</h2>
+  <p>${label} This figure is not a measurement on this response.</p>
+</section>`;
+  }
+  return `<section class="headline" aria-label="Outside customer revenue">
+  <h2>Outside customer revenue</h2>
+  <p>${label} This is the headline number: revenue that is not from graders, internal wallets, or testers.</p>
+  <table>
+    <thead>
+      <tr><th></th><th>L7d</th><th>L30d</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Calls</td><td>${row.calls.l7d}</td><td>${row.calls.l30d}</td></tr>
+      <tr><td>Revenue</td><td>$${row.revenue.l7d_usd.toFixed(2)}</td><td>$${row.revenue.l30d_usd.toFixed(2)}</td></tr>
+      <tr><td>Outside payers</td><td>${payerCountCell(row.outside_payers.l7d)}</td><td>${payerCountCell(row.outside_payers.l30d)}</td></tr>
+    </tbody>
+  </table>
+</section>`;
+}
+
+function gradersSectionHtml(doc: StatsDocument): string {
+  const section = doc.graders;
+  const label = escHtml(section?.label ?? GRADER_WALLETS_SECTION_LABEL);
+  if (!section?.available) {
+    return `<section class="graders-section" aria-label="Grader wallets">
+  <h2>Grader wallets</h2>
+  <p>${label} Counts are not a measurement on this response.</p>
+</section>`;
+  }
+  const incomplete = section.wallets_complete
+    ? ""
+    : `<p class="muted">Per-wallet rows are incomplete: at least one included machine did not publish the list. Totals still come from the graders bucket.</p>`;
+  const rows = section.wallets
+    .map(
+      (wallet) =>
+        `<tr><td>${escHtml(wallet.label)}</td><td><code>${escHtml(wallet.wallet)}</code></td><td>${wallet.calls.l7d}</td><td>$${wallet.revenue.l7d_usd.toFixed(2)}</td><td>${wallet.calls.l30d}</td><td>$${wallet.revenue.l30d_usd.toFixed(2)}</td></tr>`,
+    )
+    .join("");
+  const revenue = section.revenue;
+  return `<section class="graders-section" aria-label="Grader wallets">
+  <h2>Grader wallets</h2>
+  <p>${label} ${section.wallets_configured} wallets configured. ${section.calls.l7d} L7d / ${section.calls.l30d} L30d paid calls ($${revenue.l7d_usd.toFixed(2)} / $${revenue.l30d_usd.toFixed(2)}). These rows stay in All and are omitted from the headline and from External.</p>
+  ${incomplete}
+  <table>
+    <thead>
+      <tr><th>Grader</th><th>Wallet</th><th>L7d calls</th><th>L7d revenue</th><th>L30d calls</th><th>L30d revenue</th></tr>
+    </thead>
+    <tbody>
+      ${rows}
+      <tr><td colspan="2"><strong>All graders</strong></td><td>${section.calls.l7d}</td><td>$${revenue.l7d_usd.toFixed(2)}</td><td>${section.calls.l30d}</td><td>$${revenue.l30d_usd.toFixed(2)}</td></tr>
+    </tbody>
+  </table>
+</section>`;
+}
+
 export function statsHtml(doc: StatsDocument): string {
   const lead = doc.intents.lead_submit;
   const listing = doc.intents.listing_published;
@@ -2159,11 +2437,15 @@ export function statsHtml(doc: StatsDocument): string {
     code { font-size: 0.9em; }
     h2 { margin-top: 2rem; }
     .honesty { border: 1px solid #8a6d1b; background: #f8e7c7; padding: 0.7rem 0.85rem; max-width: 42rem; }
+    .headline { border: 2px solid #1b5c3a; background: #e4f3ea; padding: 0.85rem 1rem; max-width: 42rem; }
+    .graders-section { border: 1px solid #8a6d1b; background: #f8e7c7; padding: 0.85rem 1rem; max-width: 48rem; }
     .warning { border: 2px solid #a12a1c; background: #fbe3df; color: #5a130b; padding: 0.7rem 0.85rem; max-width: 42rem; }
   </style>
 </head>
 <body>
   <h1>Livecheck stats</h1>
+  ${headlineHtml(doc)}
+  ${gradersSectionHtml(doc)}
   ${starterKeysHtml(doc)}
   ${reconciliationHtml(doc)}
   <p class="honesty"><strong>${escHtml(doc.traffic.label)}</strong> ${escHtml(doc.traffic.note)}</p>
