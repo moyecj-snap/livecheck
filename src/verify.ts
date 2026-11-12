@@ -1,4 +1,4 @@
-import { lookupAtsJob, combinePageAndAts, parseAtsJobUrl, verdictFromAtsWithoutPage } from "./ats-api.js";
+import { lookupAtsJob, combinePageAndAts, feedMissIsNotClosed, parseAtsJobUrl, verdictFromAtsWithoutPage } from "./ats-api.js";
 import { roleRefFor } from "./free-job-role.js";
 import { resolveGuessedGreenhouseMiss } from "./gh-jid-board.js";
 import { CHECK_TIMEOUT_SIGNAL, FETCH_TIMEOUT_MS, MAX_BODY_BYTES, PRICE_USD, USER_AGENT } from "./config.js";
@@ -12,6 +12,7 @@ import {
   ebayOwnHtmlReading,
   poshmarkListingId,
   poshmarkOwnAvailability,
+  poshmarkOwnReading,
 } from "./own-listing.js";
 import { shopifyProductJsUrl } from "./shopify.js";
 import {
@@ -23,6 +24,7 @@ import {
   schemaVariants,
 } from "./product-variants.js";
 import { stripTrackingParams } from "./tracking-params.js";
+import { guardTruncatedVerdict, hasStructuredAvailability, logPageTruncated } from "./page-truncation.js";
 import type { FetchedPage, VerifyVerdict } from "./types.js";
 import { AGE_CONFLICT_SIGNAL, DEFAULT_STALE_AFTER_DAYS, jsonLdJobPosting, resolvePostingAge, type AgeEvidence } from "./posting-age.js";
 
@@ -255,8 +257,12 @@ export async function fetchPage(
     if (canonicalUrl !== url) redirectChain.push(canonicalUrl);
 
     const buffer = await response.arrayBuffer();
-    const bytes = buffer.byteLength > MAX_BODY_BYTES ? buffer.slice(0, MAX_BODY_BYTES) : buffer;
+    const truncated = buffer.byteLength > MAX_BODY_BYTES;
+    const bytes = truncated ? buffer.slice(0, MAX_BODY_BYTES) : buffer;
     const html = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    if (truncated) {
+      logPageTruncated({ url: canonicalUrl, bodyBytes: buffer.byteLength, limitBytes: MAX_BODY_BYTES, httpStatus: response.status });
+    }
 
     return {
       requestedUrl: url,
@@ -267,6 +273,7 @@ export async function fetchPage(
       text: stripTags(html),
       redirected: canonicalUrl.replace(/\/$/, "") !== url.replace(/\/$/, ""),
       redirectChain,
+  ...(truncated ? { truncated: true } : {}),
     };
   } catch (error) {
     if (error instanceof DeadlineError || options.signal?.aborted) {
@@ -288,25 +295,25 @@ async function withShopify(
   html: string,
   fetcher: typeof fetch,
   signal: AbortSignal,
-): Promise<VerifyVerdict> {
+): Promise<{ verdict: VerifyVerdict; ownFieldFound: boolean }> {
   const jsUrl = shopifyProductJsUrl(verdict.canonical_url) ?? shopifyProductJsUrl(requested);
-  if (!jsUrl) return verdict;
+  if (!jsUrl) return { verdict, ownFieldFound: false };
   // The link the caller sent names the variant (?variant=, ?color=, ...).
   const selector = linkedVariantSelector(requested);
   const found = await lookupShopifyProduct(jsUrl, fetcher, signal);
   if (found) {
     const decision = decideVariants(found.variants, selector, found.available);
-    if (decision) return applyVariantDecision(verdict, decision, "shopify", found.title);
-    return verdict;
+    if (decision) return { verdict: applyVariantDecision(verdict, decision, "shopify", found.title), ownFieldFound: true };
+    return { verdict, ownFieldFound: false };
   }
   // product.js is missing (headless storefronts 404 it). Read per-variant
   // schema.org offers from the page; if there are none, can't tell.
   if (verdict.http_status >= 200 && verdict.http_status < 300) {
     const variants = schemaVariants(html);
     const decision = variants.length ? decideVariants(variants, selector) : null;
-    if (decision) return applyVariantDecision(verdict, decision, "schema");
+    if (decision) return { verdict: applyVariantDecision(verdict, decision, "schema"), ownFieldFound: true };
   }
-  return backupFailed(verdict);
+  return { verdict: backupFailed(verdict), ownFieldFound: false };
 }
 
 export async function verifyUrl(
@@ -383,15 +390,31 @@ async function verifyUrlWithin(
       // HTML fallback (Browse adapter off): the item's own offer decides;
       // "Similar sold items" on the page is ignored.
       const verdict = classify(page.page, now);
-      return applyOwnListingAvailability(verdict, ebayOwnHtmlReading(page.page.html, ebay.itemId), "ebay_item");
+      const reading = ebayOwnHtmlReading(page.page.html, ebay.itemId);
+      return guardTruncatedVerdict(
+        applyOwnListingAvailability(verdict, reading, "ebay_item"),
+        page.page.truncated,
+        reading !== undefined,
+      );
     }
     const posh = poshmarkListingId(page.page.canonicalUrl) ?? poshmarkListingId(url);
     if (posh) {
       // The listing's own availability field decides; similar-items and
       // Sold Listings text on the page is ignored.
-      return applyPoshmarkAvailability(classify(page.page, now), poshmarkOwnAvailability(page.page.html, posh));
+      const own = poshmarkOwnAvailability(page.page.html, posh);
+      return guardTruncatedVerdict(
+        applyPoshmarkAvailability(classify(page.page, now), own),
+        page.page.truncated,
+        poshmarkOwnReading(own) !== undefined,
+      );
     }
-    return withShopify(url, classify(page.page, now), page.page.html, fetcher, signal);
+    const shop = await withShopify(url, classify(page.page, now), page.page.html, fetcher, signal);
+    // A page cut before the listing's own availability field is can't tell.
+    return guardTruncatedVerdict(
+      shop.verdict,
+      page.page.truncated,
+      shop.ownFieldFound || (page.page.truncated ? hasStructuredAvailability(page.page.html) : false),
+    );
   }
   const firstApi = await atsLookup;
   const resolved = await resolveGuessedGreenhouseMiss(url, ats, firstApi, fetcher, {
@@ -402,7 +425,17 @@ async function verifyUrlWithin(
   ats = resolved.ref;
   const api = resolved.api;
   if (api.outcome === "listed") ageCtx.ats = api.age;
-  if (page.ok) return combinePageAndAts(classify(page.page, now), api, ats.vendor);
+  if (page.ok) {
+    // The board API answering for this posting is its own field; when it does
+    // not (unavailable, or a Lever/Ashby feed miss the page decides), a cut
+    // page is can't tell.
+    const apiDecides = api.outcome === "listed" || (api.outcome === "missing" && !feedMissIsNotClosed(ats.vendor));
+    return guardTruncatedVerdict(
+      combinePageAndAts(classify(page.page, now), api, ats.vendor),
+      page.page.truncated,
+      apiDecides || (page.page.truncated ? hasStructuredAvailability(page.page.html) : false),
+    );
+  }
   if (api.outcome === "unavailable") throw page.error;
   return verdictFromAtsWithoutPage(url, api, now, ats.vendor);
 }

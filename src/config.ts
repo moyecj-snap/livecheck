@@ -321,7 +321,8 @@ export const ATS_BOARD_CACHE_MAX_BYTES = 8 * 1024 * 1024;
  */
 export const TEST_MODE_HEADER = "x-livecheck-test-mode";
 export const TEST_MODE_SECRET_ENV = "LIVECHECK_TEST_MODE_SECRET";
-export const MAX_BODY_BYTES = 1_500_000;
+/** Page-read limit (raised from 1.5 MB, Nov 12, 2026). Longer pages are cut and logged. */
+export const MAX_BODY_BYTES = 2_000_000;
 export const DEFAULT_PORT = 43127;
 export const STRIPE_X402_API_VERSION = "2026-05-27.preview";
 export const MOCK_PAY_TO = "0x2222222222222222222222222222222222222222";
