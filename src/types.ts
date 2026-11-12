@@ -273,4 +273,6 @@ export type FetchedPage = {
   robotsDisallowed?: boolean;
   /** Set when strict mode got no robots.txt and the page was not requested. */
   robotsUnavailable?: boolean;
+  /** Set when the body was longer than MAX_BODY_BYTES and was cut there. */
+  truncated?: boolean;
 };

@@ -571,7 +571,7 @@ function dedupe(signals: string[]): string[] {
 }
 
 /** Public-feed absence is not evidence the posting is closed. */
-function feedMissIsNotClosed(vendor: AtsVendor | undefined): boolean {
+export function feedMissIsNotClosed(vendor: AtsVendor | undefined): boolean {
   return vendor === "lever" || vendor === "ashby";
 }
 
