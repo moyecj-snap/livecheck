@@ -31,7 +31,7 @@ import { bindApiKeyDb, unbindApiKeyDb } from "./api-key-store.js";
 import { INTERNAL_USER_AGENT_PREFIX } from "./internal-wallets.js";
 import type { TestTrafficWallet } from "./test-traffic.js";
 import { listActiveTestWallets, migrateTestWalletStore } from "./test-wallet-store.js";
-import { bucketPaidCallRows, type BucketWindows, type TrafficBucketLists } from "./traffic-buckets.js";
+import { bucketPaidCallRows, graderWalletWindows, type BucketWindows, type GraderWalletWindow, type TrafficBucketLists } from "./traffic-buckets.js";
 import {
   ATTRIBUTION_TX_TRANSFER,
   ATTRIBUTION_UNATTRIBUTED,
@@ -1003,6 +1003,30 @@ export function queryTrafficBucketWindowsFromStore(
 ): BucketWindows | undefined {
   if (!state?.ok) return undefined;
   return queryTrafficBucketWindows(state.db, now, lists);
+}
+
+export function queryGraderWalletWindows(
+  db: DatabaseSync,
+  now: Date,
+  lists: TrafficBucketLists,
+  wallets: readonly { address: string; label: string }[],
+): GraderWalletWindow[] {
+  const l7d = isoCutoff(now, 7);
+  const l30d = isoCutoff(now, 30);
+  const since = l7d < l30d ? l7d : l30d;
+  const rows = db
+    .prepare(`SELECT ts, route, payer, url_sha256 FROM paid_calls WHERE ts >= ?`)
+    .all(since) as Array<{ ts: string; route: string; payer: string | null; url_sha256: string | null }>;
+  return graderWalletWindows(rows, { l7d, l30d }, lists, wallets);
+}
+
+export function queryGraderWalletWindowsFromStore(
+  now: Date,
+  lists: TrafficBucketLists,
+  wallets: readonly { address: string; label: string }[],
+): GraderWalletWindow[] | undefined {
+  if (!state?.ok) return undefined;
+  return queryGraderWalletWindows(state.db, now, lists, wallets);
 }
 
 export function queryInternalLabelCountsFromStore(now = new Date()): { l7d: number; l30d: number } | undefined {

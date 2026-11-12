@@ -3,7 +3,10 @@ import { DEFAULT_PORT } from "./config.js";
 import {
   FLEET_VOLUME_NOTE,
   PARTIAL_FLEET_VOLUME_NOTE,
+  headlineFromTraffic,
+  mergeGraderWalletsSection,
   mergeTrafficHonesty,
+  orderStatsDocument,
   statsNotes,
   type IntentWindow,
   type StatsDocument,
@@ -188,8 +191,18 @@ export function mergeFleetStats(local: StatsDocument, peers: readonly FleetPeerR
   }
 
   const volumeNote = complete ? FLEET_VOLUME_NOTE : PARTIAL_FLEET_VOLUME_NOTE;
-  return {
+  const traffic = {
+    ...mergeTrafficHonesty(local, peers),
+    ...(local.traffic?.protocols
+      ? { protocols: includedPeers.length > 0 ? fleetProtocolTraffic(local.traffic.protocols) : local.traffic.protocols }
+      : {}),
+  };
+  const headline = headlineFromTraffic(traffic, { fleet: true });
+  const graders = mergeGraderWalletsSection(local, peers, traffic.graders);
+  return orderStatsDocument({
     ...local,
+    headline,
+    graders,
     generated_at: generatedAt,
     intents: {
       lead_submit: { ...local.intents.lead_submit, ...intents.lead_submit },
@@ -208,12 +221,7 @@ export function mergeFleetStats(local: StatsDocument, peers: readonly FleetPeerR
       settle_late_paid_calls: settleLate,
       note: volumeNote,
     },
-    traffic: {
-      ...mergeTrafficHonesty(local, peers),
-      ...(local.traffic?.protocols
-        ? { protocols: includedPeers.length > 0 ? fleetProtocolTraffic(local.traffic.protocols) : local.traffic.protocols }
-        : {}),
-    },
+    traffic,
     notes: [
       ...statsNotes(unscoped, volumeNote, "fleet"),
       ...(local.starter_keys?.daily_cap_hit
@@ -222,7 +230,7 @@ export function mergeFleetStats(local: StatsDocument, peers: readonly FleetPeerR
           ]
         : []),
     ],
-  };
+  });
 }
 
 function listenPort(env: NodeJS.ProcessEnv): number {

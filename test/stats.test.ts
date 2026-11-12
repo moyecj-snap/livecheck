@@ -48,6 +48,7 @@ import {
   type ConfirmReceiptRow,
 } from "../src/receipt-store.js";
 import { buildStatsDocument, statsHtml } from "../src/stats.js";
+import { shortWalletAddress } from "../src/traffic-buckets.js";
 import {
   closeWatchStore,
   initWatchStore,
@@ -1118,5 +1119,167 @@ describe("internal wallet list and external payers", () => {
     const html = statsHtml(doc);
     assert.equal(html.includes(tester), false);
     assert.match(html, /tester wallets/);
+  });
+});
+
+describe("GET /stats customer headline and per-grader wallets", () => {
+  afterEach(() => {
+    closePaidCallStore();
+  });
+
+  it("shortens wallet addresses without emitting the full address", () => {
+    const vet402 = "0xc9c7b38c0942914fc8ea12063bc92dcd3b581670";
+    const short = shortWalletAddress(vet402);
+    assert.equal(short, "0xc9c7…1670");
+    assert.equal(short.includes(vet402), false);
+  });
+
+  it("leads with external-only revenue and lists each grader wallet, and the buckets still add up", () => {
+    initPaidCallStore(":memory:");
+    const now = new Date("2026-11-12T18:00:00Z");
+    const recent = new Date("2026-11-12T08:00:00Z");
+    const older = new Date("2026-10-20T08:00:00Z");
+    const vet402 = "0xc9c7b38c0942914fc8ea12063bc92dcd3b581670";
+    const lumiere = "0xec2abd3eda89bed90124736e317e847d5fb6d034";
+    const tester = "0x9cd5b9a8341dcaf7825348d70792ad9903f2c5a7";
+    const internal = DEFAULT_INTERNAL_WALLETS[0];
+    const customerA = "0x1111111111111111111111111111111111111111";
+    const customerB = "0x2222222222222222222222222222222222222222";
+    const unknown = "0x3333333333333333333333333333333333333333";
+
+    const keep = (event: Parameters<typeof retainPaidCall>[0]) => assert.equal(retainPaidCall(event), true);
+
+    keep(
+      buildPaidCallEvent(
+        { route: "verify/job", host: "jobs.example.com", url_hash: hashUrl("https://jobs.example.com/internal"), status: "live" },
+        { payer: internal, tx: `0x${"01".repeat(32)}` },
+        recent,
+      ),
+    );
+    keep(
+      buildPaidCallEvent(
+        { route: "check", host: "boards.greenhouse.io", url_hash: hashUrl(DOCS_EXAMPLE_URL), intent: "status_change", verdict: "observed", http_status: 200 },
+        { payer: vet402, tx: `0x${"02".repeat(32)}` },
+        recent,
+      ),
+    );
+    keep(
+      buildPaidCallEvent(
+        { route: "confirm", host: "example.com", url_hash: hashUrl(CONFIRM_DOCS_EXAMPLE_URL), intent: "lead_submit", verdict: "unknown", http_status: 404 },
+        { payer: lumiere, tx: `0x${"03".repeat(32)}` },
+        recent,
+      ),
+    );
+    keep(
+      buildPaidCallEvent(
+        { route: "confirm", host: "jobs.example.com", url_hash: hashUrl("https://jobs.example.com/tester"), intent: "lead_submit", verdict: "confirmed", http_status: 200 },
+        { payer: tester, tx: `0x${"04".repeat(32)}` },
+        recent,
+      ),
+    );
+    keep(
+      buildPaidCallEvent(
+        { route: "verify", host: "jobs.example.com", url_hash: hashUrl("https://jobs.example.com/blank"), status: "live" },
+        { tx: `0x${"05".repeat(32)}` },
+        recent,
+      ),
+    );
+    keep(
+      buildPaidCallEvent(
+        { route: "verify/job", host: "boards.greenhouse.io", url_hash: hashUrl(DOCS_EXAMPLE_URL), status: "live" },
+        { payer: unknown, tx: `0x${"06".repeat(32)}` },
+        recent,
+      ),
+    );
+    keep(
+      buildPaidCallEvent(
+        { route: "verify/job", host: "jobs.example.com", url_hash: hashUrl("https://jobs.example.com/customer-a"), status: "live" },
+        { payer: customerA, tx: `0x${"07".repeat(32)}` },
+        recent,
+      ),
+    );
+    keep(
+      buildPaidCallEvent(
+        { route: "check", host: "jobs.example.com", url_hash: hashUrl("https://jobs.example.com/customer-a-check"), intent: "status_change", verdict: "observed", http_status: 200 },
+        { payer: customerA, tx: `0x${"08".repeat(32)}` },
+        recent,
+      ),
+    );
+    keep(
+      buildPaidCallEvent(
+        { route: "confirm", host: "jobs.example.com", url_hash: hashUrl("https://jobs.example.com/customer-b"), intent: "lead_submit", verdict: "confirmed", http_status: 200 },
+        { payer: customerB, tx: `0x${"09".repeat(32)}` },
+        older,
+      ),
+    );
+
+    const doc = buildStatsDocument(now);
+    const rec = doc.traffic.reconciliation;
+    assert.equal(rec.ok, true);
+    assert.equal(rec.checked, true);
+    assert.deepEqual(rec.l7d.gap, { calls: 0, revenue_usd: 0 });
+    assert.deepEqual(rec.l30d.gap, { calls: 0, revenue_usd: 0 });
+    assert.equal(rec.l7d.buckets_sum.calls, rec.l7d.total.calls);
+    assert.equal(rec.l30d.buckets_sum.calls, rec.l30d.total.calls);
+    assert.equal(rec.l7d.buckets_sum.revenue_usd, rec.l7d.total.revenue_usd);
+    assert.equal(rec.l30d.buckets_sum.revenue_usd, rec.l30d.total.revenue_usd);
+
+    assert.equal(Object.keys(doc)[0], "headline");
+    assert.equal(Object.keys(doc)[1], "graders");
+    assert.equal(doc.headline.available, true);
+    assert.equal(doc.headline.calls.l7d, rec.l7d.by_bucket.external.calls);
+    assert.equal(doc.headline.calls.l30d, rec.l30d.by_bucket.external.calls);
+    assert.equal(doc.headline.revenue.l7d_usd, doc.traffic.revenue.external.l7d_usd);
+    assert.equal(doc.headline.revenue.l30d_usd, doc.traffic.revenue.external.l30d_usd);
+    // Recent: customer A verify + check. Older customer B only in L30d.
+    assert.equal(doc.headline.calls.l7d, 2);
+    assert.equal(doc.headline.calls.l30d, 3);
+    assert.equal(doc.headline.revenue.l7d_usd, 0.03);
+    assert.equal(doc.headline.revenue.l30d_usd, 0.13);
+    assert.equal(doc.headline.outside_payers.l7d, 1);
+    assert.equal(doc.headline.outside_payers.l30d, 2);
+    // Graders, testers, internal, unattributed, testers_probable are not in the headline.
+    assert.equal(rec.l7d.by_bucket.graders.calls, 2);
+    assert.equal(rec.l7d.by_bucket.testers.calls, 1);
+    assert.equal(rec.l7d.by_bucket.internal.calls, 1);
+    assert.equal(rec.l7d.by_bucket.unattributed.calls, 1);
+    assert.equal(rec.l7d.by_bucket.testers_probable.calls, 1);
+
+    assert.equal(doc.graders.available, true);
+    assert.equal(doc.graders.wallets_complete, true);
+    assert.equal(doc.graders.wallets_configured, DEFAULT_GRADER_WALLETS.length);
+    assert.equal(doc.graders.calls.l7d, doc.traffic.graders.calls.l7d);
+    assert.equal(doc.graders.calls.l30d, doc.traffic.graders.calls.l30d);
+    assert.equal(doc.graders.revenue.l7d_usd, doc.traffic.graders.revenue?.l7d_usd);
+    assert.equal(doc.graders.wallets.length, DEFAULT_GRADER_WALLETS.length);
+    const byWallet = Object.fromEntries(doc.graders.wallets.map((row) => [row.wallet, row]));
+    const vetRow = byWallet[shortWalletAddress(vet402)];
+    const lumiereRow = byWallet[shortWalletAddress(lumiere)];
+    assert.equal(vetRow?.label, "vet402 observatory");
+    assert.equal(vetRow?.calls.l7d, 1);
+    assert.equal(vetRow?.revenue.l7d_usd, 0.02);
+    assert.equal(lumiereRow?.label, "Lumière paycheck prober");
+    assert.equal(lumiereRow?.calls.l7d, 1);
+    assert.equal(lumiereRow?.revenue.l7d_usd, 0.1);
+    const walletSumL7d = doc.graders.wallets.reduce((sum, row) => sum + row.calls.l7d, 0);
+    assert.equal(walletSumL7d, doc.graders.calls.l7d);
+
+    const html = statsHtml(doc);
+    assert.match(html, /<h1>Livecheck stats<\/h1>\s*<section class="headline"/);
+    assert.match(html, /Outside customer revenue/);
+    assert.match(html, /Grader wallets/);
+    assert.match(html, /vet402 observatory/);
+    assert.match(html, /Lumière paycheck prober/);
+    assert.match(html, /0xc9c7…1670/);
+    assert.equal(html.includes(vet402), false);
+    assert.equal(html.includes(lumiere), false);
+    assert.equal(html.includes(tester), false);
+    assert.equal(JSON.stringify(doc).includes(vet402), false);
+    assert.equal(JSON.stringify(doc).includes(lumiere), false);
+
+    // Existing traffic fields stay on the document.
+    assert.equal(typeof doc.traffic.graders.calls.l7d, "number");
+    assert.equal(typeof doc.traffic.external.payers.l7d.verify.calls, "number");
+    assert.equal(typeof doc.ok, "boolean");
   });
 });
