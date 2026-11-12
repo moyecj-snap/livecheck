@@ -15,6 +15,7 @@ import {
   poshmarkOwnReading,
 } from "./own-listing.js";
 import { shopifyProductJsUrl } from "./shopify.js";
+import { withAvailabilityLabels } from "./availability-label.js";
 import {
   applyVariantDecision,
   backupFailed,
@@ -418,11 +419,14 @@ async function verifyUrlWithin(
       );
     }
     const shop = await withShopify(url, classify(page.page, now), page.page.html, fetcher, signal);
+    const labeled = await withAvailabilityLabels(url, shop.verdict, page.page.html, fetcher, signal);
     // A page cut before the listing's own availability field is can't tell.
     return guardTruncatedVerdict(
-      shop.verdict,
+      labeled.verdict,
       page.page.truncated,
-      shop.ownFieldFound || (page.page.truncated ? hasStructuredAvailability(page.page.html) : false),
+      shop.ownFieldFound ||
+        labeled.ownFieldFound ||
+        (page.page.truncated ? hasStructuredAvailability(page.page.html) : false),
     );
   }
   const firstApi = await atsLookup;

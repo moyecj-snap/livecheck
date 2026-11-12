@@ -317,6 +317,22 @@ describe("discovery documents (mock gate)", () => {
       op.responses?.["200"]?.content?.["application/json"]?.schema?.properties?.status?.enum,
       ["live", "closed", "unknown"],
     );
+    const verifyLabel = (
+      op.responses?.["200"]?.content?.["application/json"]?.schema as
+        | {
+            properties?: {
+              label?: { type?: string; enum?: string[]; description?: string };
+            };
+            required?: string[];
+          }
+        | undefined
+    );
+    assert.deepEqual(verifyLabel?.properties?.label?.enum, ["backorder", "in_stores_only"]);
+    assert.equal(
+      verifyLabel?.properties?.label?.description,
+      "Optional label adds detail to a live result. backorder: can be ordered now, ships later. in_stores_only: not purchasable online. Agents completing an online purchase should treat it as unavailable.",
+    );
+    assert.equal(verifyLabel?.required?.includes("label"), false);
     const confirm = doc.paths?.["/v1/confirm"]?.post;
     assert.ok(confirm, "expected POST /v1/confirm");
     assert.equal(confirm.summary, OPENAPI_CONFIRM_SUMMARY);

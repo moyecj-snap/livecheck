@@ -4,6 +4,11 @@ export type VerifyVerdict = {
   url: string;
   canonical_url: string;
   status: SourceStatus;
+  /**
+   * Present only when a live result has a detected availability detail.
+   * Omitted when no label is detected.
+   */
+  label?: "backorder" | "in_stores_only";
   http_status: number;
   checked_at: string;
   title?: string;
