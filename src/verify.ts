@@ -24,6 +24,7 @@ import {
   schemaVariants,
 } from "./product-variants.js";
 import { stripTrackingParams } from "./tracking-params.js";
+import { readCappedBody } from "./capped-body.js";
 import { guardTruncatedVerdict, hasStructuredAvailability, logPageTruncated } from "./page-truncation.js";
 import type { FetchedPage, VerifyVerdict } from "./types.js";
 import { AGE_CONFLICT_SIGNAL, DEFAULT_STALE_AFTER_DAYS, jsonLdJobPosting, resolvePostingAge, type AgeEvidence } from "./posting-age.js";
@@ -204,6 +205,8 @@ export async function fetchPage(
   // One clock for robots.txt and the page. A robots timeout cannot push the
   // page past this budget, and a 40ms page timeout still fails in about 40ms.
   const linked = linkedAbort(timeoutMs, options.signal);
+  // Aborted once the body passes MAX_BODY_BYTES so the connection closes.
+  const capStop = new AbortController();
   const redirectChain: string[] = [];
   try {
     if (options.robots) {
@@ -241,7 +244,7 @@ export async function fetchPage(
     const fetchInit = {
       method: "GET" as const,
       redirect: "follow" as const,
-      signal: linked.signal,
+      signal: AbortSignal.any([linked.signal, capStop.signal]),
       headers: {
         accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
         "user-agent": USER_AGENT,
@@ -256,12 +259,12 @@ export async function fetchPage(
     const canonicalUrl = response.url || url;
     if (canonicalUrl !== url) redirectChain.push(canonicalUrl);
 
-    const buffer = await response.arrayBuffer();
-    const truncated = buffer.byteLength > MAX_BODY_BYTES;
-    const bytes = truncated ? buffer.slice(0, MAX_BODY_BYTES) : buffer;
-    const html = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    // Stream the body and stop at MAX_BODY_BYTES; the rest is never downloaded.
+    const body = await readCappedBody(response, MAX_BODY_BYTES, () => capStop.abort());
+    const truncated = body.truncated;
+    const html = new TextDecoder("utf-8", { fatal: false }).decode(body.bytes);
     if (truncated) {
-      logPageTruncated({ url: canonicalUrl, bodyBytes: buffer.byteLength, limitBytes: MAX_BODY_BYTES, httpStatus: response.status });
+      logPageTruncated({ url: canonicalUrl, bodyBytes: body.received, limitBytes: MAX_BODY_BYTES, httpStatus: response.status });
     }
 
     return {

@@ -1,4 +1,5 @@
 import { atsResponseCacheKey, joinAtsFetch, readAtsResponseCache, writeAtsResponseCache } from "./ats-cache.js";
+import { readCappedBody } from "./capped-body.js";
 import { ATS_FETCH_TIMEOUT_MS, MAX_BODY_BYTES, PRICE_USD, USER_AGENT } from "./config.js";
 import { DeadlineError, linkedAbort, resolveDeadlineMs } from "./deadline.js";
 import {
@@ -445,46 +446,13 @@ export function interpretAtsResponse(ref: AtsJobRef, status: number, text: strin
   }
 }
 
-async function readCappedText(response: Response, maxBytes: number): Promise<{ text: string; truncated: boolean }> {
-  const reader = response.body?.getReader();
-  if (!reader) {
-    const text = await response.text();
-    const encoded = new TextEncoder().encode(text);
-    if (encoded.byteLength <= maxBytes) return { text, truncated: false };
-    return { text: new TextDecoder("utf-8", { fatal: false }).decode(encoded.subarray(0, maxBytes)), truncated: true };
-  }
-  const chunks: Uint8Array[] = [];
-  let received = 0;
-  let truncated = false;
-  try {
-    while (received < maxBytes) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value || value.byteLength === 0) continue;
-      const room = maxBytes - received;
-      if (value.byteLength > room) {
-        chunks.push(value.subarray(0, room));
-        received += room;
-        truncated = true;
-        break;
-      }
-      chunks.push(value);
-      received += value.byteLength;
-    }
-    if (!truncated && received >= maxBytes) {
-      const extra = await reader.read();
-      if (!extra.done && extra.value && extra.value.byteLength > 0) truncated = true;
-    }
-  } finally {
-    await reader.cancel().catch(() => undefined);
-  }
-  const merged = new Uint8Array(received);
-  let offset = 0;
-  for (const chunk of chunks) {
-    merged.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return { text: new TextDecoder("utf-8", { fatal: false }).decode(merged), truncated };
+async function readCappedText(
+  response: Response,
+  maxBytes: number,
+  stop?: () => void,
+): Promise<{ text: string; truncated: boolean }> {
+  const body = await readCappedBody(response, maxBytes, stop);
+  return { text: new TextDecoder("utf-8", { fatal: false }).decode(body.bytes), truncated: body.truncated };
 }
 
 async function loadAtsResponse(
@@ -496,11 +464,12 @@ async function loadAtsResponse(
   // Own timer, not the caller signal. One job's deadline must not abort the
   // shared board fetch that other in-flight checks are waiting on.
   const linked = linkedAbort(timeoutMs);
+  const capStop = new AbortController();
   try {
     const response = await fetcher(ref.apiUrl.split("#")[0] ?? ref.apiUrl, {
       method: ref.method ?? "GET",
       redirect: "follow",
-      signal: linked.signal,
+      signal: AbortSignal.any([linked.signal, capStop.signal]),
       headers: {
         accept: "application/json",
         "user-agent": USER_AGENT,
@@ -508,7 +477,7 @@ async function loadAtsResponse(
       },
       ...(ref.body ? { body: ref.body } : {}),
     });
-    const { text, truncated } = await readCappedText(response, maxBytes);
+    const { text, truncated } = await readCappedText(response, maxBytes, () => capStop.abort());
     const body = { status: response.status, text, truncated };
     writeAtsResponseCache(atsResponseCacheKey(ref), body);
     return body;
