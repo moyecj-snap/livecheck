@@ -269,6 +269,35 @@ function looksLikeBoardOrSearchUrl(url: string): boolean {
   return false;
 }
 
+/** Path segment after /product/ or /products/. */
+function productHandle(url: string): string | undefined {
+  const { path } = extractHostPath(url);
+  const match = path.match(/\/products?\/([^/]+)/i);
+  if (!match) return undefined;
+  try {
+    return decodeURIComponent(match[1]).toLowerCase();
+  } catch {
+    return match[1].toLowerCase();
+  }
+}
+
+function sameSiteHost(a: string, b: string): boolean {
+  const norm = (host: string) => host.replace(/^www\./, "");
+  return norm(extractHostPath(a).host) === norm(extractHostPath(b).host);
+}
+
+/**
+ * A product URL that only changed scheme, www, trailing slash, locale prefix,
+ * variant query, or collection path still points at the same product.
+ */
+function redirectKeptProduct(requestedUrl: string, canonicalUrl: string): boolean {
+  const requested = productHandle(requestedUrl);
+  const canonical = productHandle(canonicalUrl);
+  if (!requested || !canonical) return false;
+  if (requested !== canonical) return false;
+  return sameSiteHost(requestedUrl, canonicalUrl);
+}
+
 /** Shopify `/collections/.../products/handle` is a product, not a collection. */
 function looksLikeSpecificProductUrl(url: string): boolean {
   const { path } = extractHostPath(url);
@@ -453,6 +482,20 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
   const specificProduct =
     looksLikeSpecificProductUrl(page.canonicalUrl) ||
     (!redirected && looksLikeSpecificProductUrl(page.requestedUrl));
+  // A product link that redirects to the homepage or another non-product page
+  // is gone. Canonical redirects that stay on the same product (trailing slash,
+  // http→https, www, locale prefix, variant query, collection path) are not.
+  const redirectedAwayFromProduct =
+    redirected &&
+    looksLikeSpecificProductUrl(page.requestedUrl) &&
+    !redirectKeptProduct(page.requestedUrl, page.canonicalUrl);
+  if (redirectedAwayFromProduct && !looksLikeSpecificProductUrl(page.canonicalUrl)) {
+    signals.push("redirected_away_from_product");
+    if (status !== "closed") {
+      status = "closed";
+      confidence = Math.max(confidence, 0.9);
+    }
+  }
   const buy = hasBuyAffordance(html, text);
   const soldOutPhrase = hasVisibleSoldOut(html, text);
   const manyProductCards = countProductCards(html) >= 3;

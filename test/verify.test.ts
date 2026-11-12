@@ -51,6 +51,22 @@ describe("verifyUrl against local fixtures", () => {
     assert.equal(verdict.title, undefined, "a 404 page title (site error page) is left empty");
   });
 
+  it("classifies a product fixture that redirects to the homepage as closed", async () => {
+    const verdict = await verifyUrl(`${origin}/fixtures/products/retired-widget`);
+    assert.equal(verdict.status, "closed");
+    assert.ok(verdict.signals.includes("redirected_away_from_product"));
+    assert.equal(verdict.signals.includes("in-stock"), false);
+    assert.match(verdict.canonical_url, /\/fixtures\/shop-home$/);
+  });
+
+  it("classifies a product fixture that redirects to a collection as closed", async () => {
+    const verdict = await verifyUrl(`${origin}/fixtures/products/retired-mug`);
+    assert.equal(verdict.status, "closed");
+    assert.ok(verdict.signals.includes("redirected_away_from_product"));
+    assert.equal(verdict.signals.includes("in-stock"), false);
+    assert.match(verdict.canonical_url, /\/fixtures\/collections\/rings$/);
+  });
+
   it("classifies a recaptcha-tagged open job as live", async () => {
     const verdict = await verifyUrl(`${origin}/fixtures/live-apply-recaptcha`);
     assert.equal(verdict.status, "live");
