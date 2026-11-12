@@ -10,7 +10,7 @@ export const AVAILABILITY_LABELS = ["backorder", "in_stores_only"] as const;
 export type AvailabilityLabel = (typeof AVAILABILITY_LABELS)[number];
 
 export const AVAILABILITY_LABEL_DESCRIPTION =
-  "Optional label adds detail to a live result. backorder: can be ordered now, ships later. in_stores_only: not purchasable online. Agents completing an online purchase should treat it as unavailable.";
+  "Optional label adds detail to a live result. backorder: can be ordered now, ships later. in_stores_only: not purchasable online, so agents completing an online purchase should treat it as unavailable.";
 
 function dedupe(signals: string[]): string[] {
   const out: string[] = [];

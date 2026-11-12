@@ -59,7 +59,7 @@ export const VERIFY_OUTPUT_SCHEMA = {
       type: "string",
       enum: ["backorder", "in_stores_only"],
       description:
-        "Optional label adds detail to a live result. backorder: can be ordered now, ships later. in_stores_only: not purchasable online. Agents completing an online purchase should treat it as unavailable.",
+        "Optional label adds detail to a live result. backorder: can be ordered now, ships later. in_stores_only: not purchasable online, so agents completing an online purchase should treat it as unavailable.",
     },
     http_status: { type: "number" },
     checked_at: { type: "string" },
