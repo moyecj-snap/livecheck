@@ -50,6 +50,85 @@ function stripHiddenElements(html: string): string {
   return current;
 }
 
+
+const WOO_NON_SUMMARY_ATTR =
+  /\b(?:related[\s_-]*products?|upsells?|cross-?sells?|you-may-also|mini-cart|shopping-cart|widget_shopping_cart|wc-block-mini-cart|wc-block-cart(?:-item|-items)?\b|woocommerce-mini-cart|woocommerce-tabs|\bwc-tabs\b|product-tabs|wp-block-woocommerce-related-products)\b/i;
+
+function findMatchingClose(html: string, from: number, tag: string): number {
+  const openRe = new RegExp(`<${tag}\\b[^>]*>`, "gi");
+  const closeRe = new RegExp(`</${tag}\\s*>`, "gi");
+  let depth = 1;
+  let i = from;
+  while (i < html.length && depth > 0) {
+    openRe.lastIndex = i;
+    closeRe.lastIndex = i;
+    const open = openRe.exec(html);
+    const close = closeRe.exec(html);
+    if (!close) return html.length;
+    if (open && open.index < close.index) {
+      if (!open[0].endsWith("/>")) depth += 1;
+      i = open.index + open[0].length;
+    } else {
+      depth -= 1;
+      i = close.index + close[0].length;
+    }
+  }
+  return i;
+}
+
+function isVoidOrSelfClosing(tag: string, open: string): boolean {
+  return (
+    open.endsWith("/>") ||
+    /^(?:area|base|br|col|embed|hr|img|input|link|meta|source|track|wbr)$/i.test(tag)
+  );
+}
+
+/** Drop cart, related, tab, and footer regions so only the product's own summary remains. */
+function stripWooNonSummaryRegions(html: string): string {
+  let i = 0;
+  let out = "";
+  while (i < html.length) {
+    const match = html.slice(i).match(/<([a-zA-Z][\w:-]*)\b[^>]*>/);
+    if (!match || match.index === undefined) {
+      out += html.slice(i);
+      break;
+    }
+    const tag = match[1];
+    const open = match[0];
+    const start = i + match.index;
+    out += html.slice(i, start);
+    const drop =
+      /^(?:footer|aside)$/i.test(tag) ||
+      (!/add-to-cart-form/i.test(open) && WOO_NON_SUMMARY_ATTR.test(open));
+    if (drop) {
+      if (isVoidOrSelfClosing(tag, open)) {
+        i = start + open.length;
+      } else {
+        i = findMatchingClose(html, start + open.length, tag);
+      }
+      out += " ";
+      continue;
+    }
+    out += open;
+    i = start + open.length;
+  }
+  return out;
+}
+
+const WOO_SUMMARY_BACKORDER_ELEMENT =
+  /<p\b[^>]*class=["'][^"']*\bstock\b[^"']*\bavailable-on-backorder\b[^"']*["'][^>]*>|<p\b[^>]*class=["'][^"']*\bavailable-on-backorder\b[^"']*\bstock\b[^"']*["'][^>]*>|product-stock-indicator--available-on-backorder/i;
+
+/**
+ * True when WooCommerce's own stock-status element, inside the main product
+ * summary, marks the product as available on backorder. Loose "Available on
+ * backorder" text in related products, tabs, footers, cart badges, or scripts
+ * does not count.
+ */
+export function hasWooProductSummaryBackorder(html: string): boolean {
+  const region = stripWooNonSummaryRegions(stripScriptsAndStyles(html));
+  return WOO_SUMMARY_BACKORDER_ELEMENT.test(region);
+}
+
 /** An explicit, visible "this product is no longer available" message. Hidden templates do not count. */
 export function hasVisibleProductNoLongerAvailable(html: string): boolean {
   const visible = stripHiddenElements(stripScriptsAndStyles(html))
@@ -296,15 +375,21 @@ export async function withAvailabilityLabels(
 
   const apiUrl = wooStoreApiUrl(verdict.canonical_url) ?? wooStoreApiUrl(requested);
   const slug = wooSlugFromUrl(verdict.canonical_url) ?? wooSlugFromUrl(requested);
+  let apiReading: Awaited<ReturnType<typeof lookupWooProduct>> = null;
   if (apiUrl && slug && looksLikeWooCommerce(html)) {
-    const found = await lookupWooProduct(apiUrl, slug, fetcher, signal);
-    if (found?.backorder) {
+    apiReading = await lookupWooProduct(apiUrl, slug, fetcher, signal);
+    if (apiReading?.backorder) {
       const next = applyAvailabilityLabel(verdict, "backorder");
       return {
-        verdict: found.title ? { ...next, title: found.title } : next,
+        verdict: apiReading.title ? { ...next, title: apiReading.title } : next,
         ownFieldFound: true,
       };
     }
+  }
+  // Store API is preferred. When it yields no reading, trust Woo's own
+  // stock-status element in the main product summary only.
+  if (apiReading == null && hasWooProductSummaryBackorder(html)) {
+    return { verdict: applyAvailabilityLabel(verdict, "backorder"), ownFieldFound: true };
   }
 
   if (detectInStoresOnly(html, requested) || detectInStoresOnly(html, verdict.canonical_url)) {
