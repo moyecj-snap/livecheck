@@ -5,7 +5,12 @@ import {
   hasInStoreOnlyProductData,
   hasProductStoreCta,
   hasVisibleProductNoLongerAvailable,
+  hasHiddenProductNoLongerAvailableBox,
+  hasOwnVisibleBuyPath,
+  hasOwnVisibleProductPrice,
   hasWooProductSummaryBackorder,
+  isHiddenNoLongerAvailableAmbiguous,
+  isHiddenNoLongerAvailableWithoutPurchasePath,
 } from "../src/availability-label.js";
 import { verifyUrl } from "../src/verify.js";
 import { readingFromWooProducts, wooStoreApiUrl } from "../src/woocommerce.js";
@@ -424,3 +429,94 @@ describe("visible 'no longer available' beats in-store wording", () => {
     assert.equal(detectInStoresOnly(html, url), false);
   });
 });
+
+
+describe("hidden 'no longer available' box plus no price and no buy path is gone", () => {
+  const hiddenGone = (name: string) => `
+    <div class="productView productView--clearance-banner" data-event-type="product"
+      data-product-category="Clearance Bargains/In Store" data-name="${name} - In-Store Clearance">
+      <div class="productView-clearance-banner">In-store Clearance item</div>
+      <h1 class="productView-title">${name} - In-Store Clearance</h1>
+      <div class="outofstock-cta hidden">
+        <h4 class="outofstock-cta__heading">Unfortunately this product is no longer available.</h4>
+        <p class="outofstock-cta__text">For advice on an alternative product, contact Telesales.</p>
+      </div>
+    </div>`;
+
+  const fyne = `
+    <div class="productView productView--clearance-banner" data-event-type="product"
+      data-product-category="Clearance Bargains/In Store" data-name="Fyne Audio F501SP - In-Store Clearance">
+      <div class="productView-clearance-banner">In-store Clearance item</div>
+      <h1 class="productView-title">Fyne Audio F501SP (Piano Gloss White) - In-Store Clearance</h1>
+      <div class="outofstock-cta hidden">
+        <h4 class="outofstock-cta__heading">Unfortunately this product is no longer available.</h4>
+      </div>
+      <button disabled class="productView-clearance-reminder-link">Check store availability</button>
+    </div>`;
+
+  it("treats a hidden no-longer-available box with no price and no buy path as gone (Focal Theva stands)", async () => {
+    const html = shopifyHtml(hiddenGone("Focal Theva Stands"));
+    assert.equal(hasHiddenProductNoLongerAvailableBox(html), true);
+    assert.equal(hasOwnVisibleProductPrice(html), false);
+    assert.equal(hasOwnVisibleBuyPath(html), false);
+    assert.equal(isHiddenNoLongerAvailableWithoutPurchasePath(html), true);
+    const url = "https://audio.example/focal-theva-stands-in-store-clearance/";
+    const verdict = await verifyUrl(url, fetcherFor({ [url]: { body: html } }));
+    assert.equal(verdict.status, "closed");
+    assert.ok(verdict.signals.includes("no_longer_available"));
+    assert.equal(verdict.signals.includes("in_stores_only"), false);
+  });
+
+  it("treats a hidden no-longer-available box with no price and no buy path as gone (TEAC W1200)", async () => {
+    const html = shopifyHtml(hiddenGone("Teac W1200 (Silver)"));
+    const url = "https://audio.example/teac-w1200-silver-in-store-clearance/";
+    const verdict = await verifyUrl(url, fetcherFor({ [url]: { body: html } }));
+    assert.equal(verdict.status, "closed");
+    assert.ok(verdict.signals.includes("no_longer_available"));
+    assert.equal(verdict.signals.includes("in_stores_only"), false);
+  });
+
+  const ambiguousHidden = (name: string) => `
+    <div class="productView productView--clearance-banner" data-event-type="product"
+      data-product-category="Clearance Bargains/In Store" data-name="${name} - In-Store Clearance">
+      <div class="productView-clearance-banner">In-store Clearance item</div>
+      <h1 class="productView-title">${name} - In-Store Clearance</h1>
+      <div class="outofstock-cta hidden">
+        <h4 class="outofstock-cta__heading">Unfortunately this product is no longer available.</h4>
+      </div>
+      <button disabled class="productView-clearance-reminder-link">Check store availability</button>
+    </div>`;
+
+  async function assertHiddenBoxAmbiguous(name: string, path: string, fixture?: string) {
+    const html = shopifyHtml(fixture ?? ambiguousHidden(name));
+    assert.equal(hasHiddenProductNoLongerAvailableBox(html), true);
+    assert.equal(hasOwnVisibleProductPrice(html), false);
+    assert.equal(hasOwnVisibleBuyPath(html), true);
+    assert.equal(isHiddenNoLongerAvailableWithoutPurchasePath(html), false);
+    assert.equal(isHiddenNoLongerAvailableAmbiguous(html), true);
+    const url = `https://audio.example/${path}`;
+    const verdict = await verifyUrl(url, fetcherFor({ [url]: { body: html } }));
+    assert.equal(verdict.status, "unknown");
+    assert.equal(verdict.label, undefined);
+    assert.ok(verdict.signals.includes("hidden_nla_ambiguous"));
+    assert.equal(verdict.signals.includes("in_stores_only"), false);
+    assert.equal(verdict.signals.includes("no_longer_available"), false);
+  }
+
+  it("returns can't tell when pre-script HTML cannot separate Focal from an in-store page", async () => {
+    await assertHiddenBoxAmbiguous("Focal Theva Stands", "focal-theva-stands-in-store-clearance/");
+  });
+
+  it("returns can't tell when pre-script HTML cannot separate TEAC from an in-store page", async () => {
+    await assertHiddenBoxAmbiguous("Teac W1200 (Silver)", "teac-w1200-silver-in-store-clearance/");
+  });
+
+  it("returns can't tell when pre-script HTML cannot separate Fyne from a gone page", async () => {
+    await assertHiddenBoxAmbiguous(
+      "Fyne Audio F501SP (Piano Gloss White)",
+      "fyne-audio-f501sp-piano-gloss-white-in-store-clearance/",
+      fyne,
+    );
+  });
+});
+
