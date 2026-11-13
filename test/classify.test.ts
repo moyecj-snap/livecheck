@@ -630,3 +630,93 @@ describe("product URL that redirects away from the product", () => {
   });
 });
 
+
+describe("promo 'sign in to see your savings' is not a login wall", () => {
+  it("keeps a product with Add to Bag live when the only sign-in line is promotional", () => {
+    const v = classify(
+      page({
+        requestedUrl: "https://store.example/catalog/product/view/id/7759",
+        httpStatus: 200,
+        html: `<!doctype html><html><head><title>Avian Holiday Pop-Up Advent Calendar</title></head><body>
+          <header><a href="/customer/account/login">Sign In</a></header>
+          <p>Register or sign in to see your savings at checkout. No promotion code required.</p>
+          <form id="product_addtocart_form">
+            <button type="submit" id="product-addtocart-button">Add to Bag</button>
+          </form>
+        </body></html>`,
+      }),
+    );
+    assert.equal(v.status, "live");
+    assert.equal(v.signals.includes("loginwalled"), false);
+    assert.ok(v.signals.includes("in-stock"));
+  });
+
+  it("still treats LinkedIn 'Sign in to see who you already know' as a login wall", () => {
+    const v = classify(
+      page({
+        requestedUrl: "https://www.linkedin.com/jobs/view/4385154626/",
+        httpStatus: 200,
+        html: `<html><title>LinkedIn</title><body><p>Sign in to see who you already know</p><a>Apply now</a></body></html>`,
+      }),
+    );
+    assert.equal(v.status, "unknown");
+    assert.ok(v.signals.includes("loginwalled"));
+  });
+});
+
+describe("Magento product pages and related-product tiles", () => {
+  const liveProduct = `
+    <form id="product_addtocart_form">
+      <button type="submit" form="product_addtocart_form" aria-label="Add Silicone Basting Brush to cart">Add to Cart</button>
+    </form>`;
+  const relatedOutOfStock = `
+    <div class="related-products">
+      <h2>Learn more</h2>
+      <div class="m-product-card product-item"><span>Related Brush</span><span>Out of stock</span></div>
+      <div class="m-product-card product-item"><span>Related Spoon</span><span>Out of stock</span></div>
+      <div class="m-product-card product-item"><span>Related Bowl</span><span>Out of stock</span></div>
+    </div>`;
+  const soldOutProduct = `
+    <form id="product_addtocart_form">
+      <button type="submit" disabled>Out of stock</button>
+    </form>`;
+  const relatedInStock = `
+    <div class="related-products">
+      <div class="m-product-card product-item"><span>Related Brush</span><button>Add to Cart</button> In stock</div>
+      <div class="m-product-card product-item"><span>Related Spoon</span><button>Add to Cart</button> In stock</div>
+      <div class="m-product-card product-item"><span>Related Bowl</span><button>Add to Cart</button> In stock</div>
+    </div>`;
+
+  it("reads a live Magento .html product as live even when related tiles say out of stock", () => {
+    const v = classify(
+      page({
+        requestedUrl: "https://www.example.com/silicone-basting-brush-318.html",
+        httpStatus: 200,
+        html: `<!doctype html><html><head><title>Silicone Basting Brush</title></head><body>
+          <p>Search is currently unavailable. To use search functionality, please accept cookies.</p>
+          <span>Product is out of stock. Please remove this item from your Cart in order to checkout.</span>
+          ${liveProduct}${relatedOutOfStock}
+        </body></html>`,
+      }),
+    );
+    assert.equal(v.status, "live");
+    assert.ok(v.signals.includes("in-stock"));
+    assert.equal(v.signals.includes("sold-out"), false);
+    assert.equal(v.signals.includes("not_a_specific_posting"), false);
+  });
+
+  it("reads a sold-out Magento product as closed even when related tiles say in stock", () => {
+    const v = classify(
+      page({
+        requestedUrl: "https://www.example.com/sold-out-brush-318.html",
+        httpStatus: 200,
+        html: `<!doctype html><html><head><title>Sold Out Brush</title></head><body>
+          ${soldOutProduct}${relatedInStock}
+        </body></html>`,
+      }),
+    );
+    assert.equal(v.status, "closed");
+    assert.ok(v.signals.includes("sold-out"));
+    assert.equal(v.signals.includes("in-stock"), false);
+  });
+});

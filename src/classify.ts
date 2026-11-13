@@ -109,6 +109,51 @@ function includesPhrase(haystack: string, phrases: string[]): string | null {
   return null;
 }
 
+/** Promo copy such as "sign in to see your savings at checkout" is not a login wall. */
+const LOGINWALL_PROMO_FOLLOW = /^ your (savings|discount|price|offers?|rewards?)\b/;
+
+function loginwallPhrase(text: string): string | null {
+  const hit = includesPhrase(text, LOGINWALL_PHRASES);
+  if (!hit) return null;
+  if (hit !== "sign in to see") return hit;
+  for (const match of text.matchAll(/sign in to see(.{0,48})/g)) {
+    const rest = match[1] ?? "";
+    if (LOGINWALL_PROMO_FOLLOW.test(rest)) continue;
+    return hit;
+  }
+  return null;
+}
+
+/** Related / upsell / recommendation tiles. These never decide this product's availability. */
+function withoutRelatedProductTiles(html: string): string {
+  let current = html;
+  let previous = "";
+  for (let i = 0; i < 3 && current !== previous; i++) {
+    previous = current;
+    current = current
+      .replace(/<template\b[\s\S]*?<\/template>/gi, " ")
+      .replace(
+        /<(div|section|ul|ol|aside|article)\b[^>]*(?:class|id)=["'][^"']*(?:related[-_ ]products?|upsell|crosssell|you-may-also|product-recommendations?|m-product-card)[^"']*["'][^>]*>[\s\S]*?<\/\1>/gi,
+        " ",
+      )
+      .replace(
+        /<(div|li|article)\b[^>]*class=["'][^"']*\bm-product-card\b[^"']*["'][^>]*>[\s\S]*?<\/\1>/gi,
+        " ",
+      );
+  }
+  return current;
+}
+
+function looksLikeMagentoProductPage(html: string): boolean {
+  return (
+    /id=["']product_addtocart_form["']/i.test(html) ||
+    /form=["']product_addtocart_form["']/i.test(html) ||
+    /id=["']product-addtocart-button["']/i.test(html) ||
+    /\bproductData\.isInStock\b/.test(html) ||
+    /name=["']product["'][^>]*class=["'][^"']*input-text qty/i.test(html)
+  );
+}
+
 function stripScriptsAndStyles(html: string): string {
   return html
     .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
@@ -118,6 +163,13 @@ function stripScriptsAndStyles(html: string): string {
 
 function stripLocaleDictionary(value: string): string {
   return value.replace(LOCALE_DICT_ENTRY, " ");
+}
+
+/** Cookie / search banners are not a product sold-out signal. */
+function stripNonProductUnavailable(value: string): string {
+  return value
+    .replace(/search is currently unavailable/gi, " ")
+    .replace(/product is out of stock\.? please remove this item from your cart[^.\n]*/gi, " ");
 }
 
 function hasSchemaOutOfStock(html: string): boolean {
@@ -152,8 +204,10 @@ function hasVisibleSoldOut(html: string, text: string): boolean {
   if (hasSchemaOutOfStock(html)) return true;
   const visibleHtml = stripLocaleDictionary(stripScriptsAndStyles(html));
   if (hasVisibleSoldOutControl(visibleHtml)) return true;
-  const fromText = stripLocaleDictionary(text).toLowerCase();
-  const fromVisibleHtml = stripLocaleDictionary(visibleHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).toLowerCase();
+  const fromText = stripNonProductUnavailable(stripLocaleDictionary(text).toLowerCase());
+  const fromVisibleHtml = stripNonProductUnavailable(
+    stripLocaleDictionary(visibleHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).toLowerCase(),
+  );
   return Boolean(includesPhrase(fromText, SOLD_OUT_PHRASES) || includesPhrase(fromVisibleHtml, SOLD_OUT_PHRASES));
 }
 
@@ -444,7 +498,7 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
     confidence = Math.max(confidence, 0.9);
   }
 
-  const loginwall = includesPhrase(text, LOGINWALL_PHRASES);
+  const loginwall = loginwallPhrase(text);
   // After a redirect, page type comes from the final URL only.
   const redirected = Boolean(page.redirected);
   const specificPosting =
@@ -496,10 +550,19 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
       confidence = Math.max(confidence, 0.9);
     }
   }
-  const buy = hasBuyAffordance(html, text);
-  const soldOutPhrase = hasVisibleSoldOut(html, text);
-  const manyProductCards = countProductCards(html) >= 3;
-  const productPage = specificProduct || (buy && !collectionOrCategory && !manyProductCards && !specificPosting);
+  const magentoProduct = looksLikeMagentoProductPage(html);
+  const ownHtml = magentoProduct || specificProduct ? withoutRelatedProductTiles(html) : html;
+  const ownText =
+    magentoProduct || specificProduct
+      ? ownHtml.replace(/<script\b[\s\S]*?<\/script>/gi, " ").replace(/<style\b[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").toLowerCase()
+      : text;
+  const buy = hasBuyAffordance(ownHtml, ownText);
+  const soldOutPhrase = hasVisibleSoldOut(ownHtml, ownText);
+  const manyProductCards = countProductCards(ownHtml) >= 3;
+  const productPage =
+    specificProduct ||
+    magentoProduct ||
+    (buy && !collectionOrCategory && !manyProductCards && !specificPosting);
   const jsShell =
     looksLikeJsShell(html, text, page.canonicalUrl) ||
     (!redirected && looksLikeJsShell(html, text, page.requestedUrl));
@@ -532,7 +595,8 @@ export function classify(page: FetchedPage, checkedAt = new Date()): VerifyVerdi
       status = "unknown";
       confidence = Math.max(confidence, 0.5);
     }
-  } else if (manyCards && !apply && status !== "closed") {
+  } else if (manyCards && !apply && status !== "closed" && !productPage && !magentoProduct) {
+    // "Learn more" headings on a product page are not job cards.
     signals.push("not_a_specific_posting");
   }
 
