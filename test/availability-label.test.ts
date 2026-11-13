@@ -5,7 +5,11 @@ import {
   hasInStoreOnlyProductData,
   hasProductStoreCta,
   hasVisibleProductNoLongerAvailable,
+  hasHiddenProductNoLongerAvailableBox,
+  hasOwnVisibleBuyPath,
+  hasOwnVisibleProductPrice,
   hasWooProductSummaryBackorder,
+  isHiddenNoLongerAvailableWithoutPurchasePath,
 } from "../src/availability-label.js";
 import { verifyUrl } from "../src/verify.js";
 import { readingFromWooProducts, wooStoreApiUrl } from "../src/woocommerce.js";
@@ -424,3 +428,64 @@ describe("visible 'no longer available' beats in-store wording", () => {
     assert.equal(detectInStoresOnly(html, url), false);
   });
 });
+
+
+describe("hidden 'no longer available' box plus no price and no buy path is gone", () => {
+  const hiddenGone = (name: string) => `
+    <div class="productView productView--clearance-banner" data-event-type="product"
+      data-product-category="Clearance Bargains/In Store" data-name="${name} - In-Store Clearance">
+      <div class="productView-clearance-banner">In-store Clearance item</div>
+      <h1 class="productView-title">${name} - In-Store Clearance</h1>
+      <div class="outofstock-cta hidden">
+        <h4 class="outofstock-cta__heading">Unfortunately this product is no longer available.</h4>
+        <p class="outofstock-cta__text">For advice on an alternative product, contact Telesales.</p>
+      </div>
+    </div>`;
+
+  const fyne = `
+    <div class="productView productView--clearance-banner" data-event-type="product"
+      data-product-category="Clearance Bargains/In Store" data-name="Fyne Audio F501SP - In-Store Clearance">
+      <div class="productView-clearance-banner">In-store Clearance item</div>
+      <h1 class="productView-title">Fyne Audio F501SP (Piano Gloss White) - In-Store Clearance</h1>
+      <div class="outofstock-cta hidden">
+        <h4 class="outofstock-cta__heading">Unfortunately this product is no longer available.</h4>
+      </div>
+      <button disabled class="productView-clearance-reminder-link">Check store availability</button>
+    </div>`;
+
+  it("treats a hidden no-longer-available box with no price and no buy path as gone (Focal Theva stands)", async () => {
+    const html = shopifyHtml(hiddenGone("Focal Theva Stands"));
+    assert.equal(hasHiddenProductNoLongerAvailableBox(html), true);
+    assert.equal(hasOwnVisibleProductPrice(html), false);
+    assert.equal(hasOwnVisibleBuyPath(html), false);
+    assert.equal(isHiddenNoLongerAvailableWithoutPurchasePath(html), true);
+    const url = "https://audio.example/focal-theva-stands-in-store-clearance/";
+    const verdict = await verifyUrl(url, fetcherFor({ [url]: { body: html } }));
+    assert.equal(verdict.status, "closed");
+    assert.ok(verdict.signals.includes("no_longer_available"));
+    assert.equal(verdict.signals.includes("in_stores_only"), false);
+  });
+
+  it("treats a hidden no-longer-available box with no price and no buy path as gone (TEAC W1200)", async () => {
+    const html = shopifyHtml(hiddenGone("Teac W1200 (Silver)"));
+    const url = "https://audio.example/teac-w1200-silver-in-store-clearance/";
+    const verdict = await verifyUrl(url, fetcherFor({ [url]: { body: html } }));
+    assert.equal(verdict.status, "closed");
+    assert.ok(verdict.signals.includes("no_longer_available"));
+    assert.equal(verdict.signals.includes("in_stores_only"), false);
+  });
+
+  it("keeps Fyne in_stores_only when a Check store availability control remains outside the hidden box", async () => {
+    const html = shopifyHtml(fyne);
+    assert.equal(hasHiddenProductNoLongerAvailableBox(html), true);
+    assert.equal(hasOwnVisibleProductPrice(html), false);
+    assert.equal(hasOwnVisibleBuyPath(html), true);
+    assert.equal(isHiddenNoLongerAvailableWithoutPurchasePath(html), false);
+    const url = "https://audio.example/fyne-audio-f501sp-piano-gloss-white-in-store-clearance/";
+    const verdict = await verifyUrl(url, fetcherFor({ [url]: { body: html } }));
+    assert.equal(verdict.status, "live");
+    assert.equal(verdict.label, "in_stores_only");
+    assert.equal(verdict.signals.includes("no_longer_available"), false);
+  });
+});
+

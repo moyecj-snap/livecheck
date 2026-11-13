@@ -139,6 +139,45 @@ export function hasVisibleProductNoLongerAvailable(html: string): boolean {
   return PRODUCT_NO_LONGER_AVAILABLE.some((phrase) => visible.includes(phrase));
 }
 
+
+const HIDDEN_NLA_BOX =
+  /<(?:div|section|aside)\b[^>]*class=["'][^"']*(?:\bhidden\b[^"']*\boutofstock-cta\b|\boutofstock-cta\b[^"']*\bhidden\b)[^"']*["'][^>]*>[\s\S]{0,2000}?(?:this product is no longer available|product is no longer available)/i;
+
+/** A hidden "no longer available" box (for example div.outofstock-cta.hidden). */
+export function hasHiddenProductNoLongerAvailableBox(html: string): boolean {
+  return HIDDEN_NLA_BOX.test(stripScriptsAndStyles(html));
+}
+
+/** The product's own visible price (not schema/meta, not hidden templates). */
+export function hasOwnVisibleProductPrice(html: string): boolean {
+  const visible = stripHiddenElements(stripScriptsAndStyles(html));
+  return /<(?:div|span|section)\b[^>]*class=["'][^"']*(?:productView-price|productPrice)[^"']*["'][^>]*>[\s\S]{0,500}?(?:£|&pound;|\$|€)\s*\d/i.test(
+    visible,
+  );
+}
+
+/**
+ * A product-level buy or in-store purchase path that is not inside a hidden
+ * box. A Check store availability control still counts when it is disabled,
+ * because that is how some in-store clearance pages render a real CTA.
+ */
+export function hasOwnVisibleBuyPath(html: string): boolean {
+  const visible = stripHiddenElements(stripScriptsAndStyles(html));
+  if (/check store availability/i.test(visible)) return true;
+  if (/add to (?:basket|cart)/i.test(visible)) return true;
+  if (/<(?:button|a|input)\b[^>]*>[\s\S]{0,80}\bbuy now\b/i.test(visible)) return true;
+  return false;
+}
+
+/** Hidden "no longer available" box, and the product shows no price and no buy path. */
+export function isHiddenNoLongerAvailableWithoutPurchasePath(html: string): boolean {
+  return (
+    hasHiddenProductNoLongerAvailableBox(html) &&
+    !hasOwnVisibleProductPrice(html) &&
+    !hasOwnVisibleBuyPath(html)
+  );
+}
+
 export function applyNoLongerAvailable(page: VerifyVerdict): VerifyVerdict {
   if (page.signals.includes("redirected_away_from_product")) return page;
   const { label: _dropped, ...rest } = page;
@@ -370,6 +409,11 @@ export async function withAvailabilityLabels(
 
   // An explicit visible "no longer available" message beats any in-store wording.
   if (hasVisibleProductNoLongerAvailable(html)) {
+    return { verdict: applyNoLongerAvailable(verdict), ownFieldFound: true };
+  }
+  // A hidden "no longer available" box plus no price and no buy path is also gone.
+  // If a price or a real buy / in-store path remains, do not guess.
+  if (isHiddenNoLongerAvailableWithoutPurchasePath(html)) {
     return { verdict: applyNoLongerAvailable(verdict), ownFieldFound: true };
   }
 
