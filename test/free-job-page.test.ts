@@ -436,7 +436,13 @@ describe("free /job page", () => {
     const calls = hits.length;
     const sixth = await form(u("/jobs/1842"), { cookie: visitor(1), ip: "198.51.100.7" });
     assert.equal(sixth.status, 429);
-    assert.match(await sixth.text(), /You've used your 5 free checks for today/);
+    const limited = await sixth.text();
+    assert.match(limited, /You've used your 5 free checks\./);
+    assert.match(limited, /<a href="\/keys\?ref=job-limit">Sign in with GitHub for 200 more, free for 30 days\.<\/a>/);
+    assert.match(
+      limited,
+      /Same check by API: <code>POST \/v1\/verify\/job<\/code>\. A wallet pays \$0\.01\. Builders: <a href="\/keys">sign in with GitHub for 200 free checks<\/a>, no wallet needed\./,
+    );
     assert.equal(hits.length, calls, "a refused check never fetches");
     assert.equal((await form(u("/jobs/1842"), { cookie: visitor(1), ip: "198.51.100.8" })).status, 429, "same cookie, other IP");
     // Same IP, fresh cookies: allowed up to 15 per IP.
@@ -445,6 +451,38 @@ describe("free /job page", () => {
     assert.equal((await form(u("/jobs/1842"), { ip: "198.51.100.7" })).status, 429, "no cookie, same IP");
     now = new Date("2026-10-28T07:00:01Z"); // midnight PT
     assert.equal((await form(u("/jobs/1842"), { cookie: visitor(1), ip: "198.51.100.7" })).status, 200);
+  });
+
+  it("at the free-check limit, links the approved starter-key line to /keys?ref=job-limit", async () => {
+    const cookie = visitor(301);
+    const ip = "198.51.100.71";
+    for (let i = 0; i < 5; i++) {
+      assert.equal((await form(u("/jobs/1842"), { cookie, ip })).status, 200);
+    }
+    const sixth = await app.request("/job?utm_source=hn", {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "fly-client-ip": ip,
+        cookie: `${FREE_JOB_COOKIE}=${cookie}`,
+      },
+      body: new URLSearchParams({ url: u("/jobs/1842") }).toString(),
+    });
+    assert.equal(sixth.status, 429);
+    const html = await sixth.text();
+    assert.ok(
+      html.includes(
+        `<section class="note" role="alert"><p><strong>You've used your 5 free checks.</strong> <a href="/keys?ref=job-limit">Sign in with GitHub for 200 more, free for 30 days.</a></p></section>`,
+      ),
+    );
+    // Incoming launch tags still ride on the unchanged API and footer /keys links.
+    assert.match(
+      html,
+      /Same check by API: <code>POST \/v1\/verify\/job<\/code>\. A wallet pays \$0\.01\. Builders: <a href="\/keys\?ref=hn">sign in with GitHub for 200 free checks<\/a>, no wallet needed\./,
+    );
+    assert.equal(html.includes('href="/keys?ref=job-limit"'), true);
+    assert.equal(html.split('href="/keys?ref=hn"').length - 1, 2);
+    assert.equal(html.split('href="/keys?ref=job-limit"').length - 1, 1);
   });
 
   it("hourly cap is a live setting: free:set-style change applies on the next request, no restart", async () => {
