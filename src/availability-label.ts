@@ -5,6 +5,7 @@ import {
   wooSlugFromUrl,
   wooStoreApiUrl,
 } from "./woocommerce.js";
+import { jsonLdNotForSaleOnStore } from "./structured-availability.js";
 
 export const AVAILABILITY_LABELS = ["backorder", "in_stores_only"] as const;
 export type AvailabilityLabel = (typeof AVAILABILITY_LABELS)[number];
@@ -204,8 +205,10 @@ export function hasInStoreOnlyProductData(html: string): boolean {
   return false;
 }
 
-export function detectInStoresOnly(html: string): boolean {
-  return hasProductStoreCta(html) || hasInStoreOnlyProductData(html);
+export function detectInStoresOnly(html: string, pageUrl?: string): boolean {
+  if (hasProductStoreCta(html) || hasInStoreOnlyProductData(html)) return true;
+  if (pageUrl && jsonLdNotForSaleOnStore(html, pageUrl)) return true;
+  return false;
 }
 
 export function applyAvailabilityLabel(page: VerifyVerdict, label: AvailabilityLabel): VerifyVerdict {
@@ -244,7 +247,7 @@ export async function withAvailabilityLabels(
     }
   }
 
-  if (detectInStoresOnly(html)) {
+  if (detectInStoresOnly(html, requested) || detectInStoresOnly(html, verdict.canonical_url)) {
     return { verdict: applyAvailabilityLabel(verdict, "in_stores_only"), ownFieldFound: true };
   }
 
