@@ -3,9 +3,13 @@ import { DeadlineError } from "./deadline.js";
 
 /**
  * WooCommerce Store API product lookup. The structured `is_on_backorder` flag
- * (or `stock_availability.class` = available-on-backorder) is the only
- * backorder signal we trust. HTML phrases such as "Available on backorder"
- * are ignored: they also appear in cart templates on in-stock products.
+ * (or `stock_availability.class` = available-on-backorder) is the preferred
+ * backorder signal. When the Store API does not yield a reading, WooCommerce's
+ * own stock-status element inside the main product summary (for example
+ * `p.stock.available-on-backorder`, or the product-stock-indicator block
+ * with `--available-on-backorder`) is also trusted. Loose HTML phrases such
+ * as "Available on backorder" elsewhere on the page are ignored: they also
+ * appear in cart templates on in-stock products.
  */
 
 const WOO_PATH = /\/(?:product|shop)\/([^/]+?)\/?$/i;

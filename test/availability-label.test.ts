@@ -5,6 +5,7 @@ import {
   hasInStoreOnlyProductData,
   hasProductStoreCta,
   hasVisibleProductNoLongerAvailable,
+  hasWooProductSummaryBackorder,
 } from "../src/availability-label.js";
 import { verifyUrl } from "../src/verify.js";
 import { readingFromWooProducts, wooStoreApiUrl } from "../src/woocommerce.js";
@@ -134,6 +135,102 @@ describe("WooCommerce Store API backorder", () => {
     const verdict = await verifyUrl(WOO_PAGE, fetcherFor({ [WOO_PAGE]: { body: WOO_HTML } }));
     assert.equal(verdict.label, undefined);
     assert.equal(verdict.signals.includes("backorder"), false);
+  });
+});
+
+
+describe("WooCommerce product-summary stock-status backorder", () => {
+  const flaanimalHtml = `<!doctype html><html class="woocommerce"><head><title>Flaanimal 6.0 Steel</title></head><body>
+  <div class="ral-product-columns">
+    <h1>Flaanimal 6.0 Steel</h1>
+    <div data-ral-section="stock" data-block-name="woocommerce/product-stock-indicator"
+      class="wc-block-components-product-stock-indicator wc-block-components-product-stock-indicator--available-on-backorder">
+      <div aria-live="polite">Available on backorder</div>
+    </div>
+    <form class="cart"><button type="submit">Add to cart</button></form>
+  </div>
+  <script>window.cartTemplate = "Available on backorder";</script>
+</body></html>`;
+
+  const classicSummaryHtml = `<!doctype html><html class="woocommerce"><body>
+  <div class="product type-product">
+    <div class="summary entry-summary">
+      <h1>Flaanimal 6.0 Steel</h1>
+      <p class="stock available-on-backorder">Available on backorder</p>
+      <form class="cart"><button type="submit">Add to cart</button></form>
+    </div>
+  </div>
+</body></html>`;
+
+  const udhHtml = `<!doctype html><html class="woocommerce"><body>
+  <div class="wp-block-woocommerce-add-to-cart-form wc-block-add-to-cart-form">
+    <p class="stock in-stock">In stock</p>
+    <form class="cart"><button type="submit">Add to cart</button></form>
+  </div>
+  <div class="wc-block-cart-item">
+    <div data-wp-bind--hidden="!state.cartItem.show_backorder_badge" class="wc-block-components-product-badge wc-block-components-product-backorder-badge">Available on backorder</div>
+  </div>
+</body></html>`;
+
+  const relatedOnlyHtml = `<!doctype html><html class="woocommerce"><body>
+  <div class="summary entry-summary">
+    <h1>UDH Adapter</h1>
+    <p class="stock in-stock">In stock</p>
+    <form class="cart"><button type="submit">Add to cart</button></form>
+  </div>
+  <div class="related products">
+    <p class="stock available-on-backorder">Available on backorder</p>
+  </div>
+  <footer>Available on backorder</footer>
+  <div class="woocommerce-tabs"><p class="stock available-on-backorder">Available on backorder</p></div>
+</body></html>`;
+
+  it("labels Flaanimal 6 backorder with status live from the product-stock-indicator in the main summary", async () => {
+    const verdict = await verifyUrl(WOO_PAGE, fetcherFor({ [WOO_PAGE]: { body: flaanimalHtml } }));
+    assert.equal(verdict.status, "live");
+    assert.equal(verdict.label, "backorder");
+    assert.ok(verdict.signals.includes("backorder"));
+    assert.equal(hasWooProductSummaryBackorder(flaanimalHtml), true);
+  });
+
+  it("labels a classic p.stock.available-on-backorder in the product summary as backorder", async () => {
+    const verdict = await verifyUrl(WOO_PAGE, fetcherFor({ [WOO_PAGE]: { body: classicSummaryHtml } }));
+    assert.equal(verdict.status, "live");
+    assert.equal(verdict.label, "backorder");
+  });
+
+  it("leaves the in-stock Rodeo UDH adapter unlabeled when backorder text is only a cart badge", async () => {
+    const verdict = await verifyUrl(WOO_PAGE, fetcherFor({ [WOO_PAGE]: { body: udhHtml } }));
+    assert.equal(verdict.status, "live");
+    assert.equal(verdict.label, undefined);
+    assert.equal(verdict.signals.includes("backorder"), false);
+    assert.equal(hasWooProductSummaryBackorder(udhHtml), false);
+  });
+
+  it("does not label when a backorder stock-status element is only outside the main product summary", async () => {
+    const verdict = await verifyUrl(WOO_PAGE, fetcherFor({ [WOO_PAGE]: { body: relatedOnlyHtml } }));
+    assert.equal(verdict.status, "live");
+    assert.equal(verdict.label, undefined);
+    assert.equal(verdict.signals.includes("backorder"), false);
+    assert.equal(hasWooProductSummaryBackorder(relatedOnlyHtml), false);
+  });
+
+  it("falls back to the product-summary stock-status element when the Store API returns two same-slug products", async () => {
+    const verdict = await verifyUrl(
+      WOO_PAGE,
+      fetcherFor({
+        [WOO_PAGE]: { body: flaanimalHtml },
+        [WOO_API]: {
+          type: "application/json",
+          body: JSON.stringify([
+            { slug: "trail-frame", name: "Flaanimal 6.0 Steel", type: "variation", is_on_backorder: false, stock_availability: { text: "In stock", class: "in-stock" } },
+            { slug: "trail-frame", name: "Flaanimal 6.0 Steel", type: "variable", is_on_backorder: true, stock_availability: { text: "Available on backorder", class: "available-on-backorder" } },
+          ]),
+        },
+      }),
+    );
+    assert.equal(verdict.status, "live");
+    assert.equal(verdict.label, "backorder");
   });
 });
 
