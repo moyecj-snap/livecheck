@@ -496,7 +496,7 @@ function resultHtml(view: FreeJobView, remaining: number | undefined): string {
     return `<section class="note" role="alert"><p>${esc(view.message)}</p></section>`;
   }
   if (view.kind === "limited") {
-    return `<section class="note" role="alert"><p><strong>You've used your ${view.perDay} free checks for today.</strong> Come back tomorrow, or have your agent use the API below.</p></section>`;
+    return `<section class="note" role="alert"><p><strong>You've used your 5 free checks.</strong> <a href="/keys?ref=job-limit">Sign in with GitHub for 200 more, free for 30 days.</a></p></section>`;
   }
   if (view.kind === "busy") {
     return `<section class="note" role="alert"><p><strong>Busy, try again in a few minutes.</strong></p></section>`;
