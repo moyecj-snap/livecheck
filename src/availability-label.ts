@@ -178,6 +178,39 @@ export function isHiddenNoLongerAvailableWithoutPurchasePath(html: string): bool
   );
 }
 
+/**
+ * Hidden "no longer available" box is present, but pre-script HTML also has a
+ * buy path and no visible price, so the page cannot be separated from an
+ * in-store listing (the buy path may be removed only after JS). Do not guess.
+ */
+export function isHiddenNoLongerAvailableAmbiguous(html: string): boolean {
+  return (
+    hasHiddenProductNoLongerAvailableBox(html) &&
+    !hasOwnVisibleProductPrice(html) &&
+    hasOwnVisibleBuyPath(html)
+  );
+}
+
+export const HIDDEN_NLA_AMBIGUOUS_SIGNAL = "hidden_nla_ambiguous";
+
+export function applyHiddenNoLongerAvailableAmbiguous(page: VerifyVerdict): VerifyVerdict {
+  if (page.signals.includes("redirected_away_from_product")) return page;
+  const { label: _dropped, ...rest } = page;
+  const signals = rest.signals.filter(
+    (signal) =>
+      !REPLACED.has(signal) &&
+      signal !== "in_stores_only" &&
+      signal !== NO_LONGER_AVAILABLE_SIGNAL &&
+      signal !== HIDDEN_NLA_AMBIGUOUS_SIGNAL,
+  );
+  return {
+    ...rest,
+    status: "unknown",
+    confidence: Math.min(page.confidence, 0.5),
+    signals: dedupe([HIDDEN_NLA_AMBIGUOUS_SIGNAL, ...signals]),
+  };
+}
+
 export function applyNoLongerAvailable(page: VerifyVerdict): VerifyVerdict {
   if (page.signals.includes("redirected_away_from_product")) return page;
   const { label: _dropped, ...rest } = page;
@@ -411,10 +444,15 @@ export async function withAvailabilityLabels(
   if (hasVisibleProductNoLongerAvailable(html)) {
     return { verdict: applyNoLongerAvailable(verdict), ownFieldFound: true };
   }
-  // A hidden "no longer available" box plus no price and no buy path is also gone.
-  // If a price or a real buy / in-store path remains, do not guess.
+  // A hidden "no longer available" box plus no price and no buy path is gone.
+  // If the hidden box is present but pre-script HTML cannot separate a gone
+  // page from an in-store page (no visible price, but a buy path remains),
+  // return can't tell rather than guess.
   if (isHiddenNoLongerAvailableWithoutPurchasePath(html)) {
     return { verdict: applyNoLongerAvailable(verdict), ownFieldFound: true };
+  }
+  if (isHiddenNoLongerAvailableAmbiguous(html)) {
+    return { verdict: applyHiddenNoLongerAvailableAmbiguous(verdict), ownFieldFound: true };
   }
 
   const apiUrl = wooStoreApiUrl(verdict.canonical_url) ?? wooStoreApiUrl(requested);
