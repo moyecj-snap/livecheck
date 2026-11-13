@@ -19,6 +19,61 @@ function dedupe(signals: string[]): string[] {
   return out;
 }
 
+/** Product copy that means the listing itself is gone, not merely sold out. */
+export const NO_LONGER_AVAILABLE_SIGNAL = "no_longer_available";
+
+const PRODUCT_NO_LONGER_AVAILABLE = [
+  "this product is no longer available",
+  "product is no longer available",
+];
+
+function stripScriptsAndStyles(html: string): string {
+  return html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ");
+}
+
+/** Drop elements marked hidden so a template "no longer available" line is ignored. */
+function stripHiddenElements(html: string): string {
+  let previous = "";
+  let current = html;
+  // Repeat so nested hidden wrappers are removed.
+  for (let i = 0; i < 4 && current !== previous; i++) {
+    previous = current;
+    current = current
+      .replace(/<([a-zA-Z][\w:-]*)\b[^>]*\shidden(?:\s|\/|=|>)[^>]*>[\s\S]*?<\/\1>/gi, " ")
+      .replace(/<([a-zA-Z][\w:-]*)\b[^>]*class=["'][^"']*\bhidden\b[^"']*["'][^>]*>[\s\S]*?<\/\1>/gi, " ")
+      .replace(/<([a-zA-Z][\w:-]*)\b[^>]*aria-hidden=["']true["'][^>]*>[\s\S]*?<\/\1>/gi, " ")
+      .replace(/<([a-zA-Z][\w:-]*)\b[^>]*style=["'][^"']*display\s*:\s*none[^"']*["'][^>]*>[\s\S]*?<\/\1>/gi, " ");
+  }
+  return current;
+}
+
+/** An explicit, visible "this product is no longer available" message. Hidden templates do not count. */
+export function hasVisibleProductNoLongerAvailable(html: string): boolean {
+  const visible = stripHiddenElements(stripScriptsAndStyles(html))
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&(?:nbsp|#160|#x0*a0);/gi, " ")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+  return PRODUCT_NO_LONGER_AVAILABLE.some((phrase) => visible.includes(phrase));
+}
+
+export function applyNoLongerAvailable(page: VerifyVerdict): VerifyVerdict {
+  if (page.signals.includes("redirected_away_from_product")) return page;
+  const { label: _dropped, ...rest } = page;
+  const signals = rest.signals.filter(
+    (signal) => !REPLACED.has(signal) && signal !== "in_stores_only" && signal !== NO_LONGER_AVAILABLE_SIGNAL,
+  );
+  return {
+    ...rest,
+    status: "closed",
+    confidence: Math.max(page.confidence, 0.9),
+    signals: dedupe([NO_LONGER_AVAILABLE_SIGNAL, ...signals]),
+  };
+}
+
 const REPLACED = new Set([
   "sold-out",
   "in-stock",
@@ -232,6 +287,11 @@ export async function withAvailabilityLabels(
 ): Promise<{ verdict: VerifyVerdict; ownFieldFound: boolean }> {
   if (verdict.signals.includes("redirected_away_from_product")) {
     return { verdict, ownFieldFound: false };
+  }
+
+  // An explicit visible "no longer available" message beats any in-store wording.
+  if (hasVisibleProductNoLongerAvailable(html)) {
+    return { verdict: applyNoLongerAvailable(verdict), ownFieldFound: true };
   }
 
   const apiUrl = wooStoreApiUrl(verdict.canonical_url) ?? wooStoreApiUrl(requested);

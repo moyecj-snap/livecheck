@@ -4,6 +4,7 @@ import {
   detectInStoresOnly,
   hasInStoreOnlyProductData,
   hasProductStoreCta,
+  hasVisibleProductNoLongerAvailable,
 } from "../src/availability-label.js";
 import { verifyUrl } from "../src/verify.js";
 import { readingFromWooProducts, wooStoreApiUrl } from "../src/woocommerce.js";
@@ -260,5 +261,69 @@ describe("in_stores_only from a product-level store CTA or product data", () => 
     const verdict = await verifyUrl(url, fetcherFor({ [url]: { body: shopifyHtml(clearance) } }));
     assert.equal(verdict.status, "live");
     assert.equal(verdict.label, "in_stores_only");
+  });
+});
+
+describe("visible 'no longer available' beats in-store wording", () => {
+  const visibleGone = (name: string) => `
+    <div class="productView productView--clearance-banner" data-event-type="product"
+      data-product-category="Clearance Bargains/In Store" data-name="${name} - In-Store Clearance">
+      <div class="productView-clearance-banner">In-store Clearance item</div>
+      <div class="outofstock-cta">
+        <h4 class="outofstock-cta__heading">Unfortunately this product is no longer available.</h4>
+        <p class="outofstock-cta__text">For advice on an alternative product, contact Telesales.</p>
+      </div>
+      <button disabled class="productView-clearance-reminder-link">Check store availability</button>
+    </div>`;
+
+  const hiddenTemplate = `
+    <div class="productView productView--clearance-banner" data-event-type="product"
+      data-product-category="Clearance Bargains/In Store" data-name="Speaker - In-Store Clearance">
+      <div class="productView-clearance-banner">In-store Clearance item</div>
+      <div class="productView-price"><div class="productPrice__main">£599</div></div>
+      <div class="outofstock-cta hidden">
+        <h4 class="outofstock-cta__heading">Unfortunately this product is no longer available.</h4>
+      </div>
+      <button type="button" class="store-stock-checker">Check store availability</button>
+    </div>`;
+
+  it("treats a visible no-longer-available message as gone (Focal Theva stands)", async () => {
+    const html = shopifyHtml(visibleGone("Focal Theva Stands"));
+    assert.equal(hasVisibleProductNoLongerAvailable(html), true);
+    const url = "https://audio.example/focal-theva-stands-in-store-clearance/";
+    const verdict = await verifyUrl(url, fetcherFor({ [url]: { body: html } }));
+    assert.equal(verdict.status, "closed");
+    assert.equal(verdict.label, undefined);
+    assert.ok(verdict.signals.includes("no_longer_available"));
+    assert.equal(verdict.signals.includes("in_stores_only"), false);
+  });
+
+  it("treats a visible no-longer-available message as gone (TEAC W1200)", async () => {
+    const html = shopifyHtml(visibleGone("Teac W1200 (Silver)"));
+    assert.equal(hasVisibleProductNoLongerAvailable(html), true);
+    const url = "https://audio.example/teac-w1200-silver-in-store-clearance/";
+    const verdict = await verifyUrl(url, fetcherFor({ [url]: { body: html } }));
+    assert.equal(verdict.status, "closed");
+    assert.equal(verdict.label, undefined);
+    assert.ok(verdict.signals.includes("no_longer_available"));
+    assert.equal(verdict.signals.includes("in_stores_only"), false);
+  });
+
+  it("ignores a hidden no-longer-available template when the product is still in-store only", async () => {
+    const html = shopifyHtml(hiddenTemplate);
+    assert.equal(hasVisibleProductNoLongerAvailable(html), false);
+    const url = "https://audio.example/dali-sonik-3-white-in-store-clearance/";
+    const verdict = await verifyUrl(url, fetcherFor({ [url]: { body: html } }));
+    assert.equal(verdict.status, "live");
+    assert.equal(verdict.label, "in_stores_only");
+  });
+
+  it("does not treat the word in-store in a URL or title as in_stores_only", () => {
+    const html = shopifyHtml(`
+      <head><title>Speaker Stands - In-Store Clearance</title></head>
+      <h1>Speaker Stands - In-Store Clearance</h1>
+      <p>Browse our in-store clearance range.</p>`);
+    const url = "https://audio.example/speaker-stands-in-store-clearance/";
+    assert.equal(detectInStoresOnly(html, url), false);
   });
 });
